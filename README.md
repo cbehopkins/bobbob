@@ -1,79 +1,36 @@
 # bobbob Project
 
-Bobbob (Bunch Of Binary blOBs) is a simple Go application that provides a binary file storage system. It allows users to create a binary file, write objects to it, and read objects from it.
+Bobbob (Bunch Of Binary BlOBs) is a simple Go application that provides a binary file storage system. It allows users to create a binary file, write objects to it, and read objects from it.
 
-## Project Structure
+Do you find yourself dealing with data structures that are larger than available memory?
+Is working with these without using all your memory more important to you than performance? (i.e. are you willing to spend disk bandwidth to ensure you don't use physical memory)
+Need lists that can grow to be larger than available memory?
+Need a map storing lots of objects.
+Don't want to implement a full database?
 
-```
-bobbob
-├── cmd
-│   └── main.go
-├── internal
-│   ├── store
-│   │   ├── store.go
-│   │   └── store_test.go
-├── go.mod
-└── README.md
-```
+BunchOfBinaryBlOBs might be for you.
 
-## Installation
+FWIW the name bobbob comes from when I can't think of a name for something I often use foo and bar like everyone else. But sometimes Bob seems to work better and of course [Bob was](https://galactanet.com/comic/view.php?strip=530)  [there too](https://galactanet.com/comic/view.php?strip=517)
 
-To get started with the bobbob project, clone the repository and navigate to the project directory:
+The foundation is the Store type. At its most simple level it's trivial. A single file that you write []bytes to.
+You write an []byte and get back an integer. This integer is the ObjectId - a unique value that can be used to access the bytes again in the future.
 
-```bash
-git clone <repository-url>
-cd bobbob
-```
+In the most trivial cases the ObjectId is the file offset that the bytes are stored to. (Told you it was a simple thing.)
 
-## Setup
+The store also tracks the object locations and their sizes, policing the reads and writes so that one object does not interfere with others.
 
-Make sure you have Go installed on your machine. You can download it from [golang.org](https://golang.org/dl/).
+So far, so boring. But Store supports deletion of objects, so you can end up with holes in your used space.
+The sensible thing to do is to therefore track those holes and rather than write new objects to the end of the file, use these holes for new objects.
 
-Run the following command to initialize the Go module:
+Therefore the ObjectId is not actually the file offset (although it can often be).
+It is in fact just a handle that we look up the actual file offset from. The file offset can change after a Free/Compact session and therefore there are safeguards in place.
 
-```bash
-go mod tidy
-```
+Further Data structures are then built upon this foundation.
+For arbitrary length lists we have Link and Chain. These work together as a doubly linked list to provide lists that are larger than can be fit into memory.
 
-## Usage
+This comes in a sorted and unsorted variant. Fundamentally they are the same structure, but if one follows certain rules, you will always get a sorted list, if one follows a different set of rules it will be an unsorted list.
 
-1. **Create a new Store**: Use the `NewBob` method to create a new binary file at a specified path.
-2. **Write an object**: Call `WriteObj` with the desired size to write an object to the store. This will return the current offset and an `io.Writer` to write data.
-3. **Read an object**: Use `ReadObj` with the offset to read the object from the store, returning an `io.Reader`.
+To be implemented is a map. I've had a lot of milage out of [gkvlite](https://github.com/steveyen/gkvlite).
+I plan to steal a lot of the ideas from this project, but using the Store concept so that the File image can be compacted and doesnt continuously grow.
 
-## Example
-
-```go
-package main
-
-import (
-    "fmt"
-    "log"
-    "bobbob/internal/store"
-)
-
-func main() {
-    s := store.NewBob("path/to/binary/file")
-    if err := s.NewBob("path/to/binary/file"); err != nil {
-        log.Fatal(err)
-    }
-
-    offset, writer, err := s.WriteObj(1024)
-    if err != nil {
-        log.Fatal(err)
-    }
-
-    // Write data to the writer...
-
-    reader, err := s.ReadObj(offset)
-    if err != nil {
-        log.Fatal(err)
-    }
-
-    // Read data from the reader...
-}
-```
-
-## Contributing
-
-Feel free to submit issues or pull requests to improve the bobbob project.
+There is clearly much to be done...

@@ -5,7 +5,7 @@ import (
 	"log"
 	"os"
 
-	"bobbob/internal/store"
+	"github.com/cbehopkins/bobbob/internal/store"
 )
 
 func main() {
@@ -14,7 +14,7 @@ func main() {
 	}
 
 	filePath := os.Args[1]
-	s, err := store.NewBob(filePath)
+	s, err := store.NewStore(filePath)
 	if err != nil {
 		log.Fatalf("Failed to create store: %v", err)
 	}
@@ -35,7 +35,7 @@ func main() {
 
 	fmt.Printf("Data written at offset: %d\n", offset)
 
-	reader, err := s.ReadObj(offset)
+	reader, err := s.ReadObj(store.ObjectId(offset))
 	if err != nil {
 		log.Fatalf("Failed to read object: %v", err)
 	}
