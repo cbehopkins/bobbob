@@ -2,20 +2,23 @@ package yggdrasil
 
 import (
 	"math/rand"
+	"path/filepath"
 	"testing"
 
 	"github.com/cbehopkins/bobbob/internal/store"
 )
 
 func setupTestStore(t *testing.T) *store.Store {
-	store, err := store.NewStore("test_store.bin")
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
-	return store
+    tempDir := t.TempDir()
+    tempFile := filepath.Join(tempDir, "test_store.bin")
+    store, err := store.NewStore(tempFile)
+    if err != nil {
+        t.Fatalf("Failed to create store: %v", err)
+    }
+    return store
 }
 
-func TestPersistentTreap(t *testing.T) {
+func TestPersistentTreapBasics(t *testing.T) {
 	store := setupTestStore(t)
 	defer store.Close()
 
@@ -62,4 +65,121 @@ func TestPersistentTreap(t *testing.T) {
 			t.Errorf("Expected not to find key %d in the treap, but it was found", *key)
 		}
 	}
+
+	// Test UpdatePriority
+	keyToUpdate := keys[2]
+	newPriority := Priority(200)
+	treap.UpdatePriority(keyToUpdate, newPriority)
+	updatedNode := treap.Search(keyToUpdate)
+	if updatedNode == nil {
+		t.Errorf("Expected to find key %d in the treap after updating priority, but it was not found", *keyToUpdate)
+	} else if updatedNode.GetPriority() != newPriority {
+		t.Errorf("Expected priority %d, but got %d", newPriority, updatedNode.GetPriority())
+	}
+}
+
+func TestPersistentTreapNodeMarshalUnmarshal(t *testing.T) {
+    store := setupTestStore(t)
+    defer store.Close()
+
+    key := MockIntKey(42)
+    priority := Priority(100)
+    node := NewPersistentTreapNode(&key, priority, store)
+
+    // Marshal the node
+    data, err := node.Marshal()
+    if err != nil {
+        t.Fatalf("Failed to marshal node: %v", err)
+    }
+
+    // Unmarshal the node
+    unmarshalledNode := &PersistentTreapNode{Store: store}
+    dstKey := MockIntKey(0)
+    err = unmarshalledNode.Unmarshal(data, &dstKey)
+    if err != nil {
+        t.Fatalf("Failed to unmarshal node: %v", err)
+    }
+    tmpKey := unmarshalledNode.GetKey().(*MockIntKey)
+    // Check if the unmarshalled node is equal to the original node
+    if *tmpKey != key {
+        t.Errorf("Expected key %d, got %d", key, *tmpKey)
+    }
+    if unmarshalledNode.GetPriority() != priority {
+        t.Errorf("Expected priority %d, got %d", priority, unmarshalledNode.GetPriority())
+    }
+    if unmarshalledNode.left != nil {
+        t.Errorf("Expected left child to be nil, got %v", unmarshalledNode.left)
+    }
+    if unmarshalledNode.right != nil {
+        t.Errorf("Expected right child to be nil, got %v", unmarshalledNode.right)
+    }
+}
+// Here we want to test that is we add a child to a node, the ObjectId of the node is invalidated.
+func TestPersistentTreapNodeInvalidateObjectId(t *testing.T) {
+    store := setupTestStore(t)
+    defer store.Close()
+
+    key := MockIntKey(42)
+    priority := Priority(100)
+    node := NewPersistentTreapNode(&key, priority, store)
+
+    // Initially, the ObjectId should be -1
+    if node.objectId != -1 {
+        t.Fatalf("Expected initial ObjectId to be -1, got %d", node.ObjectId())
+    }
+
+    // Persist the node to assign an ObjectId
+    err := node.Persist()
+    if err != nil {
+        t.Fatalf("Failed to persist node: %v", err)
+    }
+
+    // Check that the ObjectId is now valid (not -1)
+    if node.objectId == -1 {
+        t.Fatalf("Expected ObjectId to be valid after persisting, got -1")
+    }
+
+    // Add a left child and check if ObjectId is invalidated
+    leftKey := MockIntKey(21)
+    leftNode := NewPersistentTreapNode(&leftKey, Priority(50), store)
+    node.SetLeft(leftNode)
+
+    if node.objectId != -1 {
+        t.Errorf("Expected ObjectId to be invalidated (set to -1) after setting left child, got %d", node.ObjectId())
+    }
+
+    // Persist the node again to assign a new ObjectId
+    err = node.Persist()
+    if err != nil {
+        t.Fatalf("Failed to persist node: %v", err)
+    }
+
+    // Check that the ObjectId is now valid (not -1)
+    if node.objectId == -1 {
+        t.Fatalf("Expected ObjectId to be valid after persisting, got -1")
+    }
+
+    // Add a right child and check if ObjectId is invalidated
+    rightKey := MockIntKey(63)
+    rightNode := NewPersistentTreapNode(&rightKey, Priority(75), store)
+    node.SetRight(rightNode)
+
+    if node.objectId != -1 {
+        t.Errorf("Expected ObjectId to be invalidated (set to -1) after setting right child, got %d", node.ObjectId())
+    }
+    node.Persist()
+    if node.objectId == -1 {
+        t.Fatalf("Expected ObjectId to be valid after persisting, got -1")
+    }
+    previousObjectId := node.objectId
+
+    rightNode.SetPriority(Priority(80))
+    if rightNode.objectId != -1 {
+        t.Errorf("Expected ObjectId to be invalidated (set to -1) after setting right child's priority, got %d", rightNode.ObjectId())
+    }
+    node.Persist()
+
+    if node.objectId == previousObjectId || node.objectId == -1 { 
+        t.Errorf("Expected ObjectId updated after setting right child's priority, got %d", node.objectId)
+    }
 }

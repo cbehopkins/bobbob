@@ -30,12 +30,19 @@ func setupTestStore(t *testing.T) (string, *Store) {
 }
 
 func createObject(t *testing.T, store *Store, data []byte) ObjectId {
-	objId, writer, err := store.WriteNewObj(len(data))
+	objId, err := store.NewObj(len(data))
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	writer, closer, err := store.WriteToObj(objId)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
 	if _, err := writer.Write(data); err != nil {
 		t.Fatalf("expected no error writing data, got %v", err)
+	}
+	if err := closer(); err != nil {
+		t.Fatalf("expected no error closing writer, got %v", err)
 	}
 	return ObjectId(objId)
 }
@@ -71,7 +78,12 @@ func TestWriteNewObj(t *testing.T) {
 	defer os.RemoveAll(dir)
 	defer store.Close()
 
-	objectId, writer, err := store.WriteNewObj(10)
+	objectId, err := store.NewObj(10)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	writer, closer, err := store.WriteToObj(objectId)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -79,6 +91,9 @@ func TestWriteNewObj(t *testing.T) {
 	data := []byte("testdata")
 	if _, err := writer.Write(data); err != nil {
 		t.Fatalf("expected no error writing data, got %v", err)
+	}
+	if err := closer(); err != nil {
+		t.Fatalf("expected no error closing writer, got %v", err)
 	}
 
 	if objectId != 8 { // Initial offset is 8 bytes

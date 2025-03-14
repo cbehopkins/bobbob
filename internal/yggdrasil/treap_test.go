@@ -16,6 +16,10 @@ func mockIntLess(a, b any) bool {
 
 type MockIntKey int32
 
+func (k MockIntKey) New() PersistentKey {
+    v := MockIntKey(-1)
+    return &v
+}
 func (k MockIntKey) SizeInBytes() int {
 	return 4
 }
@@ -24,6 +28,13 @@ func (k MockIntKey) GetObjectId(s *store.Store) store.ObjectId {
 	return store.ObjectId(k)
 }
 
+func (k MockIntKey) MarshalToObjectId() (store.ObjectId, error) {
+    return store.ObjectId(k), nil
+}
+func (k *MockIntKey) UnmarshalFromObjectId(id store.ObjectId) error {
+    *k = MockIntKey(id)
+    return nil
+}
 func (k MockIntKey) Marshal() ([]byte, error) {
 	buf := make([]byte, 4)
 	binary.LittleEndian.PutUint32(buf, uint32(k))
@@ -100,6 +111,17 @@ func TestTreap(t *testing.T) {
 		if node != nil && !node.IsNil() {
 			t.Errorf("Expected not to find key %d in the treap, but it was found", *key)
 		}
+	}
+
+	// Test UpdatePriority
+	keyToUpdate := keys[2]
+	newPriority := Priority(200)
+	treap.UpdatePriority(keyToUpdate, newPriority)
+	updatedNode := treap.Search(keyToUpdate)
+	if updatedNode == nil {
+		t.Errorf("Expected to find key %d in the treap after updating priority, but it was not found", *keyToUpdate)
+	} else if updatedNode.GetPriority() != newPriority {
+		t.Errorf("Expected priority %d, but got %d", newPriority, updatedNode.GetPriority())
 	}
 }
 

@@ -23,10 +23,10 @@ func (id ObjectId) Marshal() ([]byte, error) {
 
 // Unmarshal converts a fixed length bytes encoding into an ObjectId
 func (id *ObjectId) Unmarshal(data []byte) error {
-	if len(data) != 8 {
+	if len(data) < 8 {
 		return errors.New("invalid data length for ObjectId")
 	}
-	*id = ObjectId(binary.LittleEndian.Uint64(data))
+	*id = ObjectId(binary.LittleEndian.Uint64(data[:8]))
 	return nil
 }
 
@@ -69,8 +69,9 @@ func (lut *ObjectIdLut) Unmarshal(data []byte) error {
 }
 
 type ObjectInfo struct {
-	Offset FileOffset
-	Size   int
+	Offset    FileOffset
+	Size      int
+	allocator *Allocator
 }
 
 type ObjectMap map[ObjectId]ObjectInfo

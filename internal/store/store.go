@@ -25,6 +25,12 @@ type Store struct {
 	allocator     *Allocator
 }
 
+type ObjectInfo struct {
+	Offset    FileOffset
+	Size      int
+	allocator *Allocator
+}
+
 // Helper function to check if the file is initialized
 func (s *Store) checkFileInitialized() error {
 	if s.file == nil {
@@ -72,7 +78,7 @@ func NewStore(filePath string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	store.objectMap[0] = ObjectInfo{Offset: 0, Size: 8}
+	store.objectMap[0] = ObjectInfo{Offset: 0, Size: 8, allocator: store.allocator}
 	store.allocator.end = 8
 	return store, nil
 }
@@ -119,6 +125,11 @@ func LoadStore(filePath string) (*Store, error) {
 		objectMap: objectMap,
 		allocator: allocator,
 	}
+	// Assign allocator to each ObjectInfo
+	for id, obj := range store.objectMap {
+		obj.allocator = allocator
+		store.objectMap[id] = obj
+	}
 	// FIXME this should be done in its own go routine
 	err = allocator.RefreshFreeList(store)
 	if err != nil {
@@ -126,19 +137,34 @@ func LoadStore(filePath string) (*Store, error) {
 	}
 	return store, nil
 }
+// NewObj allocates a new object without writing to it immediately
+func (oi *ObjectInfo) NewObj(size int) (ObjectId, error) {
+	if oi.allocator == nil {
+		return 0, errors.New("allocator is not initialized")
+	}
+	objId, fileOffset, err := oi.allocator.Allocate(size)
+	if err != nil {
+		return 0, err
+	}
+	oi.Offset = fileOffset
+	oi.Size = size
+	return objId, nil
+}
+
 // NewObj is the externally visible interface when you want to just allocate an object
 // But you don't want to write to it immediately
 func (s *Store) NewObj(size int) (ObjectId, error) {
 	if s.file == nil {
 		return 0, errors.New("store is not initialized")
 	}
-	objId, fileOffset, err := s.allocator.Allocate(size)
+	objInfo := &ObjectInfo{allocator: s.allocator}
+	objId, err := objInfo.NewObj(size)
 	if err != nil {
 		return 0, err
 	}
 
 	s.objectMapLock.Lock()
-	s.objectMap[objId] = ObjectInfo{Offset: fileOffset, Size: size}
+	s.objectMap[objId] = *objInfo
 	s.objectMapLock.Unlock()
 
 	return objId, nil
@@ -189,7 +215,7 @@ func (s *Store) WriteNewObjFromBytes(data []byte) (ObjectId, error) {
 // WriteToObj writes to an existing object in the store
 // This is something that should be done with extreme caution and avoided where possible
 // Only one writer should be allowed to write to an object at a time
-// If multiple writers try to write, then they (will be one implemented) queued
+// If multiple writers try to write, then they (FIXME will be one implemented) queued
 func (s *Store) WriteToObj(objectId ObjectId) (io.Writer, func() error, error) {
 	if s.file == nil {
 		return nil, nil, errors.New("store is not initialized")
@@ -203,16 +229,31 @@ func (s *Store) WriteToObj(objectId ObjectId) (io.Writer, func() error, error) {
 	}
 	writer := NewSectionWriter(s.file, int64(obj.Offset), int64(obj.Size))
 	return writer, s.createCloser(objectId), nil
+} 
+func (s *Store) WriteBytesToObj(data []byte, objectId ObjectId) error {
+	writer, closer, err := s.WriteToObj(objectId)
+	if err != nil {
+		return err
+	}
+	defer closer()
+	
+	n, err := writer.Write(data)
+	if err != nil {
+		return err
+	}
+	if n != len(data) {
+		return errors.New("did not write all the data")
+	}
+	return nil
 }
-
 func (s *Store) createCloser(objectId ObjectId) func() error {
 	return func() error {
-		defer func() {
-			err := s.file.Sync()
-			if err != nil {
-				panic("Error syncing file: " + err.Error())
-			}
-		}()
+		// defer func() {
+		// 	err := s.file.Sync()
+		// 	if err != nil {
+		// 		panic("Error syncing file: " + err.Error())
+		// 	}
+		// }()
 		s.objectMapLock.RLock()
 		defer s.objectMapLock.RUnlock()
 		_, found := s.objectMap[objectId]

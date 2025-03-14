@@ -12,12 +12,6 @@ type Key interface {
 	GetObjectId(*store.Store) store.ObjectId
 }
 
-type PersistentKey interface {
-	Key
-	Marshal() ([]byte, error)
-	Unmarshal([]byte) error
-}
-
 type Priority uint32
 
 func (p Priority) SizeInBytes() int {
@@ -31,10 +25,10 @@ func (p Priority) Marshal() ([]byte, error) {
 }
 
 func (p *Priority) Unmarshal(data []byte) error {
-	if len(data) != 4 {
+	if len(data) < 4 {
 		return errors.New("invalid data length for Priority")
 	}
-	*p = Priority(binary.LittleEndian.Uint32(data))
+	*p = Priority(binary.LittleEndian.Uint32(data[:4]))
 	return nil
 }
 
@@ -42,11 +36,12 @@ func (p *Priority) Unmarshal(data []byte) error {
 type TreapNodeInterface interface {
 	GetKey() Key
 	GetPriority() Priority
+	SetPriority(Priority)
 	GetLeft() TreapNodeInterface
 	GetRight() TreapNodeInterface
 	SetLeft(TreapNodeInterface)
 	SetRight(TreapNodeInterface)
-	IsNil() bool
+    IsNil() bool
 }
 
 // TreapNode represents a node in the treap.
@@ -66,6 +61,9 @@ func (n *TreapNode) GetKey() Key {
 func (n *TreapNode) GetPriority() Priority {
 	return n.priority
 }
+func (n *TreapNode) SetPriority(p Priority) {
+    n.priority = p
+}
 
 // GetLeft returns the left child of the node.
 func (n *TreapNode) GetLeft() TreapNodeInterface {
@@ -79,11 +77,19 @@ func (n *TreapNode) GetRight() TreapNodeInterface {
 
 // SetLeft sets the left child of the node.
 func (n *TreapNode) SetLeft(left TreapNodeInterface) {
+    if left == nil {
+        n.left = nil
+        return
+    }
 	n.left = left.(*TreapNode)
 }
 
 // SetRight sets the right child of the node.
 func (n *TreapNode) SetRight(right TreapNodeInterface) {
+    if right == nil {
+        n.right = nil
+        return
+    }
 	n.right = right.(*TreapNode)
 }
 
@@ -164,19 +170,24 @@ func (t *Treap) delete(node TreapNodeInterface, key any) TreapNodeInterface {
 	} else if t.Less(node.GetKey(), key) {
 		node.SetRight(t.delete(node.GetRight(), key))
 	} else {
-		if node.GetLeft() == nil {
-			return node.GetRight()
-		} else if node.GetRight() == nil {
-			return node.GetLeft()
-		} else {
-			if node.GetLeft().GetPriority() > node.GetRight().GetPriority() {
-				node = t.rotateRight(node)
-				node.SetRight(t.delete(node.GetRight(), key))
-			} else {
-				node = t.rotateLeft(node)
-				node.SetLeft(t.delete(node.GetLeft(), key))
-			}
+        left := node.GetLeft().(*TreapNode)
+        right := node.GetRight().(*TreapNode)
+
+		if left == nil {
+			return right
+		} 
+        if right == nil {
+			return left
 		}
+        leftPriority:= left.GetPriority()
+        rightPriority:= right.GetPriority()
+        if leftPriority > rightPriority {
+            node = t.rotateRight(node)
+            node.SetRight(t.delete(node.GetRight(), key))
+        } else {
+            node = t.rotateLeft(node)
+            node.SetLeft(t.delete(node.GetLeft(), key))
+        }
 	}
 
 	return node
@@ -213,6 +224,16 @@ func (t *Treap) Delete(key Key) {
 // Search searches for the node with the given key in the treap.
 func (t *Treap) Search(key Key) TreapNodeInterface {
 	return t.search(t.root, key)
+}
+
+// UpdatePriority updates the priority of the node with the given key.
+func (t *Treap) UpdatePriority(key Key, newPriority Priority) {
+	node := t.Search(key)
+	if node != nil && !node.IsNil() {
+		node.SetPriority(newPriority)
+		t.Delete(key)
+		t.Insert(key, newPriority)
+	}
 }
 
 // Walk traverses the treap in order and calls the callback function on each node.
