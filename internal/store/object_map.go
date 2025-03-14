@@ -68,12 +68,6 @@ func (lut *ObjectIdLut) Unmarshal(data []byte) error {
 	return nil
 }
 
-type ObjectInfo struct {
-	Offset    FileOffset
-	Size      int
-	allocator *Allocator
-}
-
 type ObjectMap map[ObjectId]ObjectInfo
 
 func (om ObjectMap) Serialize() ([]byte, error) {
