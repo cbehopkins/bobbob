@@ -8,8 +8,12 @@ import (
 )
 
 type ObjectId int64
+
 type FileOffset int64
 
+func (id ObjectId) SizeInBytes() int {
+	return 8
+}
 // Marshal converts the ObjectId into a fixed length bytes encoding
 func (id ObjectId) Marshal() ([]byte, error) {
 	buf := make([]byte, 8)

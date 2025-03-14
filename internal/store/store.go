@@ -9,6 +9,9 @@ import (
 	"slices"
 	"sync"
 )
+var ObjNotWritten = ObjectId(-1)
+var ObjNotAllocated = ObjectId(-2)
+var objNotPreAllocated = ObjectId(-3)
 
 // ObjReader is an interface for getting an io.Reader for an object
 type ObjReader interface {
@@ -28,20 +31,6 @@ func (s *Store) checkFileInitialized() error {
 		return errors.New("store is not initialized")
 	}
 	return nil
-}
-
-// Helper function to write data to the file
-func (s *Store) writeData(data []byte) (ObjectId, io.Writer, error) {
-	offset, writer, err := s.WriteNewObj(len(data))
-	if err != nil {
-		return 0, nil, err
-	}
-
-	if _, err := writer.Write(data); err != nil {
-		return 0, nil, err
-	}
-
-	return offset, writer, nil
 }
 
 // Helper function to update the initial offset in the file
@@ -137,13 +126,28 @@ func LoadStore(filePath string) (*Store, error) {
 	}
 	return store, nil
 }
+// NewObj is the externally visible interface when you want to just allocate an object
+// But you don't want to write to it immediately
+func (s *Store) NewObj(size int) (ObjectId, error) {
+	if s.file == nil {
+		return 0, errors.New("store is not initialized")
+	}
+	objId, fileOffset, err := s.allocator.Allocate(size)
+	if err != nil {
+		return 0, err
+	}
 
+	s.objectMapLock.Lock()
+	s.objectMap[objId] = ObjectInfo{Offset: fileOffset, Size: size}
+	s.objectMapLock.Unlock()
+
+	return objId, nil
+}
 func (s *Store) WriteNewObj(size int) (ObjectId, io.Writer, error) {
 	if s.file == nil {
 		return 0, nil, errors.New("store is not initialized")
 	}
 
-	// offset, err := s.file.Seek(0, io.SeekEnd)
 	objId, fileOffset, err := s.allocator.Allocate(size)
 	if err != nil {
 		return 0, nil, err
@@ -153,15 +157,35 @@ func (s *Store) WriteNewObj(size int) (ObjectId, io.Writer, error) {
 	// Create a writer that writes to the file
 	writer := io.Writer(s.file)
 
-	// A New Object is always allocated end of the current file
-	// FIXME we should actually maintain a free list and use that but...
 	s.objectMapLock.Lock()
 	s.objectMap[objId] = ObjectInfo{Offset: fileOffset, Size: size}
 	s.objectMapLock.Unlock()
 
 	return objId, writer, nil
 }
+func (s *Store) WriteNewObjFromBytes(data []byte) (ObjectId, error) {
+	size := len(data)
+	if s.file == nil {
+		return 0, errors.New("store is not initialized")
+	}
 
+	objId, fileOffset, err := s.allocator.Allocate(size)
+	if err != nil {
+		return 0, err
+	}
+
+	// Write the data to the file
+	_, err = s.file.WriteAt(data, int64(fileOffset))
+	if err != nil {
+		return 0, err
+	}
+
+	s.objectMapLock.Lock()
+	s.objectMap[objId] = ObjectInfo{Offset: fileOffset, Size: size}
+	s.objectMapLock.Unlock()
+
+	return objId, nil
+}
 // WriteToObj writes to an existing object in the store
 // This is something that should be done with extreme caution and avoided where possible
 // Only one writer should be allowed to write to an object at a time
@@ -214,6 +238,11 @@ func (s *Store) ReadObj(offset ObjectId) (io.Reader, error) {
 	return reader, nil
 }
 func (s *Store) DeleteObj(objId ObjectId) error {
+	// FIXME Complex types have one object that points to others
+	// We need a method that lists all the objects that are part of a complex object
+	// And then we recursively delete them
+	// However we canly do that on the Unmarshalled type - so we do not have that information here
+	// Therefore complex Objects need to implement a delete method
 	if err := s.checkFileInitialized(); err != nil {
 		return err
 	}
@@ -250,7 +279,7 @@ func (s *Store) Close() error {
 		return err
 	}
 
-	objId, _, err := s.writeData(data)
+	objId, err := s.WriteNewObjFromBytes(data)
 	if err != nil {
 		return err
 	}

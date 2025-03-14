@@ -1,7 +1,11 @@
 package chain
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
+
+	"github.com/cbehopkins/bobbob/internal/store"
 )
 
 func TestChainAndLink(t *testing.T) {
@@ -155,4 +159,141 @@ func TestInsertElement(t *testing.T) {
 	if len(chain.head.next.elements) != 3 || chain.head.next.elements[0] != "element3" || chain.head.next.elements[1] != "element4" || chain.head.next.elements[2] != "element5" {
 		t.Errorf("unexpected elements in second link: %v", chain.head.next.elements)
 	}
+}
+
+func setupTestStore(t *testing.T) (string, *store.Store) {
+	dir, err := os.MkdirTemp("", "store_test")
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	filePath := filepath.Join(dir, "testfile.bin")
+	store, err := store.NewStore(filePath)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	return dir, store
+}
+func TestChainMarshalUnmarshalOneInt(t *testing.T) {
+	dir, store := setupTestStore(t)
+	defer os.RemoveAll(dir)
+	defer store.Close()
+
+	// Create a Chain
+	createLink := func() *Link {
+		return NewLink(10)
+	}
+	less := func(i, j any) bool {
+		return i.(int) < j.(int)
+	}
+	c := NewChain(createLink, less)
+	c.store = store
+
+	// Add a single integer into the chain via InsertElement
+	element := 42
+	err := c.InsertElement(element)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	// Marshal the head link
+	data, err := c.head.Marshal()
+	if err != nil {
+		t.Fatalf("expected no error marshalling link, got %v", err)
+	}
+
+	// Unmarshal the data into a new Link
+	newLink := NewLink(16)
+	newLink.chain = c
+
+	err = newLink.Unmarshal(data, func() any {var i int64; return &i})
+	if err != nil {
+		t.Fatalf("expected no error unmarshalling link, got %v", err)
+	}
+	newElement := newLink.elements[0]
+	newVal, ok := newElement.(*int64)
+	if !ok {
+		t.Fatalf("expected element to be an *int64, got %T", newElement)
+	}
+	if *newVal != 42 {
+		t.Fatalf("expected newVal to be 42, got %d", newVal)
+	}
+}
+
+func TestChainGrowth(t *testing.T) {
+    // Create a Chain with a max link size of 4
+    createLink := func() *Link {
+        return NewLink(4)
+    }
+    less := func(i, j any) bool {
+        return *i.(*int32) < *j.(*int32)
+    }
+    c := NewChain(createLink, less)
+
+    // Add 12 objects to the chain
+    for i := int32(0); i < 12; i++ {
+        val := i
+        err := c.InsertElement(&val)
+        if err != nil {
+            t.Fatalf("expected no error, got %v", err)
+        }
+    }
+
+    // Count the number of links in the chain
+    linkCount := 0
+    for link := c.head; link != nil; link = link.next {
+        linkCount++
+    }
+
+    // Check if the number of links is as expected
+    expectedLinks := 3
+    if linkCount != expectedLinks {
+        t.Errorf("expected %d links, got %d", expectedLinks, linkCount)
+    }
+}
+func TestLinkSort(t *testing.T) {
+    // Create a mock mockStore
+	dir, mockStore := setupTestStore(t)
+	defer os.RemoveAll(dir)
+	defer mockStore.Close()
+
+
+    // Create a chain with a simple less function for integers
+    chain := NewChain(func() *Link {
+        return NewLink(10)
+    }, func(i, j any) bool {
+        return i.(int) < j.(int)
+    })
+    chain.store = mockStore
+
+	elementMapping := make(map[int]int)
+	elementMapping[1] = 1
+	elementMapping[5] = 9
+	elementMapping[3] = 16
+	elementMapping[8] = 3
+	elementMapping[7] = 8
+
+    // Create a link and add elements
+    link := chain.AddLink(nil)
+
+	for key, value:= range elementMapping {
+		link.AddElementAndObj(key, store.ObjectId(value))
+	}
+
+    // Sort the link
+    link.Sort(nil)
+
+    // Verify that elements are sorted
+    expectedElements := []int{1, 3, 5, 7, 8}
+    for i, element := range link.elements {
+        if element.(int) != expectedElements[i] {
+            t.Errorf("expected element %d, got %d", expectedElements[i], element.(int))
+        }
+		actualObjId := int(link.elementsFileObjIds[i] )
+		expectedObjId := elementMapping[element.(int)]
+		if actualObjId != expectedObjId {
+			t.Errorf("expected object ID %d, got %d", expectedObjId, actualObjId)
+		}
+    }
 }

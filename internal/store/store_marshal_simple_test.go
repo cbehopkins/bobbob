@@ -1,23 +1,14 @@
 package store
 
 import (
-    "encoding/json"
-    "os"
-    "testing"
+	"encoding/json"
+	"os"
+	"testing"
 )
 
 // MockMarSimple is a mock implementation of the MarshalSimple and UnmarshalSimple interfaces
 type MockMarSimple struct {
     StringValue string
-}
-
-// PreMarshal returns the size needed by AllocateObjects
-func (m *MockMarSimple) PreMarshal() ([]int, error) {
-    data, err := m.Marshal()
-    if err != nil {
-        return nil, err
-    }
-    return []int{len(data)}, nil
 }
 
 // Marshal marshals the MockMarSimple to JSON
@@ -41,34 +32,42 @@ func TestMarshalSimple(t *testing.T) {
     }
 
     // Write the simple type to the store
-    objectSizes, err := store.PreMarshalGeneric(mock)
+    objectId, err := store.WriteGeneric(mock)
     if err != nil {
-        t.Fatalf("PreMarshalGeneric failed: %v", err)
-    }
-    objectIds, err := store.AllocateObjects(objectSizes)
-    if err != nil {
-        t.Fatalf("AllocateObjects failed: %v", err)
-    }
-
-    _, objectAndByteFuncs, err := store.MarshalMultipleGeneric(mock, objectIds)
-    if err != nil {
-        t.Fatalf("MarshalMultipleGeneric failed: %v", err)
-    }
-
-    err = store.WriteObjects(objectAndByteFuncs)
-    if err != nil {
-        t.Fatalf("WriteObjects failed: %v", err)
+        t.Fatalf("marshalSimpleObj failed: %v", err)
     }
 
     // Read back the object
     newMock := &MockMarSimple{}
-    err = store.UnmarshalMultipleGeneric(newMock, objectIds[0])
+    err = store.ReadGeneric(newMock, objectId)
     if err != nil {
-        t.Fatalf("UnmarshalMultipleGeneric failed: %v", err)
+        t.Fatalf("ReadGeneric failed: %v", err)
     }
 
     // Verify the unmarshalled data
     if newMock.StringValue != "Hello, World!" {
         t.Errorf("Expected StringValue 'Hello, World!', got '%s'", newMock.StringValue)
+    }
+}
+
+func TestInterfaceCruft(t *testing.T) {
+    dir, store := setupTestStore(t)
+    defer os.RemoveAll(dir)
+    defer store.Close()
+
+    objId, err := store.WriteGeneric(int64(42))   
+    if err != nil {
+        t.Fatalf("WriteGeneric failed: %v", err)
+    }
+	newObj := func() any {
+		var i int64
+        // Because we unmarshal into it
+        // It must be a pointer so it can be modified
+		return &i
+	}
+
+    err = store.ReadGeneric(newObj(), objId)
+    if err != nil {
+        t.Fatal(err)
     }
 }

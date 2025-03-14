@@ -79,6 +79,9 @@ func (m *MockStruct) MarshalMultiple(objectIds []ObjectId) (func() ObjectId, []O
 
 	return func() ObjectId { return objectIds[0] }, objectAndByteFuncs, nil
 }
+func (m *MockStruct) Delete() error {
+	return nil
+}
 
 // UnmarshalMultiple unmarshals the MockStruct from the store using the ObjectId LUT
 func (m *MockStruct) UnmarshalMultiple(objReader io.Reader, reader ObjReader) error {
@@ -280,30 +283,6 @@ func TestWriteComplexTypes(t *testing.T) {
 	}
 }
 
-func TestPreMarshalGeneric(t *testing.T) {
-	store := &Store{}
-
-	// Test with a MarshalComplex type
-	mock := &MockStruct{}
-	sizes, err := store.PreMarshalGeneric(mock)
-	if err != nil {
-		t.Fatalf("PreMarshalGeneric failed: %v", err)
-	}
-	expectedSizes := []int{16, 8, 8}
-	if !equalIntSlices(sizes, expectedSizes) {
-		t.Errorf("Expected sizes %v, got %v", expectedSizes, sizes)
-	}
-
-	// Test with an integer type
-	sizes, err = store.PreMarshalGeneric(42)
-	if err != nil {
-		t.Fatalf("PreMarshalGeneric failed: %v", err)
-	}
-	if len(sizes) != 1 || sizes[0] != 8 {
-		t.Errorf("Expected size [8], got %v", sizes)
-	}
-}
-
 func TestMarshalMultipleGeneric(t *testing.T) {
 	dir, store := setupTestStore(t)
 	defer os.RemoveAll(dir)
@@ -318,56 +297,22 @@ func TestMarshalMultipleGeneric(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PreMarshal failed: %v", err)
 	}
-	objectIds, err := store.AllocateObjects(objectLengths)
+	objectIds, err := store.allocateObjects(objectLengths)
 	if err != nil {
 		t.Fatalf("AllocateObjects failed: %v", err)
 	}
 
-	_, objectAndByteFuncs, err := store.MarshalMultipleGeneric(mock, objectIds)
+	_, objectAndByteFuncs, err := mock.MarshalMultiple(objectIds)
 	if err != nil {
 		t.Fatalf("MarshalMultipleGeneric failed: %v", err)
 	}
 
-	err = store.WriteObjects(objectAndByteFuncs)
+	err = store.writeObjects(objectAndByteFuncs)
 	if err != nil {
 		t.Fatalf("WriteObjects failed: %v", err)
 	}
 }
 
-func TestUnmarshalMultipleGenericInts(t *testing.T) {
-	dir, store := setupTestStore(t)
-	defer os.RemoveAll(dir)
-	defer store.Close()
-
-	ourInt := 42
-	objectSizes, err := store.PreMarshalGeneric(ourInt)
-	if err != nil {
-		t.Fatalf("PreMarshalGeneric failed: %v", err)
-	}
-	objectIds, err := store.AllocateObjects(objectSizes)
-	if err != nil {
-		t.Fatalf("AllocateObjects failed: %v", err)
-	}
-
-	identityFunc, objectAndByteFuncs, err := store.MarshalMultipleGeneric(ourInt, objectIds)
-	if err != nil {
-		t.Fatalf("MarshalMultipleGeneric failed: %v", err)
-	}
-
-	err = store.WriteObjects(objectAndByteFuncs)
-	if err != nil {
-		t.Fatalf("WriteObjects failed: %v", err)
-	}
-
-	var newInt int
-	err = store.UnmarshalMultipleGeneric(&newInt, identityFunc())
-	if err != nil {
-		t.Fatalf("UnmarshalMultipleGeneric failed: %v", err)
-	}
-	if newInt != ourInt {
-		t.Errorf("Expected %d, got %d", ourInt, newInt)
-	}
-}
 
 func TestUnmarshalMultipleGenericMockStruct(t *testing.T) {
 	dir, store := setupTestStore(t)
@@ -383,7 +328,7 @@ func TestUnmarshalMultipleGenericMockStruct(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PreMarshal failed: %v", err)
 	}
-	objectIds, err := store.AllocateObjects(objectLengths)
+	objectIds, err := store.allocateObjects(objectLengths)
 	if err != nil {
 		t.Fatalf("AllocateObjects failed: %v", err)
 	}
@@ -392,16 +337,16 @@ func TestUnmarshalMultipleGenericMockStruct(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MarshalMultiple failed: %v", err)
 	}
-	err = store.WriteObjects(objectAndByteFuncs)
+	err = store.writeObjects(objectAndByteFuncs)
 	if err != nil {
 		t.Fatalf("WriteObjects failed: %v", err)
 	}
 
 	// Test with a MarshalComplex type
 	newMock := &MockStruct{}
-	err = store.UnmarshalMultipleGeneric(newMock, identityFunc())
+	err = store.unmarshalComplexObj(newMock, identityFunc())
 	if err != nil {
-		t.Fatalf("UnmarshalMultipleGeneric failed: %v", err)
+		t.Fatalf("unmarshalComplexObj failed: %v", err)
 	}
 	if newMock.IntValue != 42 {
 		t.Errorf("Expected IntValue 42, got %d", newMock.IntValue)

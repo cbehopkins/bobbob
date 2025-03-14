@@ -18,11 +18,11 @@ func (h GapHeap) Len() int           { return len(h) }
 func (h GapHeap) Less(i, j int) bool { return h[i].End-h[i].Start < h[j].End-h[j].Start }
 func (h GapHeap) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
 
-func (h *GapHeap) Push(x interface{}) {
+func (h *GapHeap) Push(x any) {
 	*h = append(*h, x.(Gap))
 }
 
-func (h *GapHeap) Pop() interface{} {
+func (h *GapHeap) Pop() any {
 	old := *h
 	n := len(old)
 	x := old[n-1]
