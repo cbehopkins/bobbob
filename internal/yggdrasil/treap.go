@@ -6,27 +6,32 @@ import (
 
 	"github.com/cbehopkins/bobbob/internal/store"
 )
-type Key interface{
-    SizeInBytes() int
-    GetObjectId(*store.Store) store.ObjectId
-    Marshal() ([]byte, error)
-    Unmarshal([]byte) (Key, error)
+
+type Key interface {
+	SizeInBytes() int
+	GetObjectId(*store.Store) store.ObjectId
+	Marshal() ([]byte, error)
+	Unmarshal([]byte) error
 }
+
 type Priority uint32
 
 func (p Priority) SizeInBytes() int {
 	return 4
 }
+
 func (p Priority) Marshal() ([]byte, error) {
 	buf := make([]byte, 4)
 	binary.LittleEndian.PutUint32(buf, uint32(p))
 	return buf, nil
 }
-func (p Priority) Unmarshal(data []byte) (Priority, error) {
+
+func (p *Priority) Unmarshal(data []byte) error {
 	if len(data) != 4 {
-		return 0, errors.New("invalid data length for Priority")
+		return errors.New("invalid data length for Priority")
 	}
-	return Priority(binary.LittleEndian.Uint32(data)), nil
+	*p = Priority(binary.LittleEndian.Uint32(data))
+	return nil
 }
 
 // TreapNodeInterface defines the interface for a node in the treap.
