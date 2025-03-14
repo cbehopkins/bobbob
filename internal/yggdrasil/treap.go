@@ -10,6 +10,10 @@ import (
 type Key interface {
 	SizeInBytes() int
 	GetObjectId(*store.Store) store.ObjectId
+}
+
+type PersistentKey interface {
+	Key
 	Marshal() ([]byte, error)
 	Unmarshal([]byte) error
 }
