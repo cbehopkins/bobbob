@@ -29,30 +29,33 @@ func (h *GapHeap) Pop() any {
 	*h = old[0 : n-1]
 	return x
 }
-
-// Allocator is a struct to manage the allocation of space in the file
+// type Allocator interface  {
+// 	Allocate(size int) (ObjectId, FileOffset, error)
+// 	Free(fileOffset FileOffset, size int) error
+// }
+// BasicAllocator is a struct to manage the allocation of space in the file
 // FIXME freelist should be stored on disk
-type Allocator struct {
+type BasicAllocator struct {
 	freeList GapHeap
 	end      int64
 }
 
-func NewAllocator(file *os.File) (*Allocator, error) {
+func NewAllocator(file *os.File) (*BasicAllocator, error) {
 	offset, err := file.Seek(0, io.SeekEnd)
 	if err != nil {
 		return nil, err
 	}
-	return &Allocator{end: offset, freeList: make(GapHeap, 0)}, nil
+	return &BasicAllocator{end: offset, freeList: make(GapHeap, 0)}, nil
 }
 
 // RefreshFreeList to refresh the free list
 // This is an io intensive function
-func (a *Allocator) RefreshFreeList(s *Store) error {
+func (a *BasicAllocator) RefreshFreeList(s *store) error {
 	return nil
 }
 
 // Allocate to request a new space
-func (a *Allocator) Allocate(size int) (ObjectId, FileOffset, error) {
+func (a *BasicAllocator) Allocate(size int) (ObjectId, FileOffset, error) {
 	var gap Gap
 	if len(a.freeList) > 0 {
 		gap = heap.Pop(&a.freeList).(Gap)
@@ -72,7 +75,7 @@ func (a *Allocator) Allocate(size int) (ObjectId, FileOffset, error) {
 }
 
 // Free to mark the space as free
-func (a *Allocator) Free(fileOffset FileOffset, size int) error {
+func (a *BasicAllocator) Free(fileOffset FileOffset, size int) error {
 	heap.Push(&a.freeList, Gap{int64(fileOffset), int64(fileOffset) + int64(size)})
 	return nil
 }

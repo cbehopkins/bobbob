@@ -161,7 +161,7 @@ func TestInsertElement(t *testing.T) {
 	}
 }
 
-func setupTestStore(t *testing.T) (string, *store.Store) {
+func setupTestStore(t *testing.T) (string, store.Storer) {
 	dir, err := os.MkdirTemp("", "store_test")
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)

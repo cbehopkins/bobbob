@@ -6,23 +6,37 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"slices"
-	"sync"
 )
 var ObjNotWritten = ObjectId(-1)
 var ObjNotAllocated = ObjectId(-2)
 var objNotPreAllocated = ObjectId(-3)
-
+// Finisher is a callback that must be called when you have finished
+// With the request in question
+type Finisher func() error
 // ObjReader is an interface for getting an io.Reader for an object
 type ObjReader interface {
-	ReadObj(id ObjectId) (io.Reader, error)
+	LateReadObj(id ObjectId) (io.Reader, error)
+	ReadGeneric(obj any, objId ObjectId) error
 }
-type Store struct {
-	filePath      string
-	file          *os.File
-	objectMap     ObjectMap
-	objectMapLock sync.RWMutex
-	allocator     *Allocator
+type ObjWriter interface {
+	LateWriteNewObj(size int) (ObjectId, io.Writer, error)
+	WriteToObj(objectId ObjectId) (io.Writer, Finisher, error)
+	WriteBytesToObj(data []byte, objectId ObjectId) error
+	WriteGeneric(obj any) (ObjectId, error)
+}
+type Storer interface {
+	NewObj(size int) (ObjectId, error)
+	DeleteObj(objId ObjectId) error
+	Close() error
+	ObjReader
+	ObjWriter
+}
+
+type store struct {
+	filePath  string
+	file      *os.File
+	objectMap *ObjectMap
+	allocator *BasicAllocator
 }
 
 type ObjectInfo struct {
@@ -31,7 +45,7 @@ type ObjectInfo struct {
 }
 
 // Helper function to check if the file is initialized
-func (s *Store) checkFileInitialized() error {
+func (s *store) checkFileInitialized() error {
 	if s.file == nil {
 		return errors.New("store is not initialized")
 	}
@@ -39,7 +53,7 @@ func (s *Store) checkFileInitialized() error {
 }
 
 // Helper function to update the initial offset in the file
-func (s *Store) updateInitialOffset(fileOffset FileOffset) error {
+func (s *store) updateInitialOffset(fileOffset FileOffset) error {
 	objOffset := int64(fileOffset)
 	offsetBytes := make([]byte, 8)
 	for i := uint(0); i < 8; i++ {
@@ -54,7 +68,7 @@ func (s *Store) updateInitialOffset(fileOffset FileOffset) error {
 }
 
 // NewStore creates a new Store and initializes it with a basic ObjectMap
-func NewStore(filePath string) (*Store, error) {
+func NewStore(filePath string) (*store, error) {
 	if _, err := os.Stat(filePath); err == nil {
 		return LoadStore(filePath)
 	}
@@ -65,11 +79,11 @@ func NewStore(filePath string) (*Store, error) {
 	}
 
 	// Initialize the Store
-	store := &Store{
+	store := &store{
 		filePath:  filePath,
 		file:      file,
-		objectMap: make(ObjectMap),
-		allocator: &Allocator{},
+		objectMap: NewObjectMap(),
+		allocator: &BasicAllocator{},
 	}
 
 	// Write the initial offset (zero) to the store
@@ -77,12 +91,12 @@ func NewStore(filePath string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	store.objectMap[0] = ObjectInfo{Offset: 0, Size: 8}
+	store.objectMap.Set(0, ObjectInfo{Offset: 0, Size: 8})
 	store.allocator.end = 8
 	return store, nil
 }
 
-func LoadStore(filePath string) (*Store, error) {
+func LoadStore(filePath string) (*store, error) {
 	file, err := os.OpenFile(filePath, os.O_RDWR, 0666)
 	if err != nil {
 		return nil, err
@@ -109,16 +123,16 @@ func LoadStore(filePath string) (*Store, error) {
 	}
 
 	// Deserialize the ObjectMap
-	objectMap := make(ObjectMap)
-	err = Unmarshal(data[:n], &objectMap)
+	objectMap := NewObjectMap()
+	err = objectMap.Unmarshal(data[:n])
 	if err != nil {
 		return nil, err
 	}
-	allocator := &Allocator{
+	allocator := &BasicAllocator{
 		end: initialOffset,
 	}
 	// Initialize the Store
-	store := &Store{
+	store := &store{
 		filePath:  filePath,
 		file:      file,
 		objectMap: objectMap,
@@ -136,7 +150,7 @@ func LoadStore(filePath string) (*Store, error) {
 
 // NewObj is the externally visible interface when you want to just allocate an object
 // But you don't want to write to it immediately
-func (s *Store) NewObj(size int) (ObjectId, error) {
+func (s *store) NewObj(size int) (ObjectId, error) {
 	if s.file == nil {
 		return 0, errors.New("store is not initialized")
 	}
@@ -145,13 +159,13 @@ func (s *Store) NewObj(size int) (ObjectId, error) {
 		return 0, err
 	}
 	objInfo := &ObjectInfo{Offset: fileOffset, Size: size}
-	s.objectMapLock.Lock()
-	s.objectMap[objId] = *objInfo
-	s.objectMapLock.Unlock()
+	s.objectMap.Set(objId, *objInfo)
 
 	return objId, nil
 }
-func (s *Store) WriteNewObj(size int) (ObjectId, io.Writer, error) {
+// LateWriteNewObj allows you to allocate an object and write to it later
+// This is useful when you want to write a large object and you don't want to keep it in memory
+func (s *store) LateWriteNewObj(size int) (ObjectId, io.Writer, error) {
 	if s.file == nil {
 		return 0, nil, errors.New("store is not initialized")
 	}
@@ -165,13 +179,13 @@ func (s *Store) WriteNewObj(size int) (ObjectId, io.Writer, error) {
 	// Create a writer that writes to the file
 	writer := io.Writer(s.file)
 
-	s.objectMapLock.Lock()
-	s.objectMap[objId] = ObjectInfo{Offset: fileOffset, Size: size}
-	s.objectMapLock.Unlock()
+	s.objectMap.Set(objId, ObjectInfo{Offset: fileOffset, Size: size})
 
 	return objId, writer, nil
 }
-func (s *Store) WriteNewObjFromBytes(data []byte) (ObjectId, error) {
+// WriteNewObjFromBytes writes a new object to the store from a byte slice
+// This is useful when you have the data in memory and you want to write it to the store
+func (s *store) WriteNewObjFromBytes(data []byte) (ObjectId, error) {
 	size := len(data)
 	if s.file == nil {
 		return 0, errors.New("store is not initialized")
@@ -188,9 +202,7 @@ func (s *Store) WriteNewObjFromBytes(data []byte) (ObjectId, error) {
 		return 0, err
 	}
 
-	s.objectMapLock.Lock()
-	s.objectMap[objId] = ObjectInfo{Offset: fileOffset, Size: size}
-	s.objectMapLock.Unlock()
+	s.objectMap.Set(objId, ObjectInfo{Offset: fileOffset, Size: size})
 
 	return objId, nil
 }
@@ -198,21 +210,22 @@ func (s *Store) WriteNewObjFromBytes(data []byte) (ObjectId, error) {
 // This is something that should be done with extreme caution and avoided where possible
 // Only one writer should be allowed to write to an object at a time
 // If multiple writers try to write, then they (FIXME will be one implemented) queued
-func (s *Store) WriteToObj(objectId ObjectId) (io.Writer, func() error, error) {
+func (s *store) WriteToObj(objectId ObjectId) (io.Writer, Finisher, error) {
 	if s.file == nil {
 		return nil, nil, errors.New("store is not initialized")
 	}
 	// Grabbing a full lock because (unless errors) we are modifying
-	s.objectMapLock.Lock()
-	obj, found := s.objectMap[objectId]
-	s.objectMapLock.Unlock()
+	obj, found := s.objectMap.Get(objectId)
 	if !found {
 		return nil, nil, errors.New("object not found")
 	}
 	writer := NewSectionWriter(s.file, int64(obj.Offset), int64(obj.Size))
 	return writer, s.createCloser(objectId), nil
 } 
-func (s *Store) WriteBytesToObj(data []byte, objectId ObjectId) error {
+// WriteBytesToObj writes a byte slice to an existing object in the store
+// It is preferred to create a new object, write to it and then delete the old object
+// This allows for less risk of file corruption
+func (s *store) WriteBytesToObj(data []byte, objectId ObjectId) error {
 	writer, closer, err := s.WriteToObj(objectId)
 	if err != nil {
 		return err
@@ -228,24 +241,22 @@ func (s *Store) WriteBytesToObj(data []byte, objectId ObjectId) error {
 	}
 	return nil
 }
-func (s *Store) createCloser(objectId ObjectId) func() error {
+func (s *store) createCloser(objectId ObjectId) func() error {
 	return func() error {
-		s.objectMapLock.RLock()
-		defer s.objectMapLock.RUnlock()
-		_, found := s.objectMap[objectId]
+		_, found := s.objectMap.Get(objectId)
 		if !found { // This should never happen
 			return errors.New("object not found in the closer. This is very bad!")
 		}
 		return nil
 	}
 }
-func (s *Store) ReadObj(offset ObjectId) (io.Reader, error) {
+// LateReadObj reads an object from the store
+// Returns a reader so as to not force large objects into memory
+func (s *store) LateReadObj(offset ObjectId) (io.Reader, error) {
 	if err := s.checkFileInitialized(); err != nil {
 		return nil, err
 	}
-	s.objectMapLock.RLock()
-	obj, found := s.objectMap[offset]
-	s.objectMapLock.RUnlock()
+	obj, found := s.objectMap.Get(offset)
 	if !found {
 		return nil, errors.New("object not found")
 	}
@@ -254,7 +265,7 @@ func (s *Store) ReadObj(offset ObjectId) (io.Reader, error) {
 	reader := io.NewSectionReader(s.file, int64(fileOffset), int64(obj.Size))
 	return reader, nil
 }
-func (s *Store) DeleteObj(objId ObjectId) error {
+func (s *store) DeleteObj(objId ObjectId) error {
 	// FIXME Complex types have one object that points to others
 	// We need a method that lists all the objects that are part of a complex object
 	// And then we recursively delete them
@@ -263,20 +274,19 @@ func (s *Store) DeleteObj(objId ObjectId) error {
 	if err := s.checkFileInitialized(); err != nil {
 		return err
 	}
-	s.objectMapLock.Lock()
-	defer s.objectMapLock.Unlock()
-	obj, found := s.objectMap[objId]
+
+	_, found := s.objectMap.GetAndDelete(objId, func(obj ObjectInfo) {
+		s.allocator.Free(obj.Offset, obj.Size)
+	})
 	if !found {
 		return errors.New("object not found")
 	}
 
-	s.allocator.Free(obj.Offset, obj.Size)
-	delete(s.objectMap, objId)
 	return nil
 }
 
 // Sync flushes the file to disk
-func (s *Store) Sync() error {
+func (s *store) Sync() error {
 	if err := s.checkFileInitialized(); err != nil {
 		return err
 	}
@@ -284,14 +294,11 @@ func (s *Store) Sync() error {
 }
 
 // Close closes the store and writes the ObjectMap to disk
-func (s *Store) Close() error {
+func (s *store) Close() error {
 	if err := s.checkFileInitialized(); err != nil {
 		return err
 	}
-	s.objectMapLock.RLock()
-
-	data, err := Marshal(s.objectMap)
-	s.objectMapLock.RUnlock()
+	data, err := s.objectMap.Marshal()
 	if err != nil {
 		return err
 	}
@@ -307,38 +314,4 @@ func (s *Store) Close() error {
 	}
 
 	return s.file.Close()
-}
-
-// FindGaps returns a channel that yields gaps in the objectMap
-func (s *Store) FindGaps() <-chan Gap {
-	gapChan := make(chan Gap)
-
-	go func() {
-		defer close(gapChan)
-
-		s.objectMapLock.RLock()
-		defer s.objectMapLock.RUnlock()
-
-		// Collect all object offsets and sizes
-		var offsets []int64
-		for _, obj := range s.objectMap {
-			offsets = append(offsets, int64(obj.Offset))
-		}
-
-		// Sort the offsets
-		slices.Sort(offsets)
-
-		// Find gaps between objects
-		for i := 1; i < len(offsets); i++ {
-			prevObj := s.objectMap[ObjectId(offsets[i-1])]
-			currOffset := offsets[i]
-
-			prevEnd := int64(prevObj.Offset) + int64(prevObj.Size)
-			if currOffset > prevEnd {
-				gapChan <- Gap{Start: prevEnd, End: currOffset}
-			}
-		}
-	}()
-
-	return gapChan
 }

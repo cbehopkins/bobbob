@@ -13,7 +13,7 @@ import (
 type Chain struct {
 	createLink func() *Link
 	less       func(i, j any) bool
-	store 		*store.Store
+	store 		store.Storer
 	head       *Link
 	tail       *Link
 	UnSorted   bool // New member to specify if the chain is unsorted
@@ -188,7 +188,9 @@ func (l *Link) markStale() {
 	if l.objectId == nil {
 		return
 	}
-	l.chain.store.DeleteObj(*l.objectId)
+	if l.chain.store != nil {
+		l.chain.store.DeleteObj(*l.objectId)
+	}
 	l.objectId = nil
 }
 // AddElement adds an element to the link. If the link exceeds its maximum size, it creates a new link and adds the element there.

@@ -16,7 +16,7 @@ type PersistentTreapNode struct {
     objectId  store.ObjectId
     leftObjectId store.ObjectId
     rightObjectId store.ObjectId
-    Store    *store.Store
+    Store    store.Storer
 }
 
 // GetKey returns the key of the node.
@@ -29,7 +29,7 @@ func (n *PersistentTreapNode) GetPriority() Priority {
     return n.priority
 }
 func (n *PersistentTreapNode) SetPriority(p Priority) {
-    n.objectId = -1
+    n.objectId = store.ObjNotAllocated
     n.priority = p
 }
 // GetLeft returns the left child of the node.
@@ -49,7 +49,7 @@ func (n *PersistentTreapNode) SetLeft(left TreapNodeInterface) {
     if tmp != n.left {
         // Object ID is invalidated if the left child is changed
         n.left = tmp
-        n.objectId = -1
+        n.objectId = store.ObjNotAllocated
     }
 }
 
@@ -60,7 +60,7 @@ func (n *PersistentTreapNode) SetRight(right TreapNodeInterface) {
     if tmp != n.right {
         // Object ID is invalidated if the right child is changed
         n.right = tmp
-        n.objectId = -1
+        n.objectId = store.ObjNotAllocated
     }
 }
 
@@ -81,7 +81,7 @@ func (n *PersistentTreapNode) sizeInBytes() int {
 
 func (n *PersistentTreapNode) ObjectId() store.ObjectId {
     if n == nil {
-        return -1
+        return store.ObjNotAllocated
     }
     if n.objectId < 0 {
         // FIXME ignored error - update to return error
@@ -114,7 +114,7 @@ func (n *PersistentTreapNode) Marshal() ([]byte, error) {
     if newLeftObjectId != n.leftObjectId  || newRightObjectId != n.rightObjectId {
         n.leftObjectId = newLeftObjectId
         n.rightObjectId = newRightObjectId
-        n.objectId = -1
+        n.objectId = store.ObjNotAllocated
     }
 
 
@@ -162,21 +162,21 @@ func (n *PersistentTreapNode) Unmarshal(data []byte, key PersistentKey) error {
     }
     offset += n.priority.SizeInBytes()
 
-    leftObjectId := store.ObjectId(-1)
+    leftObjectId := store.ObjectId(store.ObjNotAllocated)
     err = leftObjectId.Unmarshal(data[offset:])
     if err != nil {
         return err
     }
     offset += leftObjectId.SizeInBytes()
 
-    rightObjectId := store.ObjectId(-1)
+    rightObjectId := store.ObjectId(store.ObjNotAllocated)
     err = rightObjectId.Unmarshal(data[offset:])
     if err != nil {
         return err
     }
     offset += rightObjectId.SizeInBytes()
 
-    selfObjectId := store.ObjectId(-1)
+    selfObjectId := store.ObjectId(store.ObjNotAllocated)
     err = selfObjectId.Unmarshal(data[offset:])
     if err != nil {
         return err
@@ -190,11 +190,11 @@ func (n *PersistentTreapNode) Unmarshal(data []byte, key PersistentKey) error {
 // PersistentTreap represents a persistent treap data structure.
 type PersistentTreap struct {
     Treap
-    Store *store.Store
+    Store store.Storer
 }
 
 // NewPersistentTreapNode creates a new PersistentTreapNode with the given key, priority, and store reference.
-func NewPersistentTreapNode(key PersistentKey, priority Priority, store *store.Store) *PersistentTreapNode {
+func NewPersistentTreapNode(key PersistentKey, priority Priority, stre store.Storer) *PersistentTreapNode {
     return &PersistentTreapNode{
         TreapNode: TreapNode{
             key:      key,
@@ -202,13 +202,13 @@ func NewPersistentTreapNode(key PersistentKey, priority Priority, store *store.S
             left:     nil,
             right:    nil,
         },
-        objectId: -1,
-        Store:    store,
+        objectId: store.ObjNotAllocated,
+        Store:    stre,
     }
 }
 
 // NewPersistentTreap creates a new PersistentTreap with the given comparison function and store reference.
-func NewPersistentTreap(lessFunc func(a, b any) bool, store *store.Store) *PersistentTreap {
+func NewPersistentTreap(lessFunc func(a, b any) bool, store store.Storer) *PersistentTreap {
     return &PersistentTreap{
         Treap: Treap{
             root: nil,
@@ -223,14 +223,14 @@ func (t *PersistentTreap) rotateRight(node TreapNodeInterface) *PersistentTreapN
     newRoot := t.Treap.rotateRight(node).(*PersistentTreapNode)
     nodeCast := node.(*PersistentTreapNode)
 
-    if nodeCast.objectId > 0 {
+    if nodeCast.objectId > store.ObjNotAllocated {
         t.Store.DeleteObj(store.ObjectId(nodeCast.objectId))
     }
-    if newRoot.objectId > 0 {
+    if newRoot.objectId > store.ObjNotAllocated {
         t.Store.DeleteObj(store.ObjectId(newRoot.objectId))
     }
-    nodeCast.objectId = -1
-    newRoot.objectId = -1
+    nodeCast.objectId = store.ObjNotAllocated
+    newRoot.objectId = store.ObjNotAllocated
     return newRoot
 }
 
@@ -238,14 +238,14 @@ func (t *PersistentTreap) rotateRight(node TreapNodeInterface) *PersistentTreapN
 func (t *PersistentTreap) rotateLeft(node TreapNodeInterface) *PersistentTreapNode {
     newRoot := t.Treap.rotateLeft(node).(*PersistentTreapNode)
     nodeCast := node.(*PersistentTreapNode)
-    if nodeCast.objectId > 0 {
+    if nodeCast.objectId > store.ObjNotAllocated {
         t.Store.DeleteObj(store.ObjectId(nodeCast.objectId))
     }
-    if newRoot.objectId > 0 {
+    if newRoot.objectId > store.ObjNotAllocated {
         t.Store.DeleteObj(store.ObjectId(newRoot.objectId))
     }
-    nodeCast.objectId = -1
-    newRoot.objectId = -1
+    nodeCast.objectId = store.ObjNotAllocated
+    newRoot.objectId = store.ObjNotAllocated
     return newRoot
 }
 
@@ -268,10 +268,10 @@ func (t *PersistentTreap) insert(node TreapNodeInterface, newNode TreapNodeInter
     }
     nodeCast := node.(*PersistentTreapNode)
 
-    if nodeCast.objectId > 0 {
+    if nodeCast.objectId > store.ObjNotAllocated {
         t.Store.DeleteObj(store.ObjectId(nodeCast.objectId))
     }
-    nodeCast.objectId = -1
+    nodeCast.objectId = store.ObjNotAllocated
     return node
 }
 
@@ -304,10 +304,10 @@ func (t *PersistentTreap) delete(node TreapNodeInterface, key any) TreapNodeInte
         
     }
     nodeCast := node.(*PersistentTreapNode)
-    if nodeCast.objectId > 0 {
+    if nodeCast.objectId > store.ObjNotAllocated {
         t.Store.DeleteObj(store.ObjectId(nodeCast.objectId))
     }
-    nodeCast.objectId = -1
+    nodeCast.objectId = store.ObjNotAllocated
     return node
 }
 

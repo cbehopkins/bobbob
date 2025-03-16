@@ -23,7 +23,7 @@ func main() {
 	fmt.Printf("Store created at: %s\n", filePath)
 
 	// Example usage of WriteObj and ReadObj
-	offset, writer, err := s.WriteNewObj(10)
+	offset, writer, err := s.LateWriteNewObj(10)
 	if err != nil {
 		log.Fatalf("Failed to write object: %v", err)
 	}
@@ -35,7 +35,7 @@ func main() {
 
 	fmt.Printf("Data written at offset: %d\n", offset)
 
-	reader, err := s.ReadObj(store.ObjectId(offset))
+	reader, err := s.LateReadObj(store.ObjectId(offset))
 	if err != nil {
 		log.Fatalf("Failed to read object: %v", err)
 	}

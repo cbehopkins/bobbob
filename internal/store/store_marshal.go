@@ -34,12 +34,10 @@ type ObjectAndByteFunc struct {
 }
 
 // allocateObjects allocates objects in the store and returns a list of ObjectIds
-func (s *Store) allocateObjects(sizes []int) ([]ObjectId, error) {
+func (s *store) allocateObjects(sizes []int) ([]ObjectId, error) {
 	if sizes == nil {
 		return []ObjectId{objNotPreAllocated}, nil
 	}
-	s.objectMapLock.Lock()
-	defer s.objectMapLock.Unlock()
 
 	var objectIds []ObjectId
 	for _, size := range sizes {
@@ -51,7 +49,8 @@ func (s *Store) allocateObjects(sizes []int) ([]ObjectId, error) {
 		if err != nil {
 			return nil, err
 		}
-		s.objectMap[objId] = ObjectInfo{Offset: fileOffset, Size: size}
+		// FIXME refactor to get mutex once
+		s.objectMap.Set(objId, ObjectInfo{Offset: fileOffset, Size: size})
 		objectIds = append(objectIds, objId)
 	}
 
@@ -59,7 +58,7 @@ func (s *Store) allocateObjects(sizes []int) ([]ObjectId, error) {
 }
 
 // writeObjects writes the objects to the store using the provided ObjectAndByteFunc list
-func (s *Store) writeObjects(objects []ObjectAndByteFunc) error {
+func (s *store) writeObjects(objects []ObjectAndByteFunc) error {
 	// FIXME Can we detect the objects are consecutive and write them in one go?
 	for _, obj := range objects {
 		data, err := obj.ByteFunc()
@@ -75,7 +74,11 @@ func (s *Store) writeObjects(objects []ObjectAndByteFunc) error {
 			continue
 		}
 		// FIXME can we farm this out into a series of workers?
-		n, err := s.file.WriteAt(data, int64(s.objectMap[obj.ObjectId].Offset))
+		objInfo, found := s.objectMap.Get(obj.ObjectId)
+		if !found {
+			return errors.New("object not found in object map")
+		}
+		n, err := s.file.WriteAt(data, int64(objInfo.Offset))
 		if err != nil {
 			return err
 		}
@@ -89,7 +92,7 @@ func (s *Store) writeObjects(objects []ObjectAndByteFunc) error {
 }
 
 
-func (s *Store) WriteGeneric(obj any) (ObjectId, error) {
+func (s *store) WriteGeneric(obj any) (ObjectId, error) {
 	switch v := obj.(type) {
 	case MarshalComplex:
 		return s.WriteComplexTypes(v)
@@ -104,7 +107,7 @@ func (s *Store) WriteGeneric(obj any) (ObjectId, error) {
 	}
 }
 
-func (s *Store) ReadGeneric(obj any, objId ObjectId) error {
+func (s *store) ReadGeneric(obj any, objId ObjectId) error {
 	switch v := obj.(type) {
 	case UnmarshalComplex:
 		return s.unmarshalComplexObj(v, objId)
@@ -115,7 +118,7 @@ func (s *Store) ReadGeneric(obj any, objId ObjectId) error {
 	}
 }
 // WriteComplexTypes writes complex types to the store
-func (s *Store) WriteComplexTypes(obj MarshalComplex) (ObjectId, error) {
+func (s *store) WriteComplexTypes(obj MarshalComplex) (ObjectId, error) {
 	sizes, err := obj.PreMarshal()
 	if err != nil {
 		return 0, err
@@ -134,11 +137,11 @@ func (s *Store) WriteComplexTypes(obj MarshalComplex) (ObjectId, error) {
 	return identityFunction(), s.writeObjects(objectAndByteFuncs)
 }
 
-func (s *Store) MarshalMultipleGeneric(obj MarshalComplex, objectIds []ObjectId) (func() ObjectId, []ObjectAndByteFunc, error) {
+func (s *store) MarshalMultipleGeneric(obj MarshalComplex, objectIds []ObjectId) (func() ObjectId, []ObjectAndByteFunc, error) {
 	return obj.MarshalMultiple(objectIds)
 }
 
-func (s *Store) marshalGeneric(obj any) (ObjectId,  error) {
+func (s *store) marshalGeneric(obj any) (ObjectId,  error) {
 	switch v := obj.(type) {
 	case int:
 		return s.marshalFixedSize(int64(v))
@@ -150,7 +153,7 @@ func (s *Store) marshalGeneric(obj any) (ObjectId,  error) {
 		return ObjNotWritten, fmt.Errorf("Object cannot be generically marshalled")
 }}
 
-func (s *Store) marshalFixedSize(v any) (ObjectId,  error) {
+func (s *store) marshalFixedSize(v any) (ObjectId,  error) {
 	buf := new(bytes.Buffer)
 	err := binary.Write(buf, binary.LittleEndian, v)
 	if err != nil {
@@ -159,15 +162,15 @@ func (s *Store) marshalFixedSize(v any) (ObjectId,  error) {
 	return s.WriteNewObjFromBytes(buf.Bytes())
 }
 
-func  (s *Store) unmarshalComplexObj(obj UnmarshalComplex, objId ObjectId) error {
-	objReader, err := s.ReadObj(objId)
+func  (s *store) unmarshalComplexObj(obj UnmarshalComplex, objId ObjectId) error {
+	objReader, err := s.LateReadObj(objId)
 		if err != nil {
 			return err
 		}
 		return obj.UnmarshalMultiple(objReader, s)
 }
-func  (s *Store) unmarshalSimpleObj(obj UnmarshalSimple, objId ObjectId) error {
-	objReader, err := s.ReadObj(objId)
+func  (s *store) unmarshalSimpleObj(obj UnmarshalSimple, objId ObjectId) error {
+	objReader, err := s.LateReadObj(objId)
 	if err != nil {
 		return err
 	}
@@ -177,11 +180,11 @@ func  (s *Store) unmarshalSimpleObj(obj UnmarshalSimple, objId ObjectId) error {
 	}
 	return obj.Unmarshal(data)
 }
-func (s *Store) unmarshalGeneric(obj any, objId ObjectId) error {
+func (s *store) unmarshalGeneric(obj any, objId ObjectId) error {
 	switch v := obj.(type) {
 	case *int:
 		var temp int64
-		objReader, err := s.ReadObj(objId)
+		objReader, err := s.LateReadObj(objId)
 		if err != nil {
 			return err
 		}
@@ -193,7 +196,7 @@ func (s *Store) unmarshalGeneric(obj any, objId ObjectId) error {
 		return nil
 	case *uint:
 		var temp uint64
-		objReader, err := s.ReadObj(objId)
+		objReader, err := s.LateReadObj(objId)
 		if err != nil {
 			return err
 		}
@@ -204,7 +207,7 @@ func (s *Store) unmarshalGeneric(obj any, objId ObjectId) error {
 		*v = uint(temp)
 		return nil
 	case *int8, *int16, *int32, *int64, *uint8, *uint16, *uint32, *uint64:
-		objReader, err := s.ReadObj(objId)
+		objReader, err := s.LateReadObj(objId)
 		if err != nil {
 			return err
 		}

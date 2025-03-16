@@ -11,10 +11,9 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
-
 )
 
-func setupTestStore(t *testing.T) (string, *Store) {
+func setupTestStore(t *testing.T) (string, *store) {
 	dir, err := os.MkdirTemp("", "store_test")
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
@@ -29,7 +28,7 @@ func setupTestStore(t *testing.T) (string, *Store) {
 	return dir, store
 }
 
-func createObject(t *testing.T, store *Store, data []byte) ObjectId {
+func createObject(t *testing.T, store *store, data []byte) ObjectId {
 	objId, err := store.NewObj(len(data))
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
@@ -57,7 +56,7 @@ func TestNewBob(t *testing.T) {
 	}
 
 	// Verify the initial offset is zero using ReadObj
-	reader, err := store.ReadObj(0)
+	reader, err := store.LateReadObj(0)
 	if err != nil {
 		t.Fatalf("expected no error reading initial offset, got %v", err)
 	}
@@ -100,11 +99,11 @@ func TestWriteNewObj(t *testing.T) {
 		t.Fatalf("expected offset to be 8, got %d", objectId)
 	}
 
-	if len(store.objectMap) != 2 {
-		t.Fatalf("expected objectMap length to be 2, got %d", len(store.objectMap))
+	if len(store.objectMap.store) != 2 {
+		t.Fatalf("expected objectMap length to be 2, got %d", len(store.objectMap.store))
 	}
 
-	obj, found := store.objectMap[ObjectId(objectId)]
+	obj, found := store.objectMap.Get(ObjectId(objectId))
 	if !found {
 		t.Fatalf("expected object to be found in objectMap")
 	}
@@ -124,7 +123,7 @@ func TestReadObj(t *testing.T) {
 	defer store.Close()
 
 	data := []byte("testdata")
-	offset, writer, err := store.WriteNewObj(len(data))
+	offset, writer, err := store.LateWriteNewObj(len(data))
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -133,7 +132,7 @@ func TestReadObj(t *testing.T) {
 		t.Fatalf("expected no error writing data, got %v", err)
 	}
 
-	reader, err := store.ReadObj(ObjectId(offset))
+	reader, err := store.LateReadObj(ObjectId(offset))
 	if err != nil {
 		t.Fatalf("expected no error reading data, got %v", err)
 	}
@@ -154,7 +153,7 @@ func TestWriteToObj(t *testing.T) {
 	defer store.Close()
 
 	data := []byte("testdata")
-	objId, writer, err := store.WriteNewObj(len(data))
+	objId, writer, err := store.LateWriteNewObj(len(data))
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -178,7 +177,7 @@ func TestWriteToObj(t *testing.T) {
 		t.Fatalf("expected no error closing writer, got %v", err)
 	}
 	// Read back the updated object
-	reader, err := store.ReadObj(ObjectId(objId))
+	reader, err := store.LateReadObj(ObjectId(objId))
 	if err != nil {
 		t.Fatalf("expected no error reading data, got %v", err)
 	}
@@ -199,7 +198,7 @@ func TestWriteToObjAndVerify(t *testing.T) {
 
 	// Write the first object
 	data1 := []byte("object1")
-	objId1, writer1, err := store.WriteNewObj(len(data1))
+	objId1, writer1, err := store.LateWriteNewObj(len(data1))
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -209,7 +208,7 @@ func TestWriteToObjAndVerify(t *testing.T) {
 
 	// Write the second object
 	data2 := []byte("object2")
-	objId2, writer2, err := store.WriteNewObj(len(data2))
+	objId2, writer2, err := store.LateWriteNewObj(len(data2))
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -235,7 +234,7 @@ func TestWriteToObjAndVerify(t *testing.T) {
 	}
 
 	// Read back the first object and verify the data
-	reader1, err := store.ReadObj(ObjectId(objId1))
+	reader1, err := store.LateReadObj(ObjectId(objId1))
 	if err != nil {
 		t.Fatalf("expected no error reading data, got %v", err)
 	}
@@ -248,7 +247,7 @@ func TestWriteToObjAndVerify(t *testing.T) {
 	}
 
 	// Read back the second object and verify the data
-	reader2, err := store.ReadObj(ObjectId(objId2))
+	reader2, err := store.LateReadObj(ObjectId(objId2))
 	if err != nil {
 		t.Fatalf("expected no error reading data, got %v", err)
 	}
@@ -267,7 +266,7 @@ func TestWriteToObjExceedLimit(t *testing.T) {
 
 	// Write the first object
 	data1 := []byte("object1")
-	objId1, writer1, err := store.WriteNewObj(len(data1))
+	objId1, writer1, err := store.LateWriteNewObj(len(data1))
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -294,7 +293,7 @@ func TestWriteToObjExceedLimit(t *testing.T) {
 	}
 
 	// Read back the first object and verify the data has not changed
-	reader1, err := store.ReadObj(ObjectId(objId1))
+	reader1, err := store.LateReadObj(ObjectId(objId1))
 	if err != nil {
 		t.Fatalf("expected no error reading data, got %v", err)
 	}
@@ -336,7 +335,7 @@ func TestConcurrentWriteToObj(t *testing.T) {
 
 	// Create the test objects in the store and update the dict with the object ids
 	for i, data := range testObjects {
-		objId, writer, err := store.WriteNewObj(len(data))
+		objId, writer, err := store.LateWriteNewObj(len(data))
 		if err != nil {
 			t.Fatalf("expected no error, got %v", err)
 		}
@@ -380,7 +379,7 @@ func TestConcurrentWriteToObj(t *testing.T) {
 	}
 }
 
-func mutateOneObject(testObj *TstObject, store *Store) error {
+func mutateOneObject(testObj *TstObject, store *store) error {
 	// We own the lock on this object for the duration of this function
 	testObj.mutex.Lock()
 	defer testObj.mutex.Unlock()
@@ -400,7 +399,7 @@ func mutateOneObject(testObj *TstObject, store *Store) error {
 	if err != nil {
 		return fmt.Errorf("expected no error closing writer, got %v", err)
 	}
-	reader, err := store.ReadObj(testObj.id)
+	reader, err := store.LateReadObj(testObj.id)
 	if err != nil {
 		return fmt.Errorf("expected no error reading data, got %v", err)
 
@@ -421,7 +420,7 @@ func TestLoadStore(t *testing.T) {
 	defer store.Close()
 
 	data := []byte("testdata")
-	objId, writer, err := store.WriteNewObj(len(data))
+	objId, writer, err := store.LateWriteNewObj(len(data))
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -438,7 +437,7 @@ func TestLoadStore(t *testing.T) {
 	}
 	defer loadedStore.Close()
 
-	obj, found := loadedStore.objectMap[ObjectId(objId)]
+	obj, found := loadedStore.objectMap.Get(ObjectId(objId))
 	if !found {
 		t.Fatalf("expected object to be found in objectMap")
 	}
@@ -458,7 +457,7 @@ func TestDeleteObj(t *testing.T) {
 
 	// Write a new object
 	data := []byte("testdata")
-	objId, writer, err := store.WriteNewObj(len(data))
+	objId, writer, err := store.LateWriteNewObj(len(data))
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -473,13 +472,13 @@ func TestDeleteObj(t *testing.T) {
 	}
 
 	// Attempt to read the deleted object
-	_, err = store.ReadObj(ObjectId(objId))
+	_, err = store.LateReadObj(ObjectId(objId))
 	if err == nil {
 		t.Fatalf("expected error reading deleted object, got nil")
 	}
 
 	// Verify the object is removed from the object map
-	if _, found := store.objectMap[ObjectId(objId)]; found {
+	if _, found := store.objectMap.Get(ObjectId(objId)); found {
 		t.Fatalf("expected object to be removed from objectMap")
 	}
 }
@@ -493,67 +492,5 @@ func TestDeleteNonExistentObj(t *testing.T) {
 	err := store.DeleteObj(ObjectId(999))
 	if err == nil {
 		t.Fatalf("expected error deleting non-existent object, got nil")
-	}
-}
-
-func TestFindGapsAfterDeletions(t *testing.T) {
-	dir, store := setupTestStore(t)
-	defer os.RemoveAll(dir)
-
-	// Write multiple objects
-	data1 := []byte("object1")
-	objId1 := createObject(t, store, data1)
-	data2 := []byte("object2")
-	objId2 := createObject(t, store, data2)
-	data3 := []byte("object3")
-	objId3 := createObject(t, store, data3)
-	data4 := []byte("object4")
-	objId4 := createObject(t, store, data4)
-
-	// Delete the first and third objects
-	fmt.Println("Deleting object 1 and 3", objId1, objId3)
-	err := store.DeleteObj(ObjectId(objId1))
-	if err != nil {
-		t.Fatalf("expected no error deleting object, got %v", err)
-	}
-
-	err = store.DeleteObj(ObjectId(objId3))
-	if err != nil {
-		t.Fatalf("expected no error deleting object, got %v", err)
-	}
-
-	// Close and re-open the store
-	err = store.Close()
-	if err != nil {
-		t.Fatalf("expected no error closing store, got %v", err)
-	}
-
-	store, err = LoadStore(store.filePath)
-	if err != nil {
-		t.Fatalf("expected no error loading store, got %v", err)
-	}
-	defer store.Close()
-
-	// Find gaps
-	gapChan := store.FindGaps()
-	var gaps []Gap
-	for gap := range gapChan {
-		gaps = append(gaps, gap)
-	}
-
-	// Verify the gaps
-	expectedGaps := []Gap{
-		{Start: int64(objId1), End: int64(objId2)},
-		{Start: int64(objId3), End: int64(objId4)},
-	}
-
-	if len(gaps) != len(expectedGaps) {
-		t.Fatalf("expected %d gaps, got %d", len(expectedGaps), len(gaps))
-	}
-
-	for i, gap := range gaps {
-		if gap != expectedGaps[i] {
-			t.Fatalf("expected gap %v, got %v", expectedGaps[i], gap)
-		}
 	}
 }

@@ -24,7 +24,7 @@ func (k MockIntKey) SizeInBytes() int {
 	return 4
 }
 
-func (k MockIntKey) GetObjectId(s *store.Store) store.ObjectId {
+func (k MockIntKey) GetObjectId(s store.Storer) store.ObjectId {
 	return store.ObjectId(k)
 }
 
@@ -55,7 +55,7 @@ func (k MockStringKey) SizeInBytes() int {
 	return store.ObjectId(0).SizeInBytes()
 }
 
-func (k MockStringKey) GetObjectId(s *store.Store) store.ObjectId {
+func (k MockStringKey) GetObjectId(s store.Storer) store.ObjectId {
 	return store.ObjectId(0) // FIXME
 }
 
@@ -185,7 +185,7 @@ func (k CustomKey) SizeInBytes() int {
 	return 8
 }
 
-func (k CustomKey) GetObjectId(s *store.Store) store.ObjectId {
+func (k CustomKey) GetObjectId(s store.Storer) store.ObjectId {
 	return store.ObjectId(0) // FIXME
 }
 

@@ -9,7 +9,7 @@ import (
 
 type Key interface {
 	SizeInBytes() int
-	GetObjectId(*store.Store) store.ObjectId
+	GetObjectId(store.Storer) store.ObjectId
 }
 
 type Priority uint32

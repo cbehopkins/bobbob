@@ -8,7 +8,7 @@ import (
 	"github.com/cbehopkins/bobbob/internal/store"
 )
 
-func setupTestStore(t *testing.T) *store.Store {
+func setupTestStore(t *testing.T) store.Storer {
     tempDir := t.TempDir()
     tempFile := filepath.Join(tempDir, "test_store.bin")
     store, err := store.NewStore(tempFile)
@@ -116,16 +116,16 @@ func TestPersistentTreapNodeMarshalUnmarshal(t *testing.T) {
 }
 // Here we want to test that is we add a child to a node, the ObjectId of the node is invalidated.
 func TestPersistentTreapNodeInvalidateObjectId(t *testing.T) {
-    store := setupTestStore(t)
-    defer store.Close()
+    stre := setupTestStore(t)
+    defer stre.Close()
 
     key := MockIntKey(42)
     priority := Priority(100)
-    node := NewPersistentTreapNode(&key, priority, store)
+    node := NewPersistentTreapNode(&key, priority, stre)
 
-    // Initially, the ObjectId should be -1
-    if node.objectId != -1 {
-        t.Fatalf("Expected initial ObjectId to be -1, got %d", node.ObjectId())
+    // Initially, the ObjectId should be store.ObjNotAllocated
+    if node.objectId != store.ObjNotAllocated {
+        t.Fatalf("Expected initial ObjectId to be store.ObjNotAllocated, got %d", node.ObjectId())
     }
 
     // Persist the node to assign an ObjectId
@@ -134,18 +134,18 @@ func TestPersistentTreapNodeInvalidateObjectId(t *testing.T) {
         t.Fatalf("Failed to persist node: %v", err)
     }
 
-    // Check that the ObjectId is now valid (not -1)
-    if node.objectId == -1 {
-        t.Fatalf("Expected ObjectId to be valid after persisting, got -1")
+    // Check that the ObjectId is now valid (not store.ObjNotAllocated)
+    if node.objectId == store.ObjNotAllocated {
+        t.Fatalf("Expected ObjectId to be valid after persisting, got store.ObjNotAllocated")
     }
 
     // Add a left child and check if ObjectId is invalidated
     leftKey := MockIntKey(21)
-    leftNode := NewPersistentTreapNode(&leftKey, Priority(50), store)
+    leftNode := NewPersistentTreapNode(&leftKey, Priority(50), stre)
     node.SetLeft(leftNode)
 
-    if node.objectId != -1 {
-        t.Errorf("Expected ObjectId to be invalidated (set to -1) after setting left child, got %d", node.ObjectId())
+    if node.objectId != store.ObjNotAllocated {
+        t.Errorf("Expected ObjectId to be invalidated (set to store.ObjNotAllocated) after setting left child, got %d", node.ObjectId())
     }
 
     // Persist the node again to assign a new ObjectId
@@ -154,32 +154,32 @@ func TestPersistentTreapNodeInvalidateObjectId(t *testing.T) {
         t.Fatalf("Failed to persist node: %v", err)
     }
 
-    // Check that the ObjectId is now valid (not -1)
-    if node.objectId == -1 {
-        t.Fatalf("Expected ObjectId to be valid after persisting, got -1")
+    // Check that the ObjectId is now valid (not store.ObjNotAllocated)
+    if node.objectId == store.ObjNotAllocated {
+        t.Fatalf("Expected ObjectId to be valid after persisting, got store.ObjNotAllocated")
     }
 
     // Add a right child and check if ObjectId is invalidated
     rightKey := MockIntKey(63)
-    rightNode := NewPersistentTreapNode(&rightKey, Priority(75), store)
+    rightNode := NewPersistentTreapNode(&rightKey, Priority(75), stre)
     node.SetRight(rightNode)
 
-    if node.objectId != -1 {
-        t.Errorf("Expected ObjectId to be invalidated (set to -1) after setting right child, got %d", node.ObjectId())
+    if node.objectId != store.ObjNotAllocated {
+        t.Errorf("Expected ObjectId to be invalidated (set to store.ObjNotAllocated) after setting right child, got %d", node.ObjectId())
     }
     node.Persist()
-    if node.objectId == -1 {
-        t.Fatalf("Expected ObjectId to be valid after persisting, got -1")
+    if node.objectId == store.ObjNotAllocated {
+        t.Fatalf("Expected ObjectId to be valid after persisting, got store.ObjNotAllocated")
     }
     previousObjectId := node.objectId
 
     rightNode.SetPriority(Priority(80))
-    if rightNode.objectId != -1 {
-        t.Errorf("Expected ObjectId to be invalidated (set to -1) after setting right child's priority, got %d", rightNode.ObjectId())
+    if rightNode.objectId != store.ObjNotAllocated {
+        t.Errorf("Expected ObjectId to be invalidated (set to store.ObjNotAllocated) after setting right child's priority, got %d", rightNode.ObjectId())
     }
     node.Persist()
 
-    if node.objectId == previousObjectId || node.objectId == -1 { 
+    if node.objectId == previousObjectId || node.objectId == store.ObjNotAllocated { 
         t.Errorf("Expected ObjectId updated after setting right child's priority, got %d", node.objectId)
     }
 }

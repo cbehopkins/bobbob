@@ -19,14 +19,17 @@ func NewMockObjReader(data map[ObjectId][]byte) *MockObjReader {
 	return &MockObjReader{data: data}
 }
 
-// ReadObj reads the object data for the given ObjectId
-func (r *MockObjReader) ReadObj(id ObjectId) (io.Reader, error) {
+// LateReadObj reads the object data for the given ObjectId
+func (r *MockObjReader) LateReadObj(id ObjectId) (io.Reader, error) {
 	if data, ok := r.data[id]; ok {
 		return bytes.NewReader(data), nil
 	}
 	return nil, errors.New("object not found")
 }
 
+func (r *MockObjReader) ReadGeneric(obj any, objId ObjectId) error {
+	return errors.New("not implemented")
+}
 // MockStruct is a mock implementation of the MarshalComplex interface
 type MockStruct struct {
 	IntValue  int
@@ -100,7 +103,7 @@ func (m *MockStruct) UnmarshalMultiple(objReader io.Reader, reader ObjReader) er
 	}
 
 	// Fetch and unmarshal the integer value
-	intReader, err := reader.ReadObj(lut.Ids[0])
+	intReader, err := reader.LateReadObj(lut.Ids[0])
 	if err != nil {
 		return err
 	}
@@ -114,7 +117,7 @@ func (m *MockStruct) UnmarshalMultiple(objReader io.Reader, reader ObjReader) er
 	}
 
 	// Fetch and unmarshal the boolean value
-	boolReader, err := reader.ReadObj(lut.Ids[1])
+	boolReader, err := reader.LateReadObj(lut.Ids[1])
 	if err != nil {
 		return err
 	}
@@ -256,7 +259,7 @@ func TestWriteComplexTypes(t *testing.T) {
 	}
 
 	// Read the LUT object
-	lutReader, err := store.ReadObj(mockObjId)
+	lutReader, err := store.LateReadObj(mockObjId)
 	if err != nil {
 		t.Fatalf("Failed to read LUT object: %v", err)
 	}
