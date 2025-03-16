@@ -9,6 +9,9 @@ var ObjNotWritten = ObjectId(-1)
 var ObjNotAllocated = ObjectId(-2)
 var objNotPreAllocated = ObjectId(-3)
 func IsValidObjectId(objId ObjectId) bool {
+	// Note object 0 is reserved for a store's internal use
+	// usually this will be used as some sort of config table
+	// for that is in the store
 	return objId > 0
 }
 // Finisher is a callback that must be called when you have finished

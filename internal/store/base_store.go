@@ -269,3 +269,12 @@ func (s *baseStore) Close() error {
 	}
 	return s.file.Close()
 }
+
+//TBD
+// * For goodness sake add per object locking
+// * Add a collection table <- i.e. one can name an object by a string, then search for that string and get the object
+// * Add a way to list all objects in the store
+// * Add a way to list all collections
+// * delete collections
+
+
