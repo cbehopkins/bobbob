@@ -168,7 +168,7 @@ func setupTestStore(t *testing.T) (string, store.Storer) {
 	}
 
 	filePath := filepath.Join(dir, "testfile.bin")
-	store, err := store.NewStore(filePath)
+	store, err := store.NewBasicStore(filePath)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}

@@ -14,7 +14,7 @@ func main() {
 	}
 
 	filePath := os.Args[1]
-	s, err := store.NewStore(filePath)
+	s, err := store.NewBasicStore(filePath)
 	if err != nil {
 		log.Fatalf("Failed to create store: %v", err)
 	}
@@ -23,7 +23,7 @@ func main() {
 	fmt.Printf("Store created at: %s\n", filePath)
 
 	// Example usage of WriteObj and ReadObj
-	offset, writer, err := s.LateWriteNewObj(10)
+	offset, writer, finisher, err := s.LateWriteNewObj(10)
 	if err != nil {
 		log.Fatalf("Failed to write object: %v", err)
 	}
@@ -32,7 +32,9 @@ func main() {
 	if _, err := writer.Write(data); err != nil {
 		log.Fatalf("Failed to write data: %v", err)
 	}
-
+	if finisher != nil {
+		finisher()
+	}
 	fmt.Printf("Data written at offset: %d\n", offset)
 
 	reader, err := s.LateReadObj(store.ObjectId(offset))

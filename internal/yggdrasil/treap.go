@@ -41,7 +41,7 @@ type TreapNodeInterface interface {
 	GetRight() TreapNodeInterface
 	SetLeft(TreapNodeInterface)
 	SetRight(TreapNodeInterface)
-    IsNil() bool
+	IsNil() bool
 }
 
 // TreapNode represents a node in the treap.
@@ -62,7 +62,7 @@ func (n *TreapNode) GetPriority() Priority {
 	return n.priority
 }
 func (n *TreapNode) SetPriority(p Priority) {
-    n.priority = p
+	n.priority = p
 }
 
 // GetLeft returns the left child of the node.
@@ -77,19 +77,19 @@ func (n *TreapNode) GetRight() TreapNodeInterface {
 
 // SetLeft sets the left child of the node.
 func (n *TreapNode) SetLeft(left TreapNodeInterface) {
-    if left == nil {
-        n.left = nil
-        return
-    }
+	if left == nil {
+		n.left = nil
+		return
+	}
 	n.left = left.(*TreapNode)
 }
 
 // SetRight sets the right child of the node.
 func (n *TreapNode) SetRight(right TreapNodeInterface) {
-    if right == nil {
-        n.right = nil
-        return
-    }
+	if right == nil {
+		n.right = nil
+		return
+	}
 	n.right = right.(*TreapNode)
 }
 
@@ -170,24 +170,24 @@ func (t *Treap) delete(node TreapNodeInterface, key any) TreapNodeInterface {
 	} else if t.Less(node.GetKey(), key) {
 		node.SetRight(t.delete(node.GetRight(), key))
 	} else {
-        left := node.GetLeft().(*TreapNode)
-        right := node.GetRight().(*TreapNode)
+		left := node.GetLeft().(*TreapNode)
+		right := node.GetRight().(*TreapNode)
 
 		if left == nil {
 			return right
-		} 
-        if right == nil {
+		}
+		if right == nil {
 			return left
 		}
-        leftPriority:= left.GetPriority()
-        rightPriority:= right.GetPriority()
-        if leftPriority > rightPriority {
-            node = t.rotateRight(node)
-            node.SetRight(t.delete(node.GetRight(), key))
-        } else {
-            node = t.rotateLeft(node)
-            node.SetLeft(t.delete(node.GetLeft(), key))
-        }
+		leftPriority := left.GetPriority()
+		rightPriority := right.GetPriority()
+		if leftPriority > rightPriority {
+			node = t.rotateRight(node)
+			node.SetRight(t.delete(node.GetRight(), key))
+		} else {
+			node = t.rotateLeft(node)
+			node.SetLeft(t.delete(node.GetLeft(), key))
+		}
 	}
 
 	return node

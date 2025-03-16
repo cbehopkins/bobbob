@@ -9,13 +9,13 @@ import (
 )
 
 func setupTestStore(t *testing.T) store.Storer {
-    tempDir := t.TempDir()
-    tempFile := filepath.Join(tempDir, "test_store.bin")
-    store, err := store.NewStore(tempFile)
-    if err != nil {
-        t.Fatalf("Failed to create store: %v", err)
-    }
-    return store
+	tempDir := t.TempDir()
+	tempFile := filepath.Join(tempDir, "test_store.bin")
+	store, err := store.NewBasicStore(tempFile)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	return store
 }
 
 func TestPersistentTreapBasics(t *testing.T) {
@@ -79,107 +79,108 @@ func TestPersistentTreapBasics(t *testing.T) {
 }
 
 func TestPersistentTreapNodeMarshalUnmarshal(t *testing.T) {
-    store := setupTestStore(t)
-    defer store.Close()
+	store := setupTestStore(t)
+	defer store.Close()
 
-    key := MockIntKey(42)
-    priority := Priority(100)
-    node := NewPersistentTreapNode(&key, priority, store)
+	key := MockIntKey(42)
+	priority := Priority(100)
+	node := NewPersistentTreapNode(&key, priority, store)
 
-    // Marshal the node
-    data, err := node.Marshal()
-    if err != nil {
-        t.Fatalf("Failed to marshal node: %v", err)
-    }
+	// Marshal the node
+	data, err := node.Marshal()
+	if err != nil {
+		t.Fatalf("Failed to marshal node: %v", err)
+	}
 
-    // Unmarshal the node
-    unmarshalledNode := &PersistentTreapNode{Store: store}
-    dstKey := MockIntKey(0)
-    err = unmarshalledNode.Unmarshal(data, &dstKey)
-    if err != nil {
-        t.Fatalf("Failed to unmarshal node: %v", err)
-    }
-    tmpKey := unmarshalledNode.GetKey().(*MockIntKey)
-    // Check if the unmarshalled node is equal to the original node
-    if *tmpKey != key {
-        t.Errorf("Expected key %d, got %d", key, *tmpKey)
-    }
-    if unmarshalledNode.GetPriority() != priority {
-        t.Errorf("Expected priority %d, got %d", priority, unmarshalledNode.GetPriority())
-    }
-    if unmarshalledNode.left != nil {
-        t.Errorf("Expected left child to be nil, got %v", unmarshalledNode.left)
-    }
-    if unmarshalledNode.right != nil {
-        t.Errorf("Expected right child to be nil, got %v", unmarshalledNode.right)
-    }
+	// Unmarshal the node
+	unmarshalledNode := &PersistentTreapNode{Store: store}
+	dstKey := MockIntKey(0)
+	err = unmarshalledNode.Unmarshal(data, &dstKey)
+	if err != nil {
+		t.Fatalf("Failed to unmarshal node: %v", err)
+	}
+	tmpKey := unmarshalledNode.GetKey().(*MockIntKey)
+	// Check if the unmarshalled node is equal to the original node
+	if *tmpKey != key {
+		t.Errorf("Expected key %d, got %d", key, *tmpKey)
+	}
+	if unmarshalledNode.GetPriority() != priority {
+		t.Errorf("Expected priority %d, got %d", priority, unmarshalledNode.GetPriority())
+	}
+	if unmarshalledNode.left != nil {
+		t.Errorf("Expected left child to be nil, got %v", unmarshalledNode.left)
+	}
+	if unmarshalledNode.right != nil {
+		t.Errorf("Expected right child to be nil, got %v", unmarshalledNode.right)
+	}
 }
+
 // Here we want to test that is we add a child to a node, the ObjectId of the node is invalidated.
 func TestPersistentTreapNodeInvalidateObjectId(t *testing.T) {
-    stre := setupTestStore(t)
-    defer stre.Close()
+	stre := setupTestStore(t)
+	defer stre.Close()
 
-    key := MockIntKey(42)
-    priority := Priority(100)
-    node := NewPersistentTreapNode(&key, priority, stre)
+	key := MockIntKey(42)
+	priority := Priority(100)
+	node := NewPersistentTreapNode(&key, priority, stre)
 
-    // Initially, the ObjectId should be store.ObjNotAllocated
-    if node.objectId != store.ObjNotAllocated {
-        t.Fatalf("Expected initial ObjectId to be store.ObjNotAllocated, got %d", node.ObjectId())
-    }
+	// Initially, the ObjectId should be store.ObjNotAllocated
+	if node.objectId != store.ObjNotAllocated {
+		t.Fatalf("Expected initial ObjectId to be store.ObjNotAllocated, got %d", node.ObjectId())
+	}
 
-    // Persist the node to assign an ObjectId
-    err := node.Persist()
-    if err != nil {
-        t.Fatalf("Failed to persist node: %v", err)
-    }
+	// Persist the node to assign an ObjectId
+	err := node.Persist()
+	if err != nil {
+		t.Fatalf("Failed to persist node: %v", err)
+	}
 
-    // Check that the ObjectId is now valid (not store.ObjNotAllocated)
-    if node.objectId == store.ObjNotAllocated {
-        t.Fatalf("Expected ObjectId to be valid after persisting, got store.ObjNotAllocated")
-    }
+	// Check that the ObjectId is now valid (not store.ObjNotAllocated)
+	if node.objectId == store.ObjNotAllocated {
+		t.Fatalf("Expected ObjectId to be valid after persisting, got store.ObjNotAllocated")
+	}
 
-    // Add a left child and check if ObjectId is invalidated
-    leftKey := MockIntKey(21)
-    leftNode := NewPersistentTreapNode(&leftKey, Priority(50), stre)
-    node.SetLeft(leftNode)
+	// Add a left child and check if ObjectId is invalidated
+	leftKey := MockIntKey(21)
+	leftNode := NewPersistentTreapNode(&leftKey, Priority(50), stre)
+	node.SetLeft(leftNode)
 
-    if node.objectId != store.ObjNotAllocated {
-        t.Errorf("Expected ObjectId to be invalidated (set to store.ObjNotAllocated) after setting left child, got %d", node.ObjectId())
-    }
+	if node.objectId != store.ObjNotAllocated {
+		t.Errorf("Expected ObjectId to be invalidated (set to store.ObjNotAllocated) after setting left child, got %d", node.ObjectId())
+	}
 
-    // Persist the node again to assign a new ObjectId
-    err = node.Persist()
-    if err != nil {
-        t.Fatalf("Failed to persist node: %v", err)
-    }
+	// Persist the node again to assign a new ObjectId
+	err = node.Persist()
+	if err != nil {
+		t.Fatalf("Failed to persist node: %v", err)
+	}
 
-    // Check that the ObjectId is now valid (not store.ObjNotAllocated)
-    if node.objectId == store.ObjNotAllocated {
-        t.Fatalf("Expected ObjectId to be valid after persisting, got store.ObjNotAllocated")
-    }
+	// Check that the ObjectId is now valid (not store.ObjNotAllocated)
+	if node.objectId == store.ObjNotAllocated {
+		t.Fatalf("Expected ObjectId to be valid after persisting, got store.ObjNotAllocated")
+	}
 
-    // Add a right child and check if ObjectId is invalidated
-    rightKey := MockIntKey(63)
-    rightNode := NewPersistentTreapNode(&rightKey, Priority(75), stre)
-    node.SetRight(rightNode)
+	// Add a right child and check if ObjectId is invalidated
+	rightKey := MockIntKey(63)
+	rightNode := NewPersistentTreapNode(&rightKey, Priority(75), stre)
+	node.SetRight(rightNode)
 
-    if node.objectId != store.ObjNotAllocated {
-        t.Errorf("Expected ObjectId to be invalidated (set to store.ObjNotAllocated) after setting right child, got %d", node.ObjectId())
-    }
-    node.Persist()
-    if node.objectId == store.ObjNotAllocated {
-        t.Fatalf("Expected ObjectId to be valid after persisting, got store.ObjNotAllocated")
-    }
-    previousObjectId := node.objectId
+	if node.objectId != store.ObjNotAllocated {
+		t.Errorf("Expected ObjectId to be invalidated (set to store.ObjNotAllocated) after setting right child, got %d", node.ObjectId())
+	}
+	node.Persist()
+	if node.objectId == store.ObjNotAllocated {
+		t.Fatalf("Expected ObjectId to be valid after persisting, got store.ObjNotAllocated")
+	}
+	previousObjectId := node.objectId
 
-    rightNode.SetPriority(Priority(80))
-    if rightNode.objectId != store.ObjNotAllocated {
-        t.Errorf("Expected ObjectId to be invalidated (set to store.ObjNotAllocated) after setting right child's priority, got %d", rightNode.ObjectId())
-    }
-    node.Persist()
+	rightNode.SetPriority(Priority(80))
+	if rightNode.objectId != store.ObjNotAllocated {
+		t.Errorf("Expected ObjectId to be invalidated (set to store.ObjNotAllocated) after setting right child's priority, got %d", rightNode.ObjectId())
+	}
+	node.Persist()
 
-    if node.objectId == previousObjectId || node.objectId == store.ObjNotAllocated { 
-        t.Errorf("Expected ObjectId updated after setting right child's priority, got %d", node.objectId)
-    }
+	if node.objectId == previousObjectId || node.objectId == store.ObjNotAllocated {
+		t.Errorf("Expected ObjectId updated after setting right child's priority, got %d", node.objectId)
+	}
 }

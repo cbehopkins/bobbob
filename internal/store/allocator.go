@@ -29,10 +29,12 @@ func (h *GapHeap) Pop() any {
 	*h = old[0 : n-1]
 	return x
 }
-// type Allocator interface  {
-// 	Allocate(size int) (ObjectId, FileOffset, error)
-// 	Free(fileOffset FileOffset, size int) error
-// }
+
+//	type Allocator interface  {
+//		Allocate(size int) (ObjectId, FileOffset, error)
+//		Free(fileOffset FileOffset, size int) error
+//	}
+//
 // BasicAllocator is a struct to manage the allocation of space in the file
 // FIXME freelist should be stored on disk
 type BasicAllocator struct {
@@ -50,7 +52,7 @@ func NewAllocator(file *os.File) (*BasicAllocator, error) {
 
 // RefreshFreeList to refresh the free list
 // This is an io intensive function
-func (a *BasicAllocator) RefreshFreeList(s *store) error {
+func (a *BasicAllocator) RefreshFreeList(s *baseStore) error {
 	return nil
 }
 

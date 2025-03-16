@@ -12,8 +12,9 @@ type MarshalSimple interface {
 	Marshal() ([]byte, error)
 }
 type UnmarshalSimple interface {
-	Unmarshal([]byte) (error)
+	Unmarshal([]byte) error
 }
+
 // MarshalComplex is an interface for complex types that need to be marshalled in multiple steps
 type MarshalComplex interface {
 	PreMarshal() ([]int, error)
@@ -24,7 +25,6 @@ type MarshalComplex interface {
 type UnmarshalComplex interface {
 	UnmarshalMultiple(objData io.Reader, reader ObjReader) error
 }
-
 
 // ObjectAndByteFunc holds an ObjectId and a function that returns a slice of bytes
 type ObjectAndByteFunc struct {
@@ -66,14 +66,14 @@ func writeObjects(s Storer, objects []ObjectAndByteFunc) error {
 		}
 		objId := obj.ObjectId
 		if objId == objNotPreAllocated {
-			_, err := s.WriteNewObjFromBytes(data)
+			_, err := WriteNewObjFromBytes(s, data)
 			if err != nil {
 				return err
 			}
 			continue
 		}
 		// FIXME can we farm this out into a series of workers?
-		err = s.WriteBytesToObj(data, objId)
+		err = WriteBytesToObj(s, data, objId)
 		if err != nil {
 			return err
 		}
@@ -83,49 +83,22 @@ func writeObjects(s Storer, objects []ObjectAndByteFunc) error {
 	return nil
 }
 
-// WriteGeneric writes a generic object to the store
-func WriteGeneric(s Storer, obj any) (ObjectId, error) {
-	switch v := obj.(type) {
-	case MarshalComplex:
-		return WriteComplexTypes(s, v)
-	case MarshalSimple:
-		data, err := v.Marshal()
-		if err != nil {
-			return ObjNotWritten, err
-		}
-		return s.WriteNewObjFromBytes(data)
-	default:
-		return marshalGeneric(s, obj)
-	}
-}
 
-// ReadGeneric reads a generic object from the store
-func ReadGeneric(s Storer, obj any, objId ObjectId) error {
-	switch v := obj.(type) {
-	case UnmarshalComplex:
-		return unmarshalComplexObj(s, v, objId)
-	case UnmarshalSimple:
-		return unmarshalSimpleObj(s, v, objId)
-	default:
-		return unmarshalGeneric(s, obj, objId)
-	}
-}
-
-// WriteComplexTypes writes complex types to the store
-func WriteComplexTypes(s Storer, obj MarshalComplex) (ObjectId, error) {
+// writeComplexTypes writes complex types to the store
+func writeComplexTypes(s Storer, obj MarshalComplex) (ObjectId, error) {
 	sizes, err := obj.PreMarshal()
 	if err != nil {
-		return 0, err
+		return ObjNotAllocated, err
 	}
 
 	objectIds, err := allocateObjects(s, sizes)
 	if err != nil {
-		return 0, err
+		return ObjNotAllocated, err
 	}
 
 	identityFunction, objectAndByteFuncs, err := obj.MarshalMultiple(objectIds)
 	if err != nil {
-		return 0, err
+		return ObjNotWritten, err
 	}
 
 	return identityFunction(), writeObjects(s, objectAndByteFuncs)
@@ -152,7 +125,7 @@ func marshalFixedSize(s Storer, v any) (ObjectId, error) {
 	if err != nil {
 		return ObjNotWritten, err
 	}
-	return s.WriteNewObjFromBytes(buf.Bytes())
+	return WriteNewObjFromBytes(s, buf.Bytes())
 }
 
 // unmarshalComplexObj unmarshals a complex object

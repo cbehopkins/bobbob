@@ -30,6 +30,7 @@ func (r *MockObjReader) LateReadObj(id ObjectId) (io.Reader, error) {
 func (r *MockObjReader) ReadGeneric(obj any, objId ObjectId) error {
 	return errors.New("not implemented")
 }
+
 // MockStruct is a mock implementation of the MarshalComplex interface
 type MockStruct struct {
 	IntValue  int
@@ -145,7 +146,7 @@ func TestMockStructMarshalMultiple(t *testing.T) {
 	}
 
 	// Write the complex type to the store
-	mockObjId, err := WriteComplexTypes(store, mock)
+	mockObjId, err := writeComplexTypes(store, mock)
 	if err != nil {
 		t.Fatalf("Failed to write complex types: %v", err)
 	}
@@ -225,7 +226,7 @@ func TestWriteComplexTypes(t *testing.T) {
 	}
 
 	// Write the complex type to the store
-	mockObjId, err := WriteComplexTypes(store, mock)
+	mockObjId, err := writeComplexTypes(store, mock)
 	if err != nil {
 		t.Fatalf("Failed to write complex types: %v", err)
 	}
@@ -287,7 +288,6 @@ func TestMarshalMultipleGeneric(t *testing.T) {
 		t.Fatalf("WriteObjects failed: %v", err)
 	}
 }
-
 
 func TestUnmarshalMultipleGenericMockStruct(t *testing.T) {
 	dir, store := setupTestStore(t)

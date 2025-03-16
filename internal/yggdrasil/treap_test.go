@@ -17,8 +17,8 @@ func mockIntLess(a, b any) bool {
 type MockIntKey int32
 
 func (k MockIntKey) New() PersistentKey {
-    v := MockIntKey(-1)
-    return &v
+	v := MockIntKey(-1)
+	return &v
 }
 func (k MockIntKey) SizeInBytes() int {
 	return 4
@@ -29,11 +29,11 @@ func (k MockIntKey) GetObjectId(s store.Storer) store.ObjectId {
 }
 
 func (k MockIntKey) MarshalToObjectId() (store.ObjectId, error) {
-    return store.ObjectId(k), nil
+	return store.ObjectId(k), nil
 }
 func (k *MockIntKey) UnmarshalFromObjectId(id store.ObjectId) error {
-    *k = MockIntKey(id)
-    return nil
+	*k = MockIntKey(id)
+	return nil
 }
 func (k MockIntKey) Marshal() ([]byte, error) {
 	buf := make([]byte, 4)

@@ -13,14 +13,14 @@ import (
 	"testing"
 )
 
-func setupTestStore(t *testing.T) (string, *store) {
+func setupTestStore(t *testing.T) (string, *baseStore) {
 	dir, err := os.MkdirTemp("", "store_test")
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
 
 	filePath := filepath.Join(dir, "testfile.bin")
-	store, err := NewStore(filePath)
+	store, err := NewBasicStore(filePath)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -28,7 +28,7 @@ func setupTestStore(t *testing.T) (string, *store) {
 	return dir, store
 }
 
-func createObject(t *testing.T, store *store, data []byte) ObjectId {
+func createObject(t *testing.T, store *baseStore, data []byte) ObjectId {
 	objId, err := store.NewObj(len(data))
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
@@ -56,7 +56,7 @@ func TestNewBob(t *testing.T) {
 	}
 
 	// Verify the initial offset is zero using ReadObj
-	reader, err := store.LateReadObj(0)
+	reader, err := store.lateReadObj(0)
 	if err != nil {
 		t.Fatalf("expected no error reading initial offset, got %v", err)
 	}
@@ -123,7 +123,7 @@ func TestReadObj(t *testing.T) {
 	defer store.Close()
 
 	data := []byte("testdata")
-	offset, writer, err := store.LateWriteNewObj(len(data))
+	offset, writer, finisher, err := store.LateWriteNewObj(len(data))
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -131,7 +131,9 @@ func TestReadObj(t *testing.T) {
 	if _, err := writer.Write(data); err != nil {
 		t.Fatalf("expected no error writing data, got %v", err)
 	}
-
+	if finisher != nil {
+		finisher()
+	}
 	reader, err := store.LateReadObj(ObjectId(offset))
 	if err != nil {
 		t.Fatalf("expected no error reading data, got %v", err)
@@ -153,11 +155,13 @@ func TestWriteToObj(t *testing.T) {
 	defer store.Close()
 
 	data := []byte("testdata")
-	objId, writer, err := store.LateWriteNewObj(len(data))
+	objId, writer, finisher, err := store.LateWriteNewObj(len(data))
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
-
+	if finisher != nil {
+		finisher()
+	}
 	if _, err := writer.Write(data); err != nil {
 		t.Fatalf("expected no error writing data, got %v", err)
 	}
@@ -198,24 +202,28 @@ func TestWriteToObjAndVerify(t *testing.T) {
 
 	// Write the first object
 	data1 := []byte("object1")
-	objId1, writer1, err := store.LateWriteNewObj(len(data1))
+	objId1, writer1, finisher, err := store.LateWriteNewObj(len(data1))
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
 	if _, err := writer1.Write(data1); err != nil {
 		t.Fatalf("expected no error writing data, got %v", err)
 	}
-
+	if finisher != nil {
+		finisher()
+	}
 	// Write the second object
 	data2 := []byte("object2")
-	objId2, writer2, err := store.LateWriteNewObj(len(data2))
+	objId2, writer2, finisher, err := store.LateWriteNewObj(len(data2))
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
 	if _, err := writer2.Write(data2); err != nil {
 		t.Fatalf("expected no error writing data, got %v", err)
 	}
-
+	if finisher != nil {
+		finisher()
+	}
 	// Modify the first object using WriteToObj
 	newData1 := []byte("newobj1") // Ensure new data is not larger than the old data
 	if len(newData1) > len(data1) {
@@ -266,14 +274,16 @@ func TestWriteToObjExceedLimit(t *testing.T) {
 
 	// Write the first object
 	data1 := []byte("object1")
-	objId1, writer1, err := store.LateWriteNewObj(len(data1))
+	objId1, writer1, finisher, err := store.LateWriteNewObj(len(data1))
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
 	if _, err := writer1.Write(data1); err != nil {
 		t.Fatalf("expected no error writing data, got %v", err)
 	}
-
+	if finisher != nil {
+		finisher()
+	}
 	// Attempt to modify the first object with data larger than the original
 	newData1 := []byte("newobject1data") // Ensure new data is larger than the old data
 	if len(newData1) <= len(data1) {
@@ -335,12 +345,15 @@ func TestConcurrentWriteToObj(t *testing.T) {
 
 	// Create the test objects in the store and update the dict with the object ids
 	for i, data := range testObjects {
-		objId, writer, err := store.LateWriteNewObj(len(data))
+		objId, writer, finisher, err := store.LateWriteNewObj(len(data))
 		if err != nil {
 			t.Fatalf("expected no error, got %v", err)
 		}
 		if _, err := writer.Write(data); err != nil {
 			t.Fatalf("expected no error writing data, got %v", err)
+		}
+		if finisher != nil {
+			finisher()
 		}
 		testObjectDict[i] = &TstObject{id: ObjectId(objId), size: len(data), mutex: &sync.Mutex{}}
 	}
@@ -379,7 +392,7 @@ func TestConcurrentWriteToObj(t *testing.T) {
 	}
 }
 
-func mutateOneObject(testObj *TstObject, store *store) error {
+func mutateOneObject(testObj *TstObject, store *baseStore) error {
 	// We own the lock on this object for the duration of this function
 	testObj.mutex.Lock()
 	defer testObj.mutex.Unlock()
@@ -420,7 +433,7 @@ func TestLoadStore(t *testing.T) {
 	defer store.Close()
 
 	data := []byte("testdata")
-	objId, writer, err := store.LateWriteNewObj(len(data))
+	objId, writer, finisher, err := store.LateWriteNewObj(len(data))
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -428,7 +441,9 @@ func TestLoadStore(t *testing.T) {
 	if _, err := writer.Write(data); err != nil {
 		t.Fatalf("expected no error writing data, got %v", err)
 	}
-
+	if finisher != nil {
+		finisher()
+	}
 	store.Close()
 
 	loadedStore, err := LoadStore(store.filePath)
@@ -457,15 +472,20 @@ func TestDeleteObj(t *testing.T) {
 
 	// Write a new object
 	data := []byte("testdata")
-	objId, writer, err := store.LateWriteNewObj(len(data))
+	objId, writer, finisher, err := store.LateWriteNewObj(len(data))
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
 	if _, err := writer.Write(data); err != nil {
 		t.Fatalf("expected no error writing data, got %v", err)
 	}
-
+	if finisher != nil {
+		finisher()
+	}
 	// Delete the object
+	if !IsValidObjectId(ObjectId(objId)) {
+		t.Fatalf("expected valid objectId, got %d", objId)
+	}
 	err = store.DeleteObj(ObjectId(objId))
 	if err != nil {
 		t.Fatalf("expected no error deleting object, got %v", err)
@@ -489,7 +509,7 @@ func TestDeleteNonExistentObj(t *testing.T) {
 	defer store.Close()
 
 	// Attempt to delete a non-existent object
-	err := store.DeleteObj(ObjectId(999))
+		err := store.DeleteObj(ObjectId(999))
 	if err == nil {
 		t.Fatalf("expected error deleting non-existent object, got nil")
 	}
