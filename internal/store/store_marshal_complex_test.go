@@ -134,63 +134,35 @@ func (m *MockStruct) UnmarshalMultiple(objReader io.Reader, reader ObjReader) er
 }
 
 func TestMockStructMarshalMultiple(t *testing.T) {
+	dir, store := setupTestStore(t)
+	defer os.RemoveAll(dir)
+	defer store.Close()
+
+	// Create a MockStruct instance
 	mock := &MockStruct{
 		IntValue:  42,
 		BoolValue: true,
 	}
 
-	objectIds := []ObjectId{1, 2, 3}
-	_, objectAndByteFuncs, err := mock.MarshalMultiple(objectIds)
+	// Write the complex type to the store
+	mockObjId, err := WriteComplexTypes(store, mock)
 	if err != nil {
-		t.Fatalf("MarshalMultiple failed: %v", err)
+		t.Fatalf("Failed to write complex types: %v", err)
 	}
 
-	if len(objectAndByteFuncs) != 3 {
-		t.Fatalf("Expected 3 ObjectAndByteFunc, got %d", len(objectAndByteFuncs))
+	// Read the complex type from the store
+	newMock := &MockStruct{}
+	err = ReadGeneric(store, newMock, mockObjId)
+	if err != nil {
+		t.Fatalf("Failed to read complex types: %v", err)
 	}
 
-	// Verify the LUT
-	lutData, err := objectAndByteFuncs[0].ByteFunc()
-	if err != nil {
-		t.Fatalf("ByteFunc for LUT failed: %v", err)
+	// Verify the unmarshalled data
+	if newMock.IntValue != 42 {
+		t.Errorf("Expected IntValue 42, got %d", newMock.IntValue)
 	}
-	expectedLut := &ObjectIdLut{Ids: objectIds[1:]}
-	expectedLutData, err := expectedLut.Marshal()
-	if err != nil {
-		t.Fatalf("Expected LUT Marshal failed: %v", err)
-	}
-	if !bytes.Equal(lutData, expectedLutData) {
-		t.Errorf("Expected LUT data %v, got %v", expectedLutData, lutData)
-	}
-
-	// Verify the IntValue
-	intData, err := objectAndByteFuncs[1].ByteFunc()
-	if err != nil {
-		t.Fatalf("ByteFunc for IntValue failed: %v", err)
-	}
-	var intValue int
-	intBuf := bytes.NewBuffer(intData)
-	intDec := gob.NewDecoder(intBuf)
-	if err := intDec.Decode(&intValue); err != nil {
-		t.Fatalf("Decode IntValue failed: %v", err)
-	}
-	if intValue != 42 {
-		t.Errorf("Expected IntValue 42, got %d", intValue)
-	}
-
-	// Verify the BoolValue
-	boolData, err := objectAndByteFuncs[2].ByteFunc()
-	if err != nil {
-		t.Fatalf("ByteFunc for BoolValue failed: %v", err)
-	}
-	var boolValue bool
-	boolBuf := bytes.NewBuffer(boolData)
-	boolDec := gob.NewDecoder(boolBuf)
-	if err := boolDec.Decode(&boolValue); err != nil {
-		t.Fatalf("Decode BoolValue failed: %v", err)
-	}
-	if boolValue != true {
-		t.Errorf("Expected BoolValue true, got %v", boolValue)
+	if newMock.BoolValue != true {
+		t.Errorf("Expected BoolValue true, got %v", newMock.BoolValue)
 	}
 }
 
@@ -253,7 +225,7 @@ func TestWriteComplexTypes(t *testing.T) {
 	}
 
 	// Write the complex type to the store
-	mockObjId, err := store.WriteComplexTypes(mock)
+	mockObjId, err := WriteComplexTypes(store, mock)
 	if err != nil {
 		t.Fatalf("Failed to write complex types: %v", err)
 	}
@@ -300,7 +272,7 @@ func TestMarshalMultipleGeneric(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PreMarshal failed: %v", err)
 	}
-	objectIds, err := store.allocateObjects(objectLengths)
+	objectIds, err := allocateObjects(store, objectLengths)
 	if err != nil {
 		t.Fatalf("AllocateObjects failed: %v", err)
 	}
@@ -310,7 +282,7 @@ func TestMarshalMultipleGeneric(t *testing.T) {
 		t.Fatalf("MarshalMultipleGeneric failed: %v", err)
 	}
 
-	err = store.writeObjects(objectAndByteFuncs)
+	err = writeObjects(store, objectAndByteFuncs)
 	if err != nil {
 		t.Fatalf("WriteObjects failed: %v", err)
 	}
@@ -331,7 +303,7 @@ func TestUnmarshalMultipleGenericMockStruct(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PreMarshal failed: %v", err)
 	}
-	objectIds, err := store.allocateObjects(objectLengths)
+	objectIds, err := allocateObjects(store, objectLengths)
 	if err != nil {
 		t.Fatalf("AllocateObjects failed: %v", err)
 	}
@@ -340,14 +312,14 @@ func TestUnmarshalMultipleGenericMockStruct(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MarshalMultiple failed: %v", err)
 	}
-	err = store.writeObjects(objectAndByteFuncs)
+	err = writeObjects(store, objectAndByteFuncs)
 	if err != nil {
 		t.Fatalf("WriteObjects failed: %v", err)
 	}
 
 	// Test with a MarshalComplex type
 	newMock := &MockStruct{}
-	err = store.unmarshalComplexObj(newMock, identityFunc())
+	err = unmarshalComplexObj(store, newMock, identityFunc())
 	if err != nil {
 		t.Fatalf("unmarshalComplexObj failed: %v", err)
 	}

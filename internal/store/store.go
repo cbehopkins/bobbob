@@ -16,13 +16,12 @@ type Finisher func() error
 // ObjReader is an interface for getting an io.Reader for an object
 type ObjReader interface {
 	LateReadObj(id ObjectId) (io.Reader, error)
-	ReadGeneric(obj any, objId ObjectId) error
 }
 type ObjWriter interface {
 	LateWriteNewObj(size int) (ObjectId, io.Writer, error)
 	WriteToObj(objectId ObjectId) (io.Writer, Finisher, error)
 	WriteBytesToObj(data []byte, objectId ObjectId) error
-	WriteGeneric(obj any) (ObjectId, error)
+	WriteNewObjFromBytes(data []byte) (ObjectId, error)
 }
 type Storer interface {
 	NewObj(size int) (ObjectId, error)

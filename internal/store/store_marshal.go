@@ -3,7 +3,6 @@ package store
 import (
 	"bytes"
 	"encoding/binary"
-	"errors"
 	"fmt"
 	"io"
 )
@@ -34,7 +33,7 @@ type ObjectAndByteFunc struct {
 }
 
 // allocateObjects allocates objects in the store and returns a list of ObjectIds
-func (s *store) allocateObjects(sizes []int) ([]ObjectId, error) {
+func allocateObjects(s Storer, sizes []int) ([]ObjectId, error) {
 	if sizes == nil {
 		return []ObjectId{objNotPreAllocated}, nil
 	}
@@ -45,12 +44,11 @@ func (s *store) allocateObjects(sizes []int) ([]ObjectId, error) {
 			objectIds = append(objectIds, objNotPreAllocated)
 			continue
 		}
-		objId, fileOffset, err := s.allocator.Allocate(size)
+		// FIXME refactor to get mutex once
+		objId, err := s.NewObj(size)
 		if err != nil {
 			return nil, err
 		}
-		// FIXME refactor to get mutex once
-		s.objectMap.Set(objId, ObjectInfo{Offset: fileOffset, Size: size})
 		objectIds = append(objectIds, objId)
 	}
 
@@ -58,8 +56,9 @@ func (s *store) allocateObjects(sizes []int) ([]ObjectId, error) {
 }
 
 // writeObjects writes the objects to the store using the provided ObjectAndByteFunc list
-func (s *store) writeObjects(objects []ObjectAndByteFunc) error {
+func writeObjects(s Storer, objects []ObjectAndByteFunc) error {
 	// FIXME Can we detect the objects are consecutive and write them in one go?
+	// FIXME do we even need to - write a benchmark!
 	for _, obj := range objects {
 		data, err := obj.ByteFunc()
 		if err != nil {
@@ -74,57 +73,52 @@ func (s *store) writeObjects(objects []ObjectAndByteFunc) error {
 			continue
 		}
 		// FIXME can we farm this out into a series of workers?
-		objInfo, found := s.objectMap.Get(obj.ObjectId)
-		if !found {
-			return errors.New("object not found in object map")
-		}
-		n, err := s.file.WriteAt(data, int64(objInfo.Offset))
+		err = s.WriteBytesToObj(data, objId)
 		if err != nil {
 			return err
 		}
-		if n != len(data) {
-			// FIXME we should retry here
-			return errors.New("failed to write all bytes")
-		}
+
 	}
 
 	return nil
 }
 
-
-func (s *store) WriteGeneric(obj any) (ObjectId, error) {
+// WriteGeneric writes a generic object to the store
+func WriteGeneric(s Storer, obj any) (ObjectId, error) {
 	switch v := obj.(type) {
 	case MarshalComplex:
-		return s.WriteComplexTypes(v)
+		return WriteComplexTypes(s, v)
 	case MarshalSimple:
 		data, err := v.Marshal()
 		if err != nil {
-			return	ObjNotWritten, err
+			return ObjNotWritten, err
 		}
 		return s.WriteNewObjFromBytes(data)
 	default:
-		return s.marshalGeneric(obj)
+		return marshalGeneric(s, obj)
 	}
 }
 
-func (s *store) ReadGeneric(obj any, objId ObjectId) error {
+// ReadGeneric reads a generic object from the store
+func ReadGeneric(s Storer, obj any, objId ObjectId) error {
 	switch v := obj.(type) {
 	case UnmarshalComplex:
-		return s.unmarshalComplexObj(v, objId)
+		return unmarshalComplexObj(s, v, objId)
 	case UnmarshalSimple:
-		return s.unmarshalSimpleObj(v, objId)
+		return unmarshalSimpleObj(s, v, objId)
 	default:
-		return s.unmarshalGeneric(obj, objId)
+		return unmarshalGeneric(s, obj, objId)
 	}
 }
+
 // WriteComplexTypes writes complex types to the store
-func (s *store) WriteComplexTypes(obj MarshalComplex) (ObjectId, error) {
+func WriteComplexTypes(s Storer, obj MarshalComplex) (ObjectId, error) {
 	sizes, err := obj.PreMarshal()
 	if err != nil {
 		return 0, err
 	}
 
-	objectIds, err := s.allocateObjects(sizes)
+	objectIds, err := allocateObjects(s, sizes)
 	if err != nil {
 		return 0, err
 	}
@@ -134,26 +128,25 @@ func (s *store) WriteComplexTypes(obj MarshalComplex) (ObjectId, error) {
 		return 0, err
 	}
 
-	return identityFunction(), s.writeObjects(objectAndByteFuncs)
+	return identityFunction(), writeObjects(s, objectAndByteFuncs)
 }
 
-func (s *store) MarshalMultipleGeneric(obj MarshalComplex, objectIds []ObjectId) (func() ObjectId, []ObjectAndByteFunc, error) {
-	return obj.MarshalMultiple(objectIds)
-}
-
-func (s *store) marshalGeneric(obj any) (ObjectId,  error) {
+// marshalGeneric marshals a generic object
+func marshalGeneric(s Storer, obj any) (ObjectId, error) {
 	switch v := obj.(type) {
 	case int:
-		return s.marshalFixedSize(int64(v))
+		return marshalFixedSize(s, int64(v))
 	case uint:
-		return s.marshalFixedSize(uint64(v))
+		return marshalFixedSize(s, uint64(v))
 	case int8, int16, int32, int64, uint8, uint16, uint32, uint64:
-		return s.marshalFixedSize(v)
+		return marshalFixedSize(s, v)
 	default:
 		return ObjNotWritten, fmt.Errorf("Object cannot be generically marshalled")
-}}
+	}
+}
 
-func (s *store) marshalFixedSize(v any) (ObjectId,  error) {
+// marshalFixedSize marshals a fixed size object
+func marshalFixedSize(s Storer, v any) (ObjectId, error) {
 	buf := new(bytes.Buffer)
 	err := binary.Write(buf, binary.LittleEndian, v)
 	if err != nil {
@@ -162,14 +155,17 @@ func (s *store) marshalFixedSize(v any) (ObjectId,  error) {
 	return s.WriteNewObjFromBytes(buf.Bytes())
 }
 
-func  (s *store) unmarshalComplexObj(obj UnmarshalComplex, objId ObjectId) error {
+// unmarshalComplexObj unmarshals a complex object
+func unmarshalComplexObj(s Storer, obj UnmarshalComplex, objId ObjectId) error {
 	objReader, err := s.LateReadObj(objId)
-		if err != nil {
-			return err
-		}
-		return obj.UnmarshalMultiple(objReader, s)
+	if err != nil {
+		return err
+	}
+	return obj.UnmarshalMultiple(objReader, s)
 }
-func  (s *store) unmarshalSimpleObj(obj UnmarshalSimple, objId ObjectId) error {
+
+// unmarshalSimpleObj unmarshals a simple object
+func unmarshalSimpleObj(s Storer, obj UnmarshalSimple, objId ObjectId) error {
 	objReader, err := s.LateReadObj(objId)
 	if err != nil {
 		return err
@@ -180,7 +176,9 @@ func  (s *store) unmarshalSimpleObj(obj UnmarshalSimple, objId ObjectId) error {
 	}
 	return obj.Unmarshal(data)
 }
-func (s *store) unmarshalGeneric(obj any, objId ObjectId) error {
+
+// unmarshalGeneric unmarshals a generic object
+func unmarshalGeneric(s Storer, obj any, objId ObjectId) error {
 	switch v := obj.(type) {
 	case *int:
 		var temp int64
@@ -213,6 +211,6 @@ func (s *store) unmarshalGeneric(obj any, objId ObjectId) error {
 		}
 		return binary.Read(objReader, binary.LittleEndian, v)
 	default:
-		return fmt.Errorf("Unsupporeted object type for unmarshalling generically, The type is a %T", v)
+		return fmt.Errorf("Unsupported object type for unmarshalling generically, The type is a %T", v)
 	}
 }

@@ -32,14 +32,14 @@ func TestMarshalSimple(t *testing.T) {
     }
 
     // Write the simple type to the store
-    objectId, err := store.WriteGeneric(mock)
+    objectId, err := WriteGeneric(store, mock)
     if err != nil {
         t.Fatalf("marshalSimpleObj failed: %v", err)
     }
 
     // Read back the object
     newMock := &MockMarSimple{}
-    err = store.ReadGeneric(newMock, objectId)
+    err = ReadGeneric(store, newMock, objectId)
     if err != nil {
         t.Fatalf("ReadGeneric failed: %v", err)
     }
@@ -55,7 +55,7 @@ func TestInterfaceCruft(t *testing.T) {
     defer os.RemoveAll(dir)
     defer store.Close()
 
-    objId, err := store.WriteGeneric(int64(42))   
+    objId, err := WriteGeneric(store, int64(42))
     if err != nil {
         t.Fatalf("WriteGeneric failed: %v", err)
     }
@@ -66,7 +66,7 @@ func TestInterfaceCruft(t *testing.T) {
 		return &i
 	}
 
-    err = store.ReadGeneric(newObj(), objId)
+    err = ReadGeneric(store, newObj(), objId)
     if err != nil {
         t.Fatal(err)
     }

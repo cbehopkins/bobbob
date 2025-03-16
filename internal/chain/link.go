@@ -341,7 +341,7 @@ func (l *Link) ObjectId() (store.ObjectId, error) {
 func (l *Link) writeElements() error {
 	for i, element := range l.elements {
 		if l.elementsFileObjIds[i] == store.ObjNotAllocated {
-			objId, err := l.chain.store.WriteGeneric(element)
+			objId, err := store.WriteGeneric(l.chain.store, element)
 			if err != nil {
 				return err
 			}
@@ -454,7 +454,7 @@ func (l *Link) Unmarshal(data []byte, newObj func() any) error {
 		}
 
 		newElm := newObj()
-		err := l.chain.store.ReadGeneric(newElm, objId)
+		err := store.ReadGeneric(l.chain.store, newElm, objId)
 		if err != nil {
 			return err
 		}
