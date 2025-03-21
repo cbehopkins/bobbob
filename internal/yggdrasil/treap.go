@@ -3,14 +3,8 @@ package yggdrasil
 import (
 	"encoding/binary"
 	"errors"
-
-	"github.com/cbehopkins/bobbob/internal/store"
 )
 
-type Key interface {
-	SizeInBytes() int
-	GetObjectId(store.Storer) store.ObjectId
-}
 
 type Priority uint32
 
@@ -195,11 +189,11 @@ func (t *Treap) delete(node TreapNodeInterface, key any) TreapNodeInterface {
 
 // search searches for the node with the given key in the treap.
 func (t *Treap) search(node TreapNodeInterface, key any) TreapNodeInterface {
-	if node == nil || node.IsNil() {
+	if node.IsNil() {
 		return node
 	}
 	currentKey := node.GetKey()
-	if currentKey == key {
+	if currentKey.Equals(key.(Key)) {
 		return node
 	}
 

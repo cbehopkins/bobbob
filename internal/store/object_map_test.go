@@ -90,7 +90,7 @@ func TestFindGapsAfterDeletions(t *testing.T) {
 		t.Fatalf("expected no error closing store, got %v", err)
 	}
 
-	store, err = LoadStore(store.filePath)
+	store, err = LoadBaseStore(store.filePath)
 	if err != nil {
 		t.Fatalf("expected no error loading store, got %v", err)
 	}

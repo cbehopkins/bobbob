@@ -3,7 +3,6 @@ package store
 import (
 	"encoding/binary"
 	"errors"
-	"fmt"
 	"io"
 	"os"
 )
@@ -19,7 +18,7 @@ type baseStore struct {
 // NewBasicStore creates a new Store and initializes it with a basic ObjectMap
 func NewBasicStore(filePath string) (*baseStore, error) {
 	if _, err := os.Stat(filePath); err == nil {
-		return LoadStore(filePath)
+		return LoadBaseStore(filePath)
 	}
 
 	file, err := os.Create(filePath)
@@ -45,7 +44,7 @@ func NewBasicStore(filePath string) (*baseStore, error) {
 	return store, nil
 }
 
-func LoadStore(filePath string) (*baseStore, error) {
+func LoadBaseStore(filePath string) (*baseStore, error) {
 	file, err := os.OpenFile(filePath, os.O_RDWR, 0666)
 	if err != nil {
 		return nil, err
@@ -139,15 +138,13 @@ func (s *baseStore) NewObj(size int) (ObjectId, error) {
 // This is useful when you want to write a large object and you don't want to keep it in memory
 func (s *baseStore) LateWriteNewObj(size int) (ObjectId, io.Writer, Finisher, error) {
 	if err := s.checkFileInitialized(); err != nil {
-		return 0, nil, nil, err
+		return ObjNotAllocated, nil, nil, err
 	}
 
 	objId, fileOffset, err := s.allocator.Allocate(size)
 	if err != nil {
-		return 0, nil, nil, err
+		return ObjNotAllocated, nil, nil, err
 	}
-	fmt.Println("Writing new object at offset", fileOffset)
-
 	// Create a writer that writes to the file
 	writer := io.Writer(s.file)
 
@@ -155,7 +152,6 @@ func (s *baseStore) LateWriteNewObj(size int) (ObjectId, io.Writer, Finisher, er
 
 	return objId, writer, nil, nil
 }
-
 
 // WriteToObj writes to an existing object in the store
 // This is something that should be done with extreme caution and avoided where possible
@@ -173,7 +169,6 @@ func (s *baseStore) WriteToObj(objectId ObjectId) (io.Writer, Finisher, error) {
 	writer := NewSectionWriter(s.file, int64(obj.Offset), int64(obj.Size))
 	return writer, s.createCloser(objectId), nil
 }
-
 
 func (s *baseStore) createCloser(objectId ObjectId) func() error {
 	return func() error {
@@ -270,11 +265,4 @@ func (s *baseStore) Close() error {
 	return s.file.Close()
 }
 
-//TBD
-// * For goodness sake add per object locking
-// * Add a collection table <- i.e. one can name an object by a string, then search for that string and get the object
-// * Add a way to list all objects in the store
-// * Add a way to list all collections
-// * delete collections
-
-
+// TBD Add Per object locking

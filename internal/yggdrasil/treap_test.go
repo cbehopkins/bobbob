@@ -1,82 +1,21 @@
 package yggdrasil
 
 import (
-	"encoding/binary"
-	"encoding/json"
-	"errors"
 	"math/rand"
 	"testing"
-
-	"github.com/cbehopkins/bobbob/internal/store"
 )
 
-func mockIntLess(a, b any) bool {
-	return *a.(*MockIntKey) < *b.(*MockIntKey)
-}
 
-type MockIntKey int32
-
-func (k MockIntKey) New() PersistentKey {
-	v := MockIntKey(-1)
-	return &v
-}
-func (k MockIntKey) SizeInBytes() int {
-	return 4
-}
-
-func (k MockIntKey) GetObjectId(s store.Storer) store.ObjectId {
-	return store.ObjectId(k)
-}
-
-func (k MockIntKey) MarshalToObjectId() (store.ObjectId, error) {
-	return store.ObjectId(k), nil
-}
-func (k *MockIntKey) UnmarshalFromObjectId(id store.ObjectId) error {
-	*k = MockIntKey(id)
-	return nil
-}
-func (k MockIntKey) Marshal() ([]byte, error) {
-	buf := make([]byte, 4)
-	binary.LittleEndian.PutUint32(buf, uint32(k))
-	return buf, nil
-}
-
-func (k *MockIntKey) Unmarshal(data []byte) error {
-	if len(data) != 4 {
-		return errors.New("invalid data length for MockKey")
-	}
-	*k = MockIntKey(binary.LittleEndian.Uint32(data))
-	return nil
-}
-
-type MockStringKey string
-
-func (k MockStringKey) SizeInBytes() int {
-	return store.ObjectId(0).SizeInBytes()
-}
-
-func (k MockStringKey) GetObjectId(s store.Storer) store.ObjectId {
-	return store.ObjectId(0) // FIXME
-}
-
-func (k MockStringKey) Marshal() ([]byte, error) {
-	return []byte(k), nil
-}
-
-func (k *MockStringKey) Unmarshal(data []byte) error {
-	*k = MockStringKey(data)
-	return nil
-}
 
 func TestTreap(t *testing.T) {
-	treap := NewTreap(mockIntLess)
+	treap := NewTreap(IntLess)
 
-	keys := []*MockIntKey{
-		(*MockIntKey)(new(int32)),
-		(*MockIntKey)(new(int32)),
-		(*MockIntKey)(new(int32)),
-		(*MockIntKey)(new(int32)),
-		(*MockIntKey)(new(int32)),
+	keys := []*IntKey{
+		(*IntKey)(new(int32)),
+		(*IntKey)(new(int32)),
+		(*IntKey)(new(int32)),
+		(*IntKey)(new(int32)),
+		(*IntKey)(new(int32)),
 	}
 	*keys[0] = 10
 	*keys[1] = 20
@@ -97,10 +36,10 @@ func TestTreap(t *testing.T) {
 		}
 	}
 
-	nonExistentKeys := []*MockIntKey{
-		(*MockIntKey)(new(int32)),
-		(*MockIntKey)(new(int32)),
-		(*MockIntKey)(new(int32)),
+	nonExistentKeys := []*IntKey{
+		(*IntKey)(new(int32)),
+		(*IntKey)(new(int32)),
+		(*IntKey)(new(int32)),
 	}
 	*nonExistentKeys[0] = 1
 	*nonExistentKeys[1] = 3
@@ -127,14 +66,14 @@ func TestTreap(t *testing.T) {
 
 func TestPayloadTreap(t *testing.T) {
 
-	treap := NewPayloadTreap(mockIntLess)
+	treap := NewPayloadTreap(IntLess)
 
-	keys := []*MockIntKey{
-		(*MockIntKey)(new(int32)),
-		(*MockIntKey)(new(int32)),
-		(*MockIntKey)(new(int32)),
-		(*MockIntKey)(new(int32)),
-		(*MockIntKey)(new(int32)),
+	keys := []*IntKey{
+		(*IntKey)(new(int32)),
+		(*IntKey)(new(int32)),
+		(*IntKey)(new(int32)),
+		(*IntKey)(new(int32)),
+		(*IntKey)(new(int32)),
 	}
 	*keys[0] = 10
 	*keys[1] = 20
@@ -158,10 +97,10 @@ func TestPayloadTreap(t *testing.T) {
 		}
 	}
 
-	nonExistentKeys := []*MockIntKey{
-		(*MockIntKey)(new(int32)),
-		(*MockIntKey)(new(int32)),
-		(*MockIntKey)(new(int32)),
+	nonExistentKeys := []*IntKey{
+		(*IntKey)(new(int32)),
+		(*IntKey)(new(int32)),
+		(*IntKey)(new(int32)),
 	}
 	*nonExistentKeys[0] = 1
 	*nonExistentKeys[1] = 25
@@ -175,50 +114,17 @@ func TestPayloadTreap(t *testing.T) {
 	}
 }
 
-// Custom struct for testing
-type CustomKey struct {
-	ID   int
-	Name string
-}
 
-func (k CustomKey) SizeInBytes() int {
-	return 8
-}
-
-func (k CustomKey) GetObjectId(s store.Storer) store.ObjectId {
-	return store.ObjectId(0) // FIXME
-}
-
-func (k CustomKey) Marshal() ([]byte, error) {
-	return json.Marshal(k)
-}
-
-func (k *CustomKey) Unmarshal(data []byte) error {
-	return json.Unmarshal(data, k)
-}
-
-func customKeyLess(a, b any) bool {
-	ka := a.(*CustomKey)
-	kb := b.(*CustomKey)
-	if ka.ID == kb.ID {
-		return ka.Name < kb.Name
-	}
-	return ka.ID < kb.ID
-}
-
-func stringLess(a, b any) bool {
-	return *a.(*MockStringKey) < *b.(*MockStringKey)
-}
 
 func TestStringKeyTreap(t *testing.T) {
-	treap := NewPayloadTreap(stringLess)
+	treap := NewPayloadTreap(StringLess)
 
-	keys := []*MockStringKey{
-		(*MockStringKey)(new(string)),
-		(*MockStringKey)(new(string)),
-		(*MockStringKey)(new(string)),
-		(*MockStringKey)(new(string)),
-		(*MockStringKey)(new(string)),
+	keys := []*StringKey{
+		(*StringKey)(new(string)),
+		(*StringKey)(new(string)),
+		(*StringKey)(new(string)),
+		(*StringKey)(new(string)),
+		(*StringKey)(new(string)),
 	}
 	*keys[0] = "apple"
 	*keys[1] = "banana"
@@ -242,10 +148,10 @@ func TestStringKeyTreap(t *testing.T) {
 		}
 	}
 
-	nonExistentKeys := []*MockStringKey{
-		(*MockStringKey)(new(string)),
-		(*MockStringKey)(new(string)),
-		(*MockStringKey)(new(string)),
+	nonExistentKeys := []*StringKey{
+		(*StringKey)(new(string)),
+		(*StringKey)(new(string)),
+		(*StringKey)(new(string)),
 	}
 	*nonExistentKeys[0] = "fig"
 	*nonExistentKeys[1] = "grape"
@@ -262,7 +168,7 @@ func TestStringKeyTreap(t *testing.T) {
 func TestCustomKeyTreap(t *testing.T) {
 	treap := NewPayloadTreap(customKeyLess)
 
-	keys := []*CustomKey{
+	keys := []*exampleCustomKey{
 		{ID: 1, Name: "one"},
 		{ID: 2, Name: "two"},
 		{ID: 3, Name: "three"},
@@ -285,7 +191,7 @@ func TestCustomKeyTreap(t *testing.T) {
 		}
 	}
 
-	nonExistentKeys := []*CustomKey{
+	nonExistentKeys := []*exampleCustomKey{
 		{ID: 6, Name: "six"},
 		{ID: 7, Name: "seven"},
 		{ID: 8, Name: "eight"},
@@ -299,14 +205,14 @@ func TestCustomKeyTreap(t *testing.T) {
 }
 
 func TestTreapWalk(t *testing.T) {
-	treap := NewTreap(mockIntLess)
+	treap := NewTreap(IntLess)
 
-	keys := []*MockIntKey{
-		(*MockIntKey)(new(int32)),
-		(*MockIntKey)(new(int32)),
-		(*MockIntKey)(new(int32)),
-		(*MockIntKey)(new(int32)),
-		(*MockIntKey)(new(int32)),
+	keys := []*IntKey{
+		(*IntKey)(new(int32)),
+		(*IntKey)(new(int32)),
+		(*IntKey)(new(int32)),
+		(*IntKey)(new(int32)),
+		(*IntKey)(new(int32)),
 	}
 	*keys[0] = 10
 	*keys[1] = 20
@@ -318,12 +224,12 @@ func TestTreapWalk(t *testing.T) {
 		treap.Insert(key, Priority(rand.Intn(100)))
 	}
 
-	var walkedKeys []MockIntKey
+	var walkedKeys []IntKey
 	treap.Walk(func(node TreapNodeInterface) {
-		walkedKeys = append(walkedKeys, *node.GetKey().(*MockIntKey))
+		walkedKeys = append(walkedKeys, *node.GetKey().(*IntKey))
 	})
 
-	expectedKeys := []MockIntKey{5, 10, 15, 20, 30}
+	expectedKeys := []IntKey{5, 10, 15, 20, 30}
 	for i, key := range expectedKeys {
 		if walkedKeys[i] != key {
 			t.Errorf("Expected key %d at position %d, but got %d", key, i, walkedKeys[i])
@@ -332,14 +238,14 @@ func TestTreapWalk(t *testing.T) {
 }
 
 func TestTreapWalkReverse(t *testing.T) {
-	treap := NewTreap(mockIntLess)
+	treap := NewTreap(IntLess)
 
-	keys := []*MockIntKey{
-		(*MockIntKey)(new(int32)),
-		(*MockIntKey)(new(int32)),
-		(*MockIntKey)(new(int32)),
-		(*MockIntKey)(new(int32)),
-		(*MockIntKey)(new(int32)),
+	keys := []*IntKey{
+		(*IntKey)(new(int32)),
+		(*IntKey)(new(int32)),
+		(*IntKey)(new(int32)),
+		(*IntKey)(new(int32)),
+		(*IntKey)(new(int32)),
 	}
 	*keys[0] = 10
 	*keys[1] = 20
@@ -351,15 +257,34 @@ func TestTreapWalkReverse(t *testing.T) {
 		treap.Insert(key, Priority(rand.Intn(100)))
 	}
 
-	var walkedKeys []MockIntKey
+	var walkedKeys []IntKey
 	treap.WalkReverse(func(node TreapNodeInterface) {
-		walkedKeys = append(walkedKeys, *node.GetKey().(*MockIntKey))
+		walkedKeys = append(walkedKeys, *node.GetKey().(*IntKey))
 	})
 
-	expectedKeys := []MockIntKey{30, 20, 15, 10, 5}
+	expectedKeys := []IntKey{30, 20, 15, 10, 5}
 	for i, key := range expectedKeys {
 		if walkedKeys[i] != key {
 			t.Errorf("Expected key %d at position %d, but got %d", key, i, walkedKeys[i])
 		}
 	}
+}
+
+func TestPointerKeyEquality(t *testing.T) {
+    treap := NewTreap(IntLess)
+
+    key1 := IntKey(10)
+    key2 := IntKey(10)
+
+    // Insert key1 into the treap
+    treap.Insert(&key1, Priority(rand.Intn(100)))
+
+    // Search for key2 in the treap
+    node := treap.Search(&key2)
+
+    if node == nil || node.IsNil() {
+        t.Errorf("Expected to find key %d in the treap, but it was not found", key2)
+    } else if node.GetKey() != &key1 {
+        t.Errorf("Expected to find key %d, but found key %d instead", key1, node.GetKey())
+    }
 }
