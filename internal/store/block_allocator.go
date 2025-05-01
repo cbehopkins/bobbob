@@ -13,6 +13,7 @@ type blockAllocator struct {
 	startingFileOffset FileOffset
 	startingObjectId   ObjectId
 }
+
 // NewBlockAllocator creates a new block allocator
 // This allocator is useful if you know the size of the blocks you want to allocate
 // Rather than maintaing an allocation map, it's simply a list of booleans
@@ -45,7 +46,10 @@ func (a *blockAllocator) Allocate() (ObjectId, FileOffset, error) {
 	return 0, 0, AllAllocated
 }
 
-func (a *blockAllocator) Free(fileOffset FileOffset) error {
+func (a *blockAllocator) Free(fileOffset FileOffset, size int) error {
+	if size != a.blockSize {
+		return errors.New("invalid block size")
+	}
 	blockIndex := (fileOffset - a.startingFileOffset) / FileOffset(a.blockSize)
 	if blockIndex < 0 || blockIndex >= FileOffset(len(a.allocatedList)) {
 		return errors.New("invalid file offset")
@@ -76,14 +80,13 @@ func (a *blockAllocator) Unmarshal(data []byte) error {
 }
 
 type multiBlockAllocator struct {
-	blockSize    int
-	blockCount   int
-	parent       Allocator
-	allocators   []*blockAllocator
-	startOffsets []FileOffset
-	preParentAllocate func() error
+	blockSize          int
+	blockCount         int
+	parent             Allocator
+	allocators         []*blockAllocator
+	startOffsets       []FileOffset
+	preParentAllocate  func() error
 	postParentAllocate func() error
-
 }
 
 // NewMultiBlockAllocator creates a new multi-block allocator
@@ -126,7 +129,6 @@ func (m *multiBlockAllocator) Allocate() (ObjectId, FileOffset, error) {
 			return 0, 0, err
 		}
 	}
-	
 
 	newAllocator := NewBlockAllocator(m.blockSize, m.blockCount, parentFileOffset, parentObjectId)
 	m.allocators = append(m.allocators, newAllocator)
@@ -135,10 +137,13 @@ func (m *multiBlockAllocator) Allocate() (ObjectId, FileOffset, error) {
 	return newAllocator.Allocate()
 }
 
-func (m *multiBlockAllocator) Free(fileOffset FileOffset) error {
+func (m *multiBlockAllocator) Free(fileOffset FileOffset, size int) error {
+	if size != m.blockSize {
+		return errors.New("invalid block size")
+	}
 	for i, startOffset := range m.startOffsets {
 		if fileOffset >= startOffset && fileOffset < startOffset+FileOffset(m.blockSize*m.blockCount) {
-			return m.allocators[i].Free(fileOffset)
+			return m.allocators[i].Free(fileOffset, size)
 		}
 	}
 	return errors.New("invalid file offset")

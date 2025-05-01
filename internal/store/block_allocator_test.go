@@ -4,7 +4,6 @@ import (
 	"testing"
 )
 
-
 type MockAllocator struct{}
 
 func (m *MockAllocator) Allocate(size int) (ObjectId, FileOffset, error) {
@@ -19,7 +18,7 @@ func TestMultiBlockAllocator(t *testing.T) {
 	parentAllocator := &MockAllocator{}
 	multiAllocator := NewMultiBlockAllocator(1024, 2, parentAllocator)
 
-	// Allocate some blocks 
+	// Allocate some blocks
 	for i := 0; i < 4; i++ {
 		_, _, err := multiAllocator.Allocate()
 		if err != nil {
@@ -33,7 +32,7 @@ func TestMultiBlockAllocator(t *testing.T) {
 	}
 
 	// Free a block and ensure it can be reallocated
-	err := multiAllocator.Free(1)
+	err := multiAllocator.Free(1, 1024) // Pass the block size explicitly
 	if err != nil {
 		t.Fatalf("unexpected error during free: %v", err)
 	}
