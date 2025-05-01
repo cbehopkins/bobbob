@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 )
+
 type Allocator interface {
 	Allocate(size int) (ObjectId, FileOffset, error)
 	Free(fileOffset FileOffset, size int) error
@@ -34,11 +35,6 @@ func (h *GapHeap) Pop() any {
 	return x
 }
 
-//	type Allocator interface  {
-//		Allocate(size int) (ObjectId, FileOffset, error)
-//		Free(fileOffset FileOffset, size int) error
-//	}
-//
 // BasicAllocator is a struct to manage the allocation of space in the file
 // FIXME freelist should be stored on disk
 type BasicAllocator struct {
