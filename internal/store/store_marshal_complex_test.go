@@ -20,11 +20,11 @@ func NewMockObjReader(data map[ObjectId][]byte) *MockObjReader {
 }
 
 // LateReadObj reads the object data for the given ObjectId
-func (r *MockObjReader) LateReadObj(id ObjectId) (io.Reader, error) {
+func (r *MockObjReader) LateReadObj(id ObjectId) (io.Reader, Finisher, error) {
 	if data, ok := r.data[id]; ok {
-		return bytes.NewReader(data), nil
+		return bytes.NewReader(data), func() error { return nil }, nil
 	}
-	return nil, errors.New("object not found")
+	return nil, nil, errors.New("object not found")
 }
 
 func (r *MockObjReader) ReadGeneric(obj any, objId ObjectId) error {
@@ -104,10 +104,11 @@ func (m *MockStruct) UnmarshalMultiple(objReader io.Reader, reader ObjReader) er
 	}
 
 	// Fetch and unmarshal the integer value
-	intReader, err := reader.LateReadObj(lut.Ids[0])
+	intReader, finisher, err := reader.LateReadObj(lut.Ids[0])
 	if err != nil {
 		return err
 	}
+	defer finisher()
 	intBuf := new(bytes.Buffer)
 	if _, err := intBuf.ReadFrom(intReader); err != nil {
 		return err
@@ -118,10 +119,11 @@ func (m *MockStruct) UnmarshalMultiple(objReader io.Reader, reader ObjReader) er
 	}
 
 	// Fetch and unmarshal the boolean value
-	boolReader, err := reader.LateReadObj(lut.Ids[1])
+	boolReader, finisher, err := reader.LateReadObj(lut.Ids[1])
 	if err != nil {
 		return err
 	}
+	defer finisher()
 	boolBuf := new(bytes.Buffer)
 	if _, err := boolBuf.ReadFrom(boolReader); err != nil {
 		return err
@@ -232,10 +234,11 @@ func TestWriteComplexTypes(t *testing.T) {
 	}
 
 	// Read the LUT object
-	lutReader, err := store.LateReadObj(mockObjId)
+	lutReader, finisher, err := store.LateReadObj(mockObjId)
 	if err != nil {
 		t.Fatalf("Failed to read LUT object: %v", err)
 	}
+	defer finisher()
 	lutBuf := make([]byte, 16)
 	_, err = lutReader.Read(lutBuf)
 	if err != nil {

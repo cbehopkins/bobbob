@@ -130,19 +130,21 @@ func marshalFixedSize(s Storer, v any) (ObjectId, error) {
 
 // unmarshalComplexObj unmarshals a complex object
 func unmarshalComplexObj(s Storer, obj UnmarshalComplex, objId ObjectId) error {
-	objReader, err := s.LateReadObj(objId)
+	objReader, finisher, err := s.LateReadObj(objId)
 	if err != nil {
 		return err
 	}
+	defer finisher()
 	return obj.UnmarshalMultiple(objReader, s)
 }
 
 // unmarshalSimpleObj unmarshals a simple object
 func unmarshalSimpleObj(s Storer, obj UnmarshalSimple, objId ObjectId) error {
-	objReader, err := s.LateReadObj(objId)
+	objReader, finisher, err := s.LateReadObj(objId)
 	if err != nil {
 		return err
 	}
+	defer finisher()
 	data, err := io.ReadAll(objReader)
 	if err != nil {
 		return err
@@ -155,7 +157,12 @@ func unmarshalGeneric(s Storer, obj any, objId ObjectId) error {
 	switch v := obj.(type) {
 	case *int:
 		var temp int64
-		objReader, err := s.LateReadObj(objId)
+		objReader, finisher, err := s.LateReadObj(objId)
+
+		if err != nil {
+			return err
+		}
+		err = finisher()
 		if err != nil {
 			return err
 		}
@@ -167,7 +174,7 @@ func unmarshalGeneric(s Storer, obj any, objId ObjectId) error {
 		return nil
 	case *uint:
 		var temp uint64
-		objReader, err := s.LateReadObj(objId)
+		objReader, finisher, err := s.LateReadObj(objId)
 		if err != nil {
 			return err
 		}
@@ -175,10 +182,18 @@ func unmarshalGeneric(s Storer, obj any, objId ObjectId) error {
 		if err != nil {
 			return err
 		}
+		err = finisher()
+		if err != nil {
+			return err
+		}
 		*v = uint(temp)
 		return nil
 	case *int8, *int16, *int32, *int64, *uint8, *uint16, *uint32, *uint64:
-		objReader, err := s.LateReadObj(objId)
+		objReader,finisher,  err := s.LateReadObj(objId)
+		if err != nil {
+			return err
+		}
+		err = finisher()
 		if err != nil {
 			return err
 		}

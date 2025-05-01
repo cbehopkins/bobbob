@@ -5,6 +5,10 @@ import (
 	"io"
 	"os"
 )
+type Allocator interface {
+	Allocate(size int) (ObjectId, FileOffset, error)
+	Free(fileOffset FileOffset, size int) error
+}
 
 type Gap struct {
 	Start int64

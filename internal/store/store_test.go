@@ -64,7 +64,7 @@ func TestNewBob(t *testing.T) {
 	}
 
 	// Verify the initial offset is zero using ReadObj
-	reader, err := store.lateReadObj(0)
+	reader, finisher, err := store.lateReadObj(0)
 	if err != nil {
 		t.Fatalf("expected no error reading initial offset, got %v", err)
 	}
@@ -73,6 +73,10 @@ func TestNewBob(t *testing.T) {
 	err = binary.Read(reader, binary.LittleEndian, &initialOffset)
 	if err != nil {
 		t.Fatalf("expected no error reading initial offset, got %v", err)
+	}
+	err = finisher()
+	if err != nil {
+		t.Fatalf("expected no error closing reader, got %v", err)
 	}
 
 	if initialOffset != 0 {
@@ -142,15 +146,15 @@ func TestReadObj(t *testing.T) {
 	if finisher != nil {
 		finisher()
 	}
-	reader, err := store.LateReadObj(ObjectId(offset))
+	reader, finisher, err := store.LateReadObj(ObjectId(offset))
 	if err != nil {
 		t.Fatalf("expected no error reading data, got %v", err)
 	}
-
 	readData := make([]byte, len(data))
 	if _, err := io.ReadFull(reader, readData); err != nil {
 		t.Fatalf("expected no error reading data, got %v", err)
 	}
+	defer finisher()
 
 	if !bytes.Equal(data, readData) {
 		t.Fatalf("expected read data to be %v, got %v", data, readData)
@@ -189,11 +193,11 @@ func TestWriteToObj(t *testing.T) {
 		t.Fatalf("expected no error closing writer, got %v", err)
 	}
 	// Read back the updated object
-	reader, err := store.LateReadObj(ObjectId(objId))
+	reader, finisher, err := store.LateReadObj(ObjectId(objId))
 	if err != nil {
 		t.Fatalf("expected no error reading data, got %v", err)
 	}
-
+	defer finisher()
 	readData := make([]byte, len(data))
 	if _, err := io.ReadFull(reader, readData); err != nil {
 		t.Fatalf("expected no error reading data, got %v", err)
@@ -250,10 +254,11 @@ func TestWriteToObjAndVerify(t *testing.T) {
 	}
 
 	// Read back the first object and verify the data
-	reader1, err := store.LateReadObj(ObjectId(objId1))
+	reader1, finisher1, err := store.LateReadObj(ObjectId(objId1))
 	if err != nil {
 		t.Fatalf("expected no error reading data, got %v", err)
 	}
+	defer finisher1()
 	readData1 := make([]byte, len(data1))
 	if _, err := io.ReadFull(reader1, readData1); err != nil {
 		t.Fatalf("expected no error reading data, got %v", err)
@@ -263,10 +268,11 @@ func TestWriteToObjAndVerify(t *testing.T) {
 	}
 
 	// Read back the second object and verify the data
-	reader2, err := store.LateReadObj(ObjectId(objId2))
+	reader2, finisher2, err := store.LateReadObj(ObjectId(objId2))
 	if err != nil {
 		t.Fatalf("expected no error reading data, got %v", err)
 	}
+	defer finisher2()
 	readData2 := make([]byte, len(data2))
 	if _, err := io.ReadFull(reader2, readData2); err != nil {
 		t.Fatalf("expected no error reading data, got %v", err)
@@ -311,10 +317,11 @@ func TestWriteToObjExceedLimit(t *testing.T) {
 	}
 
 	// Read back the first object and verify the data has not changed
-	reader1, err := store.LateReadObj(ObjectId(objId1))
+	reader1, finisher1, err := store.LateReadObj(ObjectId(objId1))
 	if err != nil {
 		t.Fatalf("expected no error reading data, got %v", err)
 	}
+	defer finisher1()
 	readData1 := make([]byte, len(data1))
 	if _, err := io.ReadFull(reader1, readData1); err != nil {
 		t.Fatalf("expected no error reading data, got %v", err)
@@ -420,11 +427,12 @@ func mutateOneObject(testObj *TstObject, store *baseStore) error {
 	if err != nil {
 		return fmt.Errorf("expected no error closing writer, got %v", err)
 	}
-	reader, err := store.LateReadObj(testObj.id)
+	reader, finisher, err := store.LateReadObj(testObj.id)
 	if err != nil {
 		return fmt.Errorf("expected no error reading data, got %v", err)
 
 	}
+	defer finisher()
 	readData := make([]byte, len(newData))
 	if _, err := io.ReadFull(reader, readData); err != nil {
 		return fmt.Errorf("expected no error reading data, got %v", err)
@@ -500,9 +508,15 @@ func TestDeleteObj(t *testing.T) {
 	}
 
 	// Attempt to read the deleted object
-	_, err = store.LateReadObj(ObjectId(objId))
+	_, finisher, err = store.LateReadObj(ObjectId(objId))
 	if err == nil {
 		t.Fatalf("expected error reading deleted object, got nil")
+	}
+	if finisher != nil {
+		err = finisher()
+		if err == nil {
+			t.Fatalf("expected error closing reader for deleted object, got nil")
+		}
 	}
 
 	// Verify the object is removed from the object map

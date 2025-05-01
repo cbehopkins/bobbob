@@ -4,6 +4,8 @@ import (
 	"io"
 	"sync"
 )
+// TBD
+// * Add the cunning plan to reuse the io.writer by a queue that the closer writes to with the current io.writer
 
 type concurrentStore struct {
 	baseStore
@@ -52,9 +54,17 @@ func (s *concurrentStore) WriteToObj(objectId ObjectId) (io.Writer, Finisher, er
 	defer objLock.Unlock()
 	return s.baseStore.WriteToObj(objectId)
 }
-func (s *concurrentStore) LateReadObj(offset ObjectId) (io.Reader, error) {
+func (s *concurrentStore) LateReadObj(offset ObjectId) (io.Reader, Finisher, error) {
 	objLock := s.lookupObjectMutex(offset)
 	objLock.RLock()
-	defer objLock.RUnlock()
-	return s.baseStore.LateReadObj(offset)
+	reader, finisher, err := s.baseStore.LateReadObj(offset)
+	if err != nil {
+		objLock.RUnlock()
+		return nil, nil, err
+	}
+	newFinisher := func() error {
+		defer objLock.RUnlock()
+		return finisher()
+	}
+	return reader, newFinisher, nil
 }

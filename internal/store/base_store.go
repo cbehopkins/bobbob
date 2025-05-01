@@ -64,6 +64,7 @@ func LoadBaseStore(filePath string) (*baseStore, error) {
 	}
 
 	// Read the serialized ObjectMap
+	// FIXME this assumption on the size is deeply flawed
 	data := make([]byte, 4096) // Assuming the ObjectMap is not larger than 1024 bytes
 	n, err := file.Read(data)
 	if err != nil && err != io.EOF {
@@ -182,24 +183,25 @@ func (s *baseStore) createCloser(objectId ObjectId) func() error {
 
 // LateReadObj reads an object from the store
 // Returns a reader so as to not force large objects into memory
-func (s *baseStore) LateReadObj(offset ObjectId) (io.Reader, error) {
+func (s *baseStore) LateReadObj(offset ObjectId) (io.Reader, Finisher, error) {
 	if !IsValidObjectId(offset) {
-		return nil, errors.New("invalid objectId")
+		return nil, nil, errors.New("invalid objectId")
 	}
 	return s.lateReadObj(offset)
 }
-func (s *baseStore) lateReadObj(offset ObjectId) (io.Reader, error) {
+
+func (s *baseStore) lateReadObj(offset ObjectId) (io.Reader, Finisher, error) {
 	if err := s.checkFileInitialized(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	obj, found := s.objectMap.Get(offset)
 	if !found {
-		return nil, errors.New("object not found")
+		return nil, nil, errors.New("object not found")
 	}
 	// For now they are always the same but we will implement a mapping in the future
 	fileOffset := FileOffset(obj.Offset)
 	reader := io.NewSectionReader(s.file, int64(fileOffset), int64(obj.Size))
-	return reader, nil
+	return reader, s.createCloser(offset), nil
 }
 func (s *baseStore) DeleteObj(objId ObjectId) error {
 	// FIXME Complex types have one object that points to others
@@ -264,5 +266,3 @@ func (s *baseStore) Close() error {
 	}
 	return s.file.Close()
 }
-
-// TBD Add Per object locking
