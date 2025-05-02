@@ -85,8 +85,8 @@ type multiBlockAllocator struct {
 	parent             Allocator
 	allocators         []*blockAllocator
 	startOffsets       []FileOffset
-	preParentAllocate  func() error
-	postParentAllocate func() error
+	preParentAllocate  func(size int) error
+	postParentAllocate func(ObjectId, FileOffset) error
 }
 
 // NewMultiBlockAllocator creates a new multi-block allocator
@@ -103,7 +103,7 @@ func NewMultiBlockAllocator(blockSize, blockCount int, parent Allocator) *multiB
 	}
 }
 
-func (m *multiBlockAllocator) Allocate() (ObjectId, FileOffset, error) {
+func (m *multiBlockAllocator) Allocate(size int) (ObjectId, FileOffset, error) {
 	for _, allocator := range m.allocators {
 		objectId, fileOffset, err := allocator.Allocate()
 		if err == nil {
@@ -116,7 +116,7 @@ func (m *multiBlockAllocator) Allocate() (ObjectId, FileOffset, error) {
 
 	// All allocators are full, create a new one
 	if m.preParentAllocate != nil {
-		if err := m.preParentAllocate(); err != nil {
+		if err := m.preParentAllocate(size); err != nil {
 			return 0, 0, err
 		}
 	}
@@ -125,7 +125,7 @@ func (m *multiBlockAllocator) Allocate() (ObjectId, FileOffset, error) {
 		return 0, 0, err
 	}
 	if m.postParentAllocate != nil {
-		if err := m.postParentAllocate(); err != nil {
+		if err := m.postParentAllocate(parentObjectId, parentFileOffset); err != nil {
 			return 0, 0, err
 		}
 	}
@@ -230,4 +230,78 @@ func (m *multiBlockAllocator) Unmarshal(data []byte) error {
 	}
 
 	return nil
+}
+
+type omniBlockAllocator struct {
+	blockMap     map[int]*blockAllocator
+	blockCount   int
+	parent       Allocator
+	preAllocate  func(size int) error
+	postAllocate func(objectId ObjectId, fileOffset FileOffset) error
+	preFree      func(fileOffset FileOffset, size int) error
+	postFree     func(fileOffset FileOffset, size int) error
+}
+
+func NewOmniBlockAllocator(blockSize []int, blockCount int, parent Allocator) *omniBlockAllocator {
+	blockMap := make(map[int]*blockAllocator)
+	for i, size := range blockSize {
+		blockMap[size] = NewBlockAllocator(size, blockCount, 0, ObjectId(i))
+	}
+	return &omniBlockAllocator{
+		blockMap:   blockMap,
+		blockCount: blockCount,
+		parent:     parent,
+	}
+}
+
+func (o *omniBlockAllocator) Allocate(size int) (ObjectId, FileOffset, error) {
+	if o.preAllocate != nil {
+		if err := o.preAllocate(size); err != nil {
+			return 0, 0, err
+		}
+	}
+
+	allocator, ok := o.blockMap[size]
+	var objectId ObjectId
+	var fileOffset FileOffset
+	var err error
+	if ok {
+		objectId, fileOffset, err = allocator.Allocate()
+	} else {
+		// Defer to the parent allocator if size is not found
+		objectId, fileOffset, err = o.parent.Allocate(size)
+	}
+
+	if o.postAllocate != nil {
+		if postErr := o.postAllocate(objectId, fileOffset); postErr != nil {
+			return 0, 0, postErr
+		}
+	}
+
+	return objectId, fileOffset, err
+}
+
+func (o *omniBlockAllocator) Free(fileOffset FileOffset, size int) error {
+	if o.preFree != nil {
+		if err := o.preFree(fileOffset, size); err != nil {
+			return err
+		}
+	}
+
+	allocator, ok := o.blockMap[size]
+	var err error
+	if ok {
+		err = allocator.Free(fileOffset, size)
+	} else {
+		// Defer to the parent allocator if size is not found
+		err = o.parent.Free(fileOffset, size)
+	}
+
+	if o.postFree != nil {
+		if postErr := o.postFree(fileOffset, size); postErr != nil {
+			return postErr
+		}
+	}
+
+	return err
 }

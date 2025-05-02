@@ -16,11 +16,12 @@ func (m *MockAllocator) Free(fileOffset FileOffset, size int) error {
 
 func TestMultiBlockAllocator(t *testing.T) {
 	parentAllocator := &MockAllocator{}
-	multiAllocator := NewMultiBlockAllocator(1024, 2, parentAllocator)
+	blockSize := 1024
+	multiAllocator := NewMultiBlockAllocator(blockSize, 2, parentAllocator)
 
 	// Allocate some blocks
 	for i := 0; i < 4; i++ {
-		_, _, err := multiAllocator.Allocate()
+		_, _, err := multiAllocator.Allocate(blockSize)
 		if err != nil {
 			t.Fatalf("unexpected error during allocation: %v", err)
 		}
@@ -37,7 +38,7 @@ func TestMultiBlockAllocator(t *testing.T) {
 		t.Fatalf("unexpected error during free: %v", err)
 	}
 
-	_, _, err = multiAllocator.Allocate()
+	_, _, err = multiAllocator.Allocate(blockSize)
 	if err != nil {
 		t.Fatalf("unexpected error during reallocation: %v", err)
 	}
@@ -45,11 +46,12 @@ func TestMultiBlockAllocator(t *testing.T) {
 
 func TestMultiBlockAllocatorMarshalUnmarshal(t *testing.T) {
 	parentAllocator := &MockAllocator{}
-	multiAllocator := NewMultiBlockAllocator(1024, 2, parentAllocator)
+	blockSize := 1024
+	multiAllocator := NewMultiBlockAllocator(blockSize, 2, parentAllocator)
 
 	// Allocate some blocks
 	for i := 0; i < 4; i++ {
-		_, _, err := multiAllocator.Allocate()
+		_, _, err := multiAllocator.Allocate(blockSize)
 		if err != nil {
 			t.Fatalf("unexpected error during allocation: %v", err)
 		}
