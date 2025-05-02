@@ -42,7 +42,7 @@ type BasicAllocator struct {
 	end      int64
 }
 
-func NewAllocator(file *os.File) (*BasicAllocator, error) {
+func NewBasicAllocator(file *os.File) (*BasicAllocator, error) {
 	offset, err := file.Seek(0, io.SeekEnd)
 	if err != nil {
 		return nil, err

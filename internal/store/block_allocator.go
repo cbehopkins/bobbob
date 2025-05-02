@@ -12,6 +12,7 @@ type blockAllocator struct {
 	allocatedList      []bool
 	startingFileOffset FileOffset
 	startingObjectId   ObjectId
+	allAllocated       bool
 }
 
 // NewBlockAllocator creates a new block allocator
@@ -35,6 +36,9 @@ func (a *blockAllocator) Allocate() (ObjectId, FileOffset, error) {
 	// TBD we currently use a list of booleans
 	// This is far from the most efficient structure
 	// And we could make use of a bitset, but KISS
+	if a.allAllocated {
+		return 0, 0, AllAllocated
+	}
 	for i, allocated := range a.allocatedList {
 		if !allocated {
 			a.allocatedList[i] = true
@@ -43,10 +47,12 @@ func (a *blockAllocator) Allocate() (ObjectId, FileOffset, error) {
 			return objectId, FileOffset(fileOffset), nil
 		}
 	}
+	a.allAllocated = true
 	return 0, 0, AllAllocated
 }
 
 func (a *blockAllocator) Free(fileOffset FileOffset, size int) error {
+	a.allAllocated = false
 	if size != a.blockSize {
 		return errors.New("invalid block size")
 	}
@@ -105,6 +111,8 @@ func NewMultiBlockAllocator(blockSize, blockCount int, parent Allocator) *multiB
 
 func (m *multiBlockAllocator) Allocate(size int) (ObjectId, FileOffset, error) {
 	for _, allocator := range m.allocators {
+		// TBD add a bitfield/map/whatever to track which allocators are full
+		// Then we can save quering them
 		objectId, fileOffset, err := allocator.Allocate()
 		if err == nil {
 			return objectId, fileOffset, nil

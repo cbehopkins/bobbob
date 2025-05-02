@@ -13,39 +13,44 @@ type baseStore struct {
 	filePath  string
 	file      *os.File
 	objectMap *ObjectMap
-	allocator *BasicAllocator
+	allocator Allocator
 }
+
 // NewBasicStore creates a new Store and initializes it with a basic ObjectMap
 func NewBasicStore(filePath string) (*baseStore, error) {
 	if _, err := os.Stat(filePath); err == nil {
 		return LoadBaseStore(filePath)
 	}
-
+	pointerSize := 8
 	file, err := os.Create(filePath)
 	if err != nil {
 		return nil, err
 	}
-
+	allocator, err := NewBasicAllocator(file)
+	if err != nil {
+		return nil, err
+	}
+	allocator.end = int64(pointerSize)
 	// Initialize the Store
 	store := &baseStore{
 		filePath:  filePath,
 		file:      file,
 		objectMap: NewObjectMap(),
-		allocator: &BasicAllocator{},
+		allocator: allocator,
 	}
+	store.objectMap.Set(0, ObjectInfo{Offset: 0, Size: pointerSize})
 
 	// Write the initial offset (zero) to the store
-	_, err = file.Write(make([]byte, 8)) // 8 bytes for int64
+	_, err = file.Write(make([]byte, pointerSize))
 	if err != nil {
 		return nil, err
 	}
-	store.objectMap.Set(0, ObjectInfo{Offset: 0, Size: 8})
-	store.allocator.end = 8
+
 	return store, nil
 }
 
 func LoadBaseStore(filePath string) (*baseStore, error) {
-	file, err := os.OpenFile(filePath, os.O_RDWR, 0666)
+	file, err := os.OpenFile(filePath, os.O_RDWR, 0o666)
 	if err != nil {
 		return nil, err
 	}
@@ -203,6 +208,7 @@ func (s *baseStore) lateReadObj(offset ObjectId) (io.Reader, Finisher, error) {
 	reader := io.NewSectionReader(s.file, int64(fileOffset), int64(obj.Size))
 	return reader, s.createCloser(offset), nil
 }
+
 func (s *baseStore) DeleteObj(objId ObjectId) error {
 	// FIXME Complex types have one object that points to others
 	// We need a method that lists all the objects that are part of a complex object

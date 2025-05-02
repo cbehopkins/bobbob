@@ -13,7 +13,7 @@ func TestNewAllocator(t *testing.T) {
 	}
 	defer os.Remove(file.Name())
 
-	allocator, err := NewAllocator(file)
+	allocator, err := NewBasicAllocator(file)
 	if err != nil {
 		t.Fatalf("Failed to create allocator: %v", err)
 	}
@@ -34,7 +34,7 @@ func TestAllocate(t *testing.T) {
 	}
 	defer os.Remove(file.Name())
 
-	allocator, err := NewAllocator(file)
+	allocator, err := NewBasicAllocator(file)
 	if err != nil {
 		t.Fatalf("Failed to create allocator: %v", err)
 	}
@@ -64,7 +64,7 @@ func TestFree(t *testing.T) {
 	}
 	defer os.Remove(file.Name())
 
-	allocator, err := NewAllocator(file)
+	allocator, err := NewBasicAllocator(file)
 	if err != nil {
 		t.Fatalf("Failed to create allocator: %v", err)
 	}
