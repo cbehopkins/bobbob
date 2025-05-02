@@ -109,7 +109,7 @@ func (m *multiBlockAllocator) Allocate(size int) (ObjectId, FileOffset, error) {
 		if err == nil {
 			return objectId, fileOffset, nil
 		}
-		if err != AllAllocated {
+		if !errors.Is(err, AllAllocated) {
 			return 0, 0, err
 		}
 	}
