@@ -32,6 +32,10 @@ func NewBlockAllocator(blockSize, blockCount int, startingFileOffset FileOffset,
 	}
 }
 
+//	func (a *blockAllocator) Close() error {
+//		// No resources to close
+//		return nil
+//	}
 func (a *blockAllocator) Allocate() (ObjectId, FileOffset, error) {
 	// TBD we currently use a list of booleans
 	// This is far from the most efficient structure
@@ -313,3 +317,28 @@ func (o *omniBlockAllocator) Free(fileOffset FileOffset, size int) error {
 
 	return err
 }
+
+// func (o *omniBlockAllocator) Close() error {
+// 	for _, allocator := range o.blockMap {
+// 		if err := allocator.Close(); err != nil {
+// 			return err
+// 		}
+// 	}
+// 	return nil
+// }
+
+// func (o *omniBlockAllocator) DeleteObj(objectId ObjectId) error {
+// 	// Implement the logic to delete an object by its ObjectId
+// 	// This may involve freeing the associated blocks in the block allocator
+// 	return nil
+// }
+// func (o *omniBlockAllocator) LateReadObj(id ObjectId) (io.Reader, Finisher, error) {
+// 	// Implement the logic to read an object by its ObjectId
+// 	// This may involve retrieving the associated blocks in the block allocator
+// 	return nil, nil, nil
+// }
+// func (o *omniBlockAllocator) LateWriteNewObj(size int) (ObjectId, io.Writer, Finisher, error) {
+// 	// Implement the logic to write a new object by its size
+// 	// This may involve allocating blocks in the block allocator
+// 	return 0, nil, nil, nil
+// }

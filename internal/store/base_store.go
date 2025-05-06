@@ -188,25 +188,25 @@ func (s *baseStore) createCloser(objectId ObjectId) func() error {
 
 // LateReadObj reads an object from the store
 // Returns a reader so as to not force large objects into memory
-func (s *baseStore) LateReadObj(offset ObjectId) (io.Reader, Finisher, error) {
-	if !IsValidObjectId(offset) {
+func (s *baseStore) LateReadObj(objId ObjectId) (io.Reader, Finisher, error) {
+	if !IsValidObjectId(objId) {
 		return nil, nil, errors.New("invalid objectId")
 	}
-	return s.lateReadObj(offset)
+	return s.lateReadObj(objId)
 }
 
-func (s *baseStore) lateReadObj(offset ObjectId) (io.Reader, Finisher, error) {
+func (s *baseStore) lateReadObj(objId ObjectId) (io.Reader, Finisher, error) {
 	if err := s.checkFileInitialized(); err != nil {
 		return nil, nil, err
 	}
-	obj, found := s.objectMap.Get(offset)
+	obj, found := s.objectMap.Get(objId)
 	if !found {
 		return nil, nil, errors.New("object not found")
 	}
 	// For now they are always the same but we will implement a mapping in the future
 	fileOffset := FileOffset(obj.Offset)
 	reader := io.NewSectionReader(s.file, int64(fileOffset), int64(obj.Size))
-	return reader, s.createCloser(offset), nil
+	return reader, s.createCloser(objId), nil
 }
 
 func (s *baseStore) DeleteObj(objId ObjectId) error {

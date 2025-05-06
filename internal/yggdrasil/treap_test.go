@@ -5,10 +5,8 @@ import (
 	"testing"
 )
 
-
-
 func TestTreap(t *testing.T) {
-	treap := NewTreap(IntLess)
+	treap := NewTreap[IntKey](IntLess)
 
 	keys := []*IntKey{
 		(*IntKey)(new(int32)),
@@ -65,8 +63,7 @@ func TestTreap(t *testing.T) {
 }
 
 func TestPayloadTreap(t *testing.T) {
-
-	treap := NewPayloadTreap(IntLess)
+	treap := NewPayloadTreap[IntKey, string](IntLess)
 
 	keys := []*IntKey{
 		(*IntKey)(new(int32)),
@@ -92,8 +89,8 @@ func TestPayloadTreap(t *testing.T) {
 			t.Errorf("Expected to find key %d in the treap, but it was not found", *key)
 		} else if node.GetKey() != key {
 			t.Errorf("Expected to find key %d, but found key %d instead", *key, node.GetKey())
-		} else if node.(*PayloadTreapNode).payload != payloads[i] {
-			t.Errorf("Expected to find payload %s, but found payload %s instead", payloads[i], node.(*PayloadTreapNode).payload)
+		} else if node.(*PayloadTreapNode[IntKey, string]).payload != payloads[i] {
+			t.Errorf("Expected to find payload %s, but found payload %s instead", payloads[i], node.(*PayloadTreapNode[IntKey, string]).payload)
 		}
 	}
 
@@ -114,10 +111,8 @@ func TestPayloadTreap(t *testing.T) {
 	}
 }
 
-
-
 func TestStringKeyTreap(t *testing.T) {
-	treap := NewPayloadTreap(StringLess)
+	treap := NewPayloadTreap[StringKey, int](StringLess)
 
 	keys := []*StringKey{
 		(*StringKey)(new(string)),
@@ -143,8 +138,8 @@ func TestStringKeyTreap(t *testing.T) {
 			t.Errorf("Expected to find key %s in the treap, but it was not found", *key)
 		} else if node.GetKey() != key {
 			t.Errorf("Expected to find key %s, but found key %s instead", *key, node.GetKey())
-		} else if node.(*PayloadTreapNode).payload != payloads[i] {
-			t.Errorf("Expected to find payload %d, but found payload %d instead", payloads[i], node.(*PayloadTreapNode).payload)
+		} else if node.(*PayloadTreapNode[StringKey, int]).payload != payloads[i] {
+			t.Errorf("Expected to find payload %d, but found payload %d instead", payloads[i], node.(*PayloadTreapNode[StringKey, int]).payload)
 		}
 	}
 
@@ -166,7 +161,7 @@ func TestStringKeyTreap(t *testing.T) {
 }
 
 func TestCustomKeyTreap(t *testing.T) {
-	treap := NewPayloadTreap(customKeyLess)
+	treap := NewPayloadTreap[exampleCustomKey, string](customKeyLess)
 
 	keys := []*exampleCustomKey{
 		{ID: 1, Name: "one"},
@@ -186,8 +181,8 @@ func TestCustomKeyTreap(t *testing.T) {
 			t.Errorf("Expected to find key %+v in the treap, but it was not found", key)
 		} else if node.GetKey() != key {
 			t.Errorf("Expected to find key %+v, but found key %+v instead", key, node.GetKey())
-		} else if node.(*PayloadTreapNode).payload != payloads[i] {
-			t.Errorf("Expected to find payload %s, but found payload %s instead", payloads[i], node.(*PayloadTreapNode).payload)
+		} else if node.(*PayloadTreapNode[exampleCustomKey, string]).payload != payloads[i] {
+			t.Errorf("Expected to find payload %s, but found payload %s instead", payloads[i], node.(*PayloadTreapNode[exampleCustomKey, string]).payload)
 		}
 	}
 
@@ -205,7 +200,7 @@ func TestCustomKeyTreap(t *testing.T) {
 }
 
 func TestTreapWalk(t *testing.T) {
-	treap := NewTreap(IntLess)
+	treap := NewTreap[IntKey](IntLess)
 
 	keys := []*IntKey{
 		(*IntKey)(new(int32)),
@@ -225,7 +220,7 @@ func TestTreapWalk(t *testing.T) {
 	}
 
 	var walkedKeys []IntKey
-	treap.Walk(func(node TreapNodeInterface) {
+	treap.Walk(func(node TreapNodeInterface[IntKey]) {
 		walkedKeys = append(walkedKeys, *node.GetKey().(*IntKey))
 	})
 
@@ -238,7 +233,7 @@ func TestTreapWalk(t *testing.T) {
 }
 
 func TestTreapWalkReverse(t *testing.T) {
-	treap := NewTreap(IntLess)
+	treap := NewTreap[IntKey](IntLess)
 
 	keys := []*IntKey{
 		(*IntKey)(new(int32)),
@@ -258,7 +253,7 @@ func TestTreapWalkReverse(t *testing.T) {
 	}
 
 	var walkedKeys []IntKey
-	treap.WalkReverse(func(node TreapNodeInterface) {
+	treap.WalkReverse(func(node TreapNodeInterface[IntKey]) {
 		walkedKeys = append(walkedKeys, *node.GetKey().(*IntKey))
 	})
 
@@ -271,20 +266,20 @@ func TestTreapWalkReverse(t *testing.T) {
 }
 
 func TestPointerKeyEquality(t *testing.T) {
-    treap := NewTreap(IntLess)
+	treap := NewTreap(IntLess)
 
-    key1 := IntKey(10)
-    key2 := IntKey(10)
+	key1 := IntKey(10)
+	key2 := IntKey(10)
 
-    // Insert key1 into the treap
-    treap.Insert(&key1, Priority(rand.Intn(100)))
+	// Insert key1 into the treap
+	treap.Insert(&key1, Priority(rand.Intn(100)))
 
-    // Search for key2 in the treap
-    node := treap.Search(&key2)
+	// Search for key2 in the treap
+	node := treap.Search(&key2)
 
-    if node == nil || node.IsNil() {
-        t.Errorf("Expected to find key %d in the treap, but it was not found", key2)
-    } else if node.GetKey() != &key1 {
-        t.Errorf("Expected to find key %d, but found key %d instead", key1, node.GetKey())
-    }
+	if node == nil || node.IsNil() {
+		t.Errorf("Expected to find key %d in the treap, but it was not found", key2)
+	} else if node.GetKey() != &key1 {
+		t.Errorf("Expected to find key %d, but found key %d instead", key1, node.GetKey())
+	}
 }

@@ -9,13 +9,26 @@ import (
 	"sync"
 )
 
+// ObjectInfo is an identifier unique within the store of an object
+// A user refers to an object by its ObjectId
+// It is up to the store, how this is handled internally
 type ObjectId int64
 
-type FileOffset int64
-
+// It must satisfy the PersistentKey interface
 func (id ObjectId) SizeInBytes() int {
 	return 8
 }
+
+func (id ObjectId) Equals(other ObjectId) bool {
+	return id == other
+}
+
+// func (id ObjectId) New() *ObjectId {
+// 	v := ObjectId(-1)
+// 	return &v
+// }
+
+type FileOffset int64
 
 // Marshal converts the ObjectId into a fixed length bytes encoding
 func (id ObjectId) Marshal() ([]byte, error) {

@@ -21,8 +21,8 @@ func setupTestStore(t *testing.T) store.Storer {
 func TestPersistentTreapBasics(t *testing.T) {
 	store := setupTestStore(t)
 	defer store.Close()
-
-	treap := NewPersistentTreap(IntLess,(*IntKey)(new(int32)), store)
+	var keyTemplate *IntKey = (*IntKey)(new(int32))
+	treap := NewPersistentTreap[IntKey](IntLess, keyTemplate, store)
 
 	keys := []*IntKey{
 		(*IntKey)(new(int32)),
@@ -84,8 +84,8 @@ func TestPersistentTreapNodeMarshalUnmarshal(t *testing.T) {
 
 	key := IntKey(42)
 	priority := Priority(100)
-	treap := NewPersistentTreap(IntLess, (*IntKey)(new(int32)), store)
-	node := NewPersistentTreapNode(&key, priority, store, treap)
+	treap := NewPersistentTreap[IntKey](IntLess, (*IntKey)(new(int32)), store)
+	node := NewPersistentTreapNode[IntKey](&key, priority, store, treap)
 
 	// Marshal the node
 	data, err := node.Marshal()
@@ -94,7 +94,7 @@ func TestPersistentTreapNodeMarshalUnmarshal(t *testing.T) {
 	}
 
 	// Unmarshal the node
-	unmarshalledNode := &PersistentTreapNode{Store: store, parent: treap}
+	unmarshalledNode := &PersistentTreapNode[IntKey]{Store: store, parent: treap}
 	dstKey := IntKey(0)
 	err = unmarshalledNode.unmarshal(data, &dstKey)
 	if err != nil {
@@ -123,8 +123,8 @@ func TestPersistentTreapNodeInvalidateObjectId(t *testing.T) {
 
 	key := IntKey(42)
 	priority := Priority(100)
-	treap := NewPersistentTreap(IntLess, (*IntKey)(new(int32)), stre)
-	node := NewPersistentTreapNode(&key, priority, stre, treap)
+	treap := NewPersistentTreap[IntKey](IntLess, (*IntKey)(new(int32)), stre)
+	node := NewPersistentTreapNode[IntKey](&key, priority, stre, treap)
 
 	// Initially, the ObjectId should be store.ObjNotAllocated
 	if node.objectId != store.ObjNotAllocated {
@@ -144,7 +144,7 @@ func TestPersistentTreapNodeInvalidateObjectId(t *testing.T) {
 
 	// Add a left child and check if ObjectId is invalidated
 	leftKey := IntKey(21)
-	leftNode := NewPersistentTreapNode(&leftKey, Priority(50), stre, treap)
+	leftNode := NewPersistentTreapNode[IntKey](&leftKey, Priority(50), stre, treap)
 	node.SetLeft(leftNode)
 
 	if node.objectId != store.ObjNotAllocated {
@@ -164,7 +164,7 @@ func TestPersistentTreapNodeInvalidateObjectId(t *testing.T) {
 
 	// Add a right child and check if ObjectId is invalidated
 	rightKey := IntKey(63)
-	rightNode := NewPersistentTreapNode(&rightKey, Priority(75), stre, treap)
+	rightNode := NewPersistentTreapNode[IntKey](&rightKey, Priority(75), stre, treap)
 	node.SetRight(rightNode)
 
 	if node.objectId != store.ObjNotAllocated {
@@ -195,8 +195,8 @@ func TestPersistentTreapPersistence(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create store: %v", err)
 	}
-
-	treap := NewPersistentTreap(IntLess, (*IntKey)(new(int32)), store0)
+	var keyTemplate IntKey
+	treap := NewPersistentTreap[IntKey](IntLess, &keyTemplate, store0)
 
 	// Insert data into the treap
 	keys := make([]*IntKey, 100)
@@ -215,8 +215,8 @@ func TestPersistentTreapPersistence(t *testing.T) {
 	// Simplification for this test
 	// We will implement an object lookup mechanism later
 	var treapObjectId store.ObjectId
-	treapObjectId = treap.root.(*PersistentTreapNode).ObjectId()
-	var bob PersistentTreap
+	treapObjectId = treap.root.(*PersistentTreapNode[IntKey]).ObjectId()
+	var bob PersistentTreap[IntKey]
 	bob.keyTemplate = (*IntKey)(new(int32))
 	bob.Store = store0
 	bobNode, err := NewFromObjectId(treapObjectId, &bob, store0)
@@ -233,7 +233,6 @@ func TestPersistentTreapPersistence(t *testing.T) {
 		t.Fatalf("Failed to read treap, invalid right node: %v", err)
 	}
 
-
 	// Close the store
 	store0.Close()
 
@@ -245,7 +244,7 @@ func TestPersistentTreapPersistence(t *testing.T) {
 	defer store1.Close()
 
 	// Create a new treap with the loaded store
-	treap = NewPersistentTreap(IntLess, (*IntKey)(new(int32)), store1)
+	treap = NewPersistentTreap[IntKey](IntLess, (*IntKey)(new(int32)), store1)
 	err = treap.Load(treapObjectId)
 	if err != nil {
 		t.Fatalf("Failed to load treap: %v", err)
@@ -255,7 +254,7 @@ func TestPersistentTreapPersistence(t *testing.T) {
 		node := treap.Search(key)
 		if node.IsNil() {
 			t.Errorf("Expected to find key %d in the treap, but it was not found", *key)
-		} else if !key.Equals(node.GetKey()) {
+		} else if !key.Equals(node.GetKey().Value()) {
 			t.Errorf("Expected to find key %d, but found key %d instead", *key, node.GetKey())
 		}
 	}
@@ -266,19 +265,19 @@ func TestPersistentTreapNodeMarshalUnmarshalWithChildren(t *testing.T) {
 	defer store0.Close()
 
 	var keyTemplate IntKey
-	parent := &PersistentTreap{keyTemplate: &keyTemplate, Store: store0}
+	parent := &PersistentTreap[IntKey]{keyTemplate: &keyTemplate, Store: store0}
 	rootKey := IntKey(100)
 	leftKey := IntKey(50)
 	rightKey := IntKey(150)
-	root := NewPersistentTreapNode(&rootKey, 10, store0, parent)
-	left := NewPersistentTreapNode(&leftKey, 5, store0, parent)
-	right := NewPersistentTreapNode(&rightKey, 15, store0, parent)
+	root := NewPersistentTreapNode[IntKey](&rootKey, 10, store0, parent)
+	left := NewPersistentTreapNode[IntKey](&leftKey, 5, store0, parent)
+	right := NewPersistentTreapNode[IntKey](&rightKey, 15, store0, parent)
 
 	root.SetLeft(left)
 	root.SetRight(right)
 
 	err := root.Persist()
-	if !store.IsValidObjectId(root.leftObjectId){
+	if !store.IsValidObjectId(root.leftObjectId) {
 		t.Fatalf("Failed to persist left node invalid left objectid: %v", err)
 	}
 
@@ -290,11 +289,10 @@ func TestPersistentTreapNodeMarshalUnmarshalWithChildren(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to marshal root: %v", err)
 	}
-	var unmarshalledRoot PersistentTreapNode
+	var unmarshalledRoot PersistentTreapNode[IntKey]
 	err = unmarshalledRoot.unmarshal(data, &keyTemplate)
 
-	if !store.IsValidObjectId(unmarshalledRoot.leftObjectId){
+	if !store.IsValidObjectId(unmarshalledRoot.leftObjectId) {
 		t.Fatalf("Failed to unmarshal left node: %v", err)
 	}
 }
-

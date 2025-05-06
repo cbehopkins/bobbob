@@ -8,40 +8,55 @@ import (
 	"github.com/cbehopkins/bobbob/internal/store"
 )
 
-
-type Key interface {
-	// Size in bytes is the size in the store of the key. 
+type Key[T any] interface {
+	// Size in bytes is the size in the store of the key.
 	// This should be constant for all objects of the same type.
 	SizeInBytes() int
-	Equals(Key) bool
+	Equals(T) bool
+	Value() T
 }
 
-type PersistentKey interface {
-	Key
-	New() PersistentKey
-	MarshalToObjectId() (store.ObjectId, error)
-	UnmarshalFromObjectId(store.ObjectId) error
+type PersistentKey[T any] interface {
+	Key[T]
+	New() PersistentKey[T]
+	MarshalToObjectId(store.Storer) (store.ObjectId, error)
+	UnmarshalFromObjectId(store.ObjectId, store.Storer) error
 }
 
 type IntKey int32
-func IntLess(a, b any) bool {
-	return *a.(*IntKey) < *b.(*IntKey)
+
+func (k IntKey) Equals(other IntKey) bool {
+	return k == other
 }
-func (k IntKey) New() PersistentKey {
+
+func (k IntKey) Value() IntKey {
+	return k
+}
+
+func IntLess(a, b IntKey) bool {
+	return a < b
+}
+
+func (k IntKey) New() PersistentKey[IntKey] {
 	v := IntKey(-1)
 	return &v
 }
+
 func (k IntKey) SizeInBytes() int {
-	return 4
+	return store.ObjectId(0).SizeInBytes()
 }
 
-func (k IntKey) MarshalToObjectId() (store.ObjectId, error) {
+func (k IntKey) MarshalToObjectId(stre store.Storer) (store.ObjectId, error) {
+	// Here we cheat because we know IntKey will fit into the ObjectId storage space
+	// I do not reccomend this trick, but as long as Unmarshal knows about it, it is ok
 	return store.ObjectId(k), nil
 }
-func (k *IntKey) UnmarshalFromObjectId(id store.ObjectId) error {
+
+func (k *IntKey) UnmarshalFromObjectId(id store.ObjectId, stre store.Storer) error {
 	*k = IntKey(id)
 	return nil
 }
+
 func (k IntKey) Marshal() ([]byte, error) {
 	buf := make([]byte, 4)
 	binary.LittleEndian.PutUint32(buf, uint32(k))
@@ -56,22 +71,18 @@ func (k *IntKey) Unmarshal(data []byte) error {
 	return nil
 }
 
-func (k IntKey) Equals(other Key) bool {
-	otherKey, ok := other.(*IntKey)
-	if !ok {
-		return false
-	}
-	return k == *otherKey
-}
-
 type StringKey string
 
-func StringLess(a, b any) bool {
-	return *a.(*StringKey) < *b.(*StringKey)
+func (k StringKey) Value() StringKey {
+	return k
+}
+
+func StringLess(a, b StringKey) bool {
+	return a < b
 }
 
 func (k StringKey) SizeInBytes() int {
-	return store.ObjectId(0).SizeInBytes()
+	return len([]byte(k))
 }
 
 func (k StringKey) Marshal() ([]byte, error) {
@@ -83,19 +94,32 @@ func (k *StringKey) Unmarshal(data []byte) error {
 	return nil
 }
 
-func (k StringKey) Equals(other Key) bool {
-	otherKey, ok := other.(*StringKey)
-	if !ok {
-		return false
-	}
-	return k == *otherKey
+func (k StringKey) Equals(other StringKey) bool {
+	return k == other
+}
+
+func (k StringKey) New() PersistentKey[StringKey] {
+	v := StringKey("")
+	return &v
+}
+
+func (k StringKey) MarshalToObjectId(stre store.Storer) (store.ObjectId, error) {
+	marshalled, _ := k.Marshal()
+	return store.WriteNewObjFromBytes(stre, marshalled)
+}
+
+func (k *StringKey) UnmarshalFromObjectId(id store.ObjectId, stre store.Storer) error {
+	return store.ReadGeneric(stre, k, id)
 }
 
 // Custom struct for testing
-
 type exampleCustomKey struct {
 	ID   int
 	Name string
+}
+
+func (k exampleCustomKey) Value() exampleCustomKey {
+	return k
 }
 
 func (k exampleCustomKey) SizeInBytes() int {
@@ -109,17 +133,14 @@ func (k exampleCustomKey) Marshal() ([]byte, error) {
 func (k *exampleCustomKey) Unmarshal(data []byte) error {
 	return json.Unmarshal(data, k)
 }
-func (k exampleCustomKey) Equals(other Key) bool {
-	otherKey, ok := other.(*exampleCustomKey)
-	if !ok {
-		return false
-	}
-	return k.ID == otherKey.ID && k.Name == otherKey.Name
+
+func (k exampleCustomKey) Equals(other exampleCustomKey) bool {
+	return k.ID == other.ID && k.Name == other.Name
 }
 
-func customKeyLess(a, b any) bool {
-	ka := a.(*exampleCustomKey)
-	kb := b.(*exampleCustomKey)
+func customKeyLess(a, b exampleCustomKey) bool {
+	ka := a
+	kb := b
 	if ka.ID == kb.ID {
 		return ka.Name < kb.Name
 	}
