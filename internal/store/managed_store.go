@@ -11,6 +11,7 @@ type managedStore struct {
 	collectionMap map[string]ObjectId
 	allocatorList []Allocator
 }
+
 // A Managed store attempts to tidy up all the concepts we've been working on
 // One can have multiple collections
 // There is range of Allocators that can be setup

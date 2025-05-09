@@ -14,26 +14,26 @@ import (
 )
 
 func setupStore(tb testing.TB, prefix string) (string, *baseStore) {
-    dir, err := os.MkdirTemp("", prefix)
-    if err != nil {
-        tb.Fatalf("expected no error, got %v", err)
-    }
+	dir, err := os.MkdirTemp("", prefix)
+	if err != nil {
+		tb.Fatalf("expected no error, got %v", err)
+	}
 
-    filePath := filepath.Join(dir, "testfile.bin")
-    store, err := NewBasicStore(filePath)
-    if err != nil {
-        tb.Fatalf("expected no error, got %v", err)
-    }
+	filePath := filepath.Join(dir, "testfile.bin")
+	store, err := NewBasicStore(filePath)
+	if err != nil {
+		tb.Fatalf("expected no error, got %v", err)
+	}
 
-    return dir, store
+	return dir, store
 }
 
 func setupTestStore(t *testing.T) (string, *baseStore) {
-    return setupStore(t, "store_test")
+	return setupStore(t, "store_test")
 }
 
 func setupBenchmarkStore(b *testing.B) (string, *baseStore) {
-    return setupStore(b, "store_benchmark")
+	return setupStore(b, "store_benchmark")
 }
 
 func createObject(t *testing.T, store *baseStore, data []byte) ObjectId {
@@ -531,7 +531,7 @@ func TestDeleteNonExistentObj(t *testing.T) {
 	defer store.Close()
 
 	// Attempt to delete a non-existent object
-		err := store.DeleteObj(ObjectId(999))
+	err := store.DeleteObj(ObjectId(999))
 	if err == nil {
 		t.Fatalf("expected error deleting non-existent object, got nil")
 	}
@@ -541,93 +541,93 @@ func TestDeleteNonExistentObj(t *testing.T) {
 // * Write the largest possible payload in a single call
 // * Have approx the name number of writers as CPUs
 func BenchmarkWriteAt(b *testing.B) {
-    dir, store := setupBenchmarkStore(b)
-    defer os.RemoveAll(dir)
-    defer store.Close()
+	dir, store := setupBenchmarkStore(b)
+	defer os.RemoveAll(dir)
+	defer store.Close()
 
-    payloadSizes := []int{64, 256, 1024, 4096, 16384} // Different payload sizes
-    concurrencyLevels := []int{1, 10, 100}           // Different concurrency levels
+	payloadSizes := []int{64, 256, 1024, 4096, 16384} // Different payload sizes
+	concurrencyLevels := []int{1, 10, 100}            // Different concurrency levels
 
-    for _, payloadSize := range payloadSizes {
-        for _, concurrency := range concurrencyLevels {
-            b.Run(fmt.Sprintf("PayloadSize=%d_Concurrency=%d", payloadSize, concurrency), func(b *testing.B) {
-                data := make([]byte, payloadSize)
-                cryptorand.Read(data) // Fill with random data
+	for _, payloadSize := range payloadSizes {
+		for _, concurrency := range concurrencyLevels {
+			b.Run(fmt.Sprintf("PayloadSize=%d_Concurrency=%d", payloadSize, concurrency), func(b *testing.B) {
+				data := make([]byte, payloadSize)
+				cryptorand.Read(data) // Fill with random data
 
-                b.ResetTimer()
-                var wg sync.WaitGroup
-                for i := 0; i < concurrency; i++ {
-                    wg.Add(1)
-                    go func() {
-                        defer wg.Done()
-                        for j := 0; j < b.N/concurrency; j++ {
-                            _, writer, finisher, err := store.LateWriteNewObj(len(data))
-                            if err != nil {
-                                b.Fatalf("expected no error, got %v", err)
-                            }
-                            if _, err := writer.Write(data); err != nil {
-                                b.Fatalf("expected no error writing data, got %v", err)
-                            }
-                            if finisher != nil {
-                                finisher()
-                            }
-                        }
-                    }()
-                }
-                wg.Wait()
+				b.ResetTimer()
+				var wg sync.WaitGroup
+				for i := 0; i < concurrency; i++ {
+					wg.Add(1)
+					go func() {
+						defer wg.Done()
+						for j := 0; j < b.N/concurrency; j++ {
+							_, writer, finisher, err := store.LateWriteNewObj(len(data))
+							if err != nil {
+								b.Fatalf("expected no error, got %v", err)
+							}
+							if _, err := writer.Write(data); err != nil {
+								b.Fatalf("expected no error writing data, got %v", err)
+							}
+							if finisher != nil {
+								finisher()
+							}
+						}
+					}()
+				}
+				wg.Wait()
 
-                // Calculate and report bytes per operation and bytes per second
-                bytesPerOp := float64(payloadSize)
+				// Calculate and report bytes per operation and bytes per second
+				bytesPerOp := float64(payloadSize)
 				bytesPerSec := bytesPerOp / b.Elapsed().Seconds()
-                b.ReportMetric(bytesPerOp, "bytes/op")
-                b.ReportMetric(bytesPerSec, "bytes/sec")
-            })
-        }
-    }
+				b.ReportMetric(bytesPerOp, "bytes/op")
+				b.ReportMetric(bytesPerSec, "bytes/sec")
+			})
+		}
+	}
 }
 
 func BenchmarkWriteAtSingleCall(b *testing.B) {
-    dir, store := setupBenchmarkStore(b)
-    defer os.RemoveAll(dir)
-    defer store.Close()
+	dir, store := setupBenchmarkStore(b)
+	defer os.RemoveAll(dir)
+	defer store.Close()
 
-    payloadSizes := []int{64, 256, 1024, 4096, 16384} // Different payload sizes
-    concurrencyLevels := []int{1, 10, 100}           // Different concurrency levels
+	payloadSizes := []int{64, 256, 1024, 4096, 16384} // Different payload sizes
+	concurrencyLevels := []int{1, 10, 100}            // Different concurrency levels
 
-    for _, payloadSize := range payloadSizes {
-        for _, concurrency := range concurrencyLevels {
-            b.Run(fmt.Sprintf("PayloadSize=%d_Concurrency=%d", payloadSize, concurrency), func(b *testing.B) {
-                data := make([]byte, payloadSize)
-                cryptorand.Read(data) // Fill with random data
+	for _, payloadSize := range payloadSizes {
+		for _, concurrency := range concurrencyLevels {
+			b.Run(fmt.Sprintf("PayloadSize=%d_Concurrency=%d", payloadSize, concurrency), func(b *testing.B) {
+				data := make([]byte, payloadSize)
+				cryptorand.Read(data) // Fill with random data
 
-                b.ResetTimer()
-                var wg sync.WaitGroup
-                for i := 0; i < concurrency; i++ {
-                    wg.Add(1)
-                    go func() {
-                        defer wg.Done()
-                        for j := 0; j < b.N/concurrency; j++ {
-                            _, writer, finisher, err := store.LateWriteNewObj(len(data))
-                            if err != nil {
-                                b.Fatalf("expected no error, got %v", err)
-                            }
-                            if _, err := writer.Write(data); err != nil {
-                                b.Fatalf("expected no error writing data, got %v", err)
-                            }
-                            if finisher != nil {
-                                finisher()
-                            }
-                        }
-                    }()
-                }
-                wg.Wait()
+				b.ResetTimer()
+				var wg sync.WaitGroup
+				for i := 0; i < concurrency; i++ {
+					wg.Add(1)
+					go func() {
+						defer wg.Done()
+						for j := 0; j < b.N/concurrency; j++ {
+							_, writer, finisher, err := store.LateWriteNewObj(len(data))
+							if err != nil {
+								b.Fatalf("expected no error, got %v", err)
+							}
+							if _, err := writer.Write(data); err != nil {
+								b.Fatalf("expected no error writing data, got %v", err)
+							}
+							if finisher != nil {
+								finisher()
+							}
+						}
+					}()
+				}
+				wg.Wait()
 
-                // Calculate and report bytes per operation and bytes per second
-                bytesPerOp := float64(payloadSize)
+				// Calculate and report bytes per operation and bytes per second
+				bytesPerOp := float64(payloadSize)
 				bytesPerSec := bytesPerOp / b.Elapsed().Seconds()
-                b.ReportMetric(bytesPerOp, "bytes/op")
-                b.ReportMetric(bytesPerSec, "bytes/sec")
-            })
-        }
-    }
+				b.ReportMetric(bytesPerOp, "bytes/op")
+				b.ReportMetric(bytesPerSec, "bytes/sec")
+			})
+		}
+	}
 }

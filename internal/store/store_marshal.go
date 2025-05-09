@@ -83,7 +83,6 @@ func writeObjects(s Storer, objects []ObjectAndByteFunc) error {
 	return nil
 }
 
-
 // writeComplexTypes writes complex types to the store
 func writeComplexTypes(s Storer, obj MarshalComplex) (ObjectId, error) {
 	sizes, err := obj.PreMarshal()
@@ -189,7 +188,7 @@ func unmarshalGeneric(s Storer, obj any, objId ObjectId) error {
 		*v = uint(temp)
 		return nil
 	case *int8, *int16, *int32, *int64, *uint8, *uint16, *uint32, *uint64:
-		objReader,finisher,  err := s.LateReadObj(objId)
+		objReader, finisher, err := s.LateReadObj(objId)
 		if err != nil {
 			return err
 		}

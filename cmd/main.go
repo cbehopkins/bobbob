@@ -37,7 +37,7 @@ func main() {
 	}
 	fmt.Printf("Data written at offset: %d\n", offset)
 
-	reader,finisher, err := s.LateReadObj(store.ObjectId(offset))
+	reader, finisher, err := s.LateReadObj(store.ObjectId(offset))
 	if err != nil {
 		log.Fatalf("Failed to read object: %v", err)
 	}

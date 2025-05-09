@@ -1,8 +1,6 @@
 package yggdrasil
 
 import (
-	"fmt"
-
 	"bobbob/internal/store"
 )
 
@@ -67,16 +65,6 @@ func NewFromObjectId[T any](objId store.ObjectId, parent *PersistentTreap[T], st
 		return nil, err
 	}
 	return tmp, nil
-}
-
-func asPersistentTreapNodeInterface[T any](node TreapNodeInterface[T]) (PersistentTreapNodeInterface[T], error) {
-	if node == nil {
-		return nil, nil
-	}
-	if persistentNode, ok := node.(PersistentTreapNodeInterface[T]); ok {
-		return persistentNode, nil
-	}
-	return nil, fmt.Errorf("node is not of type PersistentTreapNode")
 }
 
 // GetKey returns the key of the node.
@@ -175,10 +163,7 @@ func (n *PersistentTreapNode[T]) Persist() error {
 		return nil
 	}
 	if n.TreapNode.left != nil && !store.IsValidObjectId(n.leftObjectId) {
-		leftNode, err := asPersistentTreapNodeInterface[T](n.TreapNode.left)
-		if err != nil {
-			return err
-		}
+		leftNode := n.TreapNode.left.(PersistentTreapNodeInterface[T])
 		if leftNode != nil {
 			err := leftNode.Persist()
 			if err != nil {
@@ -191,10 +176,7 @@ func (n *PersistentTreapNode[T]) Persist() error {
 		// n.TreapNode.left = nil
 	}
 	if n.TreapNode.right != nil && !store.IsValidObjectId(n.rightObjectId) {
-		rightNode, err := asPersistentTreapNodeInterface[T](n.TreapNode.right)
-		if err != nil {
-			return err
-		}
+		rightNode := n.TreapNode.right.(PersistentTreapNodeInterface[T])
 		if rightNode != nil {
 			err := rightNode.Persist()
 			if err != nil {
@@ -225,10 +207,7 @@ func (n *PersistentTreapNode[T]) Marshal() ([]byte, error) {
 
 	if store.IsValidObjectId(n.leftObjectId) {
 		if n.TreapNode.left != nil {
-			leftNode, err := asPersistentTreapNodeInterface[T](n.TreapNode.left)
-			if err != nil {
-				return nil, err
-			}
+			leftNode := n.TreapNode.left.(PersistentTreapNodeInterface[T])
 			newLeftObjectId := leftNode.ObjectId()
 			if newLeftObjectId != n.leftObjectId {
 				n.leftObjectId = newLeftObjectId
@@ -237,20 +216,14 @@ func (n *PersistentTreapNode[T]) Marshal() ([]byte, error) {
 		}
 	} else {
 		if n.TreapNode.left != nil {
-			leftNode, err := asPersistentTreapNodeInterface[T](n.TreapNode.left)
-			if err != nil {
-				return nil, err
-			}
+			leftNode := n.TreapNode.left.(PersistentTreapNodeInterface[T])
 			n.leftObjectId = leftNode.ObjectId()
 			n.objectId = store.ObjNotAllocated
 		}
 	}
 	if store.IsValidObjectId(n.rightObjectId) {
 		if n.TreapNode.right != nil {
-			rightNode, err := asPersistentTreapNodeInterface[T](n.TreapNode.right)
-			if err != nil {
-				return nil, err
-			}
+			rightNode := n.TreapNode.right.(PersistentTreapNodeInterface[T])
 			newRightObjectId := rightNode.ObjectId()
 			if newRightObjectId != n.rightObjectId {
 				n.rightObjectId = newRightObjectId
@@ -259,10 +232,7 @@ func (n *PersistentTreapNode[T]) Marshal() ([]byte, error) {
 		}
 	} else {
 		if n.TreapNode.right != nil {
-			rightNode, err := asPersistentTreapNodeInterface[T](n.TreapNode.right)
-			if err != nil {
-				return nil, err
-			}
+			rightNode := n.TreapNode.right.(PersistentTreapNodeInterface[T])
 			n.rightObjectId = rightNode.ObjectId()
 			n.objectId = store.ObjNotAllocated
 		}
@@ -378,37 +348,6 @@ func NewPersistentTreap[T any](lessFunc func(a, b T) bool, keyTemplate Persisten
 	}
 }
 
-// rotateRight performs a right rotation on the given node.
-// func (t *PersistentTreap[T]) rotateRight(node TreapNodeInterface[T]) *PersistentTreapNode[T] {
-// 	newRoot := t.Treap.rotateRight(node).(*PersistentTreapNode[T])
-// 	nodeCast := node.(*PersistentTreapNode[T])
-
-// 	if nodeCast.objectId > store.ObjNotAllocated {
-// 		t.Store.DeleteObj(store.ObjectId(nodeCast.objectId))
-// 	}
-// 	if newRoot.objectId > store.ObjNotAllocated {
-// 		t.Store.DeleteObj(store.ObjectId(newRoot.objectId))
-// 	}
-// 	nodeCast.objectId = store.ObjNotAllocated
-// 	newRoot.objectId = store.ObjNotAllocated
-// 	return newRoot
-// }
-
-// // rotateLeft performs a left rotation on the given node.
-// func (t *PersistentTreap[T]) rotateLeft(node TreapNodeInterface[T]) *PersistentTreapNode[T] {
-// 	newRoot := t.Treap.rotateLeft(node).(*PersistentTreapNode[T])
-// 	nodeCast := node.(*PersistentTreapNode[T])
-// 	if nodeCast.objectId > store.ObjNotAllocated {
-// 		t.Store.DeleteObj(store.ObjectId(nodeCast.objectId))
-// 	}
-// 	if newRoot.objectId > store.ObjNotAllocated {
-// 		t.Store.DeleteObj(store.ObjectId(newRoot.objectId))
-// 	}
-// 	nodeCast.objectId = store.ObjNotAllocated
-// 	newRoot.objectId = store.ObjNotAllocated
-// 	return newRoot
-// }
-
 // insert is a helper function that inserts a new node into the persistent treap.
 func (t *PersistentTreap[T]) insert(node TreapNodeInterface[T], newNode TreapNodeInterface[T]) TreapNodeInterface[T] {
 	// Call the insert method of the embedded Treap
@@ -469,7 +408,7 @@ func (t *PersistentTreap[T]) UpdatePriority(key PersistentKey[T], newPriority Pr
 
 func (t *PersistentTreap[T]) Persist() error {
 	if t.root != nil {
-		rootNode := t.root.(*PersistentTreapNode[T])
+		rootNode := t.root.(PersistentTreapNodeInterface[T])
 		return rootNode.Persist()
 	}
 	return nil

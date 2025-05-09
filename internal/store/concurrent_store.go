@@ -4,13 +4,14 @@ import (
 	"io"
 	"sync"
 )
+
 // TBD
 // * Add the cunning plan to reuse the io.writer by a queue that the closer writes to with the current io.writer
 
 type concurrentStore struct {
 	baseStore
-	lock sync.RWMutex
-	lockMap map[ObjectId] *sync.RWMutex
+	lock    sync.RWMutex
+	lockMap map[ObjectId]*sync.RWMutex
 }
 
 func NewConcurrentStore(filePath string) (*concurrentStore, error) {
@@ -22,7 +23,7 @@ func NewConcurrentStore(filePath string) (*concurrentStore, error) {
 		*baseStore,
 		sync.RWMutex{},
 		make(map[ObjectId]*sync.RWMutex),
-		}, nil
+	}, nil
 }
 
 func (s *concurrentStore) lookupObjectMutex(objectId ObjectId) *sync.RWMutex {
