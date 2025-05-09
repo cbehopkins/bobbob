@@ -6,14 +6,14 @@ import (
 	"slices"
 	"sort"
 
-	"github.com/cbehopkins/bobbob/internal/store"
+	"bobbob/internal/store"
 )
 
 // Chain represents a list of links with a callback to create new links.
 type Chain struct {
 	createLink func() *Link
 	less       func(i, j any) bool
-	store 		store.Storer
+	store      store.Storer
 	head       *Link
 	tail       *Link
 	UnSorted   bool // New member to specify if the chain is unsorted
@@ -28,7 +28,7 @@ func NewChain(createLink func() *Link, less func(i, j any) bool) *Chain {
 }
 
 // AddLink adds a new link to the chain.
-func (c *Chain) AddLink(link *Link) *Link{
+func (c *Chain) AddLink(link *Link) *Link {
 	if link == nil {
 		link = c.createLink()
 	}
@@ -154,13 +154,13 @@ func (c *Chain) InsertElement(element any) error {
 
 // Link represents a slice of elements with a maximum size and pointers to the previous and next links.
 type Link struct {
-	elements []any
-	maxSize  int
-	prev     *Link
-	next     *Link
-	chain    *Chain
-	sorted   bool
-	objectId *store.ObjectId
+	elements           []any
+	maxSize            int
+	prev               *Link
+	next               *Link
+	chain              *Chain
+	sorted             bool
+	objectId           *store.ObjectId
 	elementsFileObjIds []store.ObjectId
 }
 
@@ -169,7 +169,7 @@ func NewLink(maxSize int) *Link {
 	if maxSize <= 0 {
 		return nil
 	}
-	if maxSize > ((1<<31)-1) {
+	if maxSize > ((1 << 31) - 1) {
 		return nil
 	}
 	return &Link{
@@ -177,6 +177,7 @@ func NewLink(maxSize int) *Link {
 		maxSize:  maxSize,
 	}
 }
+
 func (l *Link) markStale() {
 	// There is a possible improvement here
 	// We could keep using the existing object and overwrite it
@@ -193,10 +194,12 @@ func (l *Link) markStale() {
 	}
 	l.objectId = nil
 }
+
 // AddElement adds an element to the link. If the link exceeds its maximum size, it creates a new link and adds the element there.
 func (l *Link) AddElement(element any) error {
 	return l.AddElementAndObj(element, store.ObjNotAllocated)
 }
+
 // AddElement adds an element to the link. If the link exceeds its maximum size, it creates a new link and adds the element there.
 // This allows you to specify the OnjectIfd in the store at the same time
 func (l *Link) AddElementAndObj(element any, objId store.ObjectId) error {
@@ -210,7 +213,7 @@ func (l *Link) AddElementAndObj(element any, objId store.ObjectId) error {
 		return nil
 	}
 	l.elements = append(l.elements, element)
-	l.elementsFileObjIds = append(l.elementsFileObjIds,objId)
+	l.elementsFileObjIds = append(l.elementsFileObjIds, objId)
 	// To minimise copying, we only sort when necessary
 	l.sorted = false
 	return nil
@@ -236,42 +239,42 @@ func (l *Link) DeleteElement(index int) error {
 
 // Sort the elements within the link.
 func (l *Link) Sort(less func(i, j any) bool) {
-    if l.sorted {
-        return
-    }
-    l.markStale()
-    if less == nil {
+	if l.sorted {
+		return
+	}
+	l.markStale()
+	if less == nil {
 		if l.chain == nil {
 			return
 		}
-        less = l.chain.less
-    }
-    l.sorted = true
+		less = l.chain.less
+	}
+	l.sorted = true
 
-    // Create a slice of indices to sort both elements and elementsFileObjIds
-    indices := make([]int, len(l.elements))
-    for i := range indices {
-        indices[i] = i
-    }
+	// Create a slice of indices to sort both elements and elementsFileObjIds
+	indices := make([]int, len(l.elements))
+	for i := range indices {
+		indices[i] = i
+	}
 
-    // Sort the indices based on the elements
-    sort.Slice(indices, func(i, j int) bool {
-        return less(l.elements[indices[i]], l.elements[indices[j]])
-    })
+	// Sort the indices based on the elements
+	sort.Slice(indices, func(i, j int) bool {
+		return less(l.elements[indices[i]], l.elements[indices[j]])
+	})
 
-    // Create new slices for sorted elements and elementsFileObjIds
-    sortedElements := make([]any, len(l.elements))
-    sortedElementsFileObjIds := make([]store.ObjectId, len(l.elementsFileObjIds))
+	// Create new slices for sorted elements and elementsFileObjIds
+	sortedElements := make([]any, len(l.elements))
+	sortedElementsFileObjIds := make([]store.ObjectId, len(l.elementsFileObjIds))
 
-    // Populate the new slices based on the sorted indices
-    for i, idx := range indices {
-        sortedElements[i] = l.elements[idx]
-        sortedElementsFileObjIds[i] = l.elementsFileObjIds[idx]
-    }
+	// Populate the new slices based on the sorted indices
+	for i, idx := range indices {
+		sortedElements[i] = l.elements[idx]
+		sortedElementsFileObjIds[i] = l.elementsFileObjIds[idx]
+	}
 
-    // Replace the original slices with the sorted ones
-    l.elements = sortedElements
-    l.elementsFileObjIds = sortedElementsFileObjIds
+	// Replace the original slices with the sorted ones
+	l.elements = sortedElements
+	l.elementsFileObjIds = sortedElementsFileObjIds
 }
 
 // Min returns the first element in the link
@@ -295,6 +298,7 @@ func (l *Link) Max() (any, error) {
 	}
 	return l.elements[len(l.elements)-1], nil
 }
+
 // bytesNeeded returns the number of bytes needed to marshal the link.
 // This should be determined soley by the capacity of elements i.e. maxSize
 func (l Link) bytesNeeded() int {
@@ -309,6 +313,7 @@ func (l Link) bytesNeeded() int {
 	bytesForSelf := bytesForObjectId
 	return bytesForElements + bytesForElementLen + bytesForMaxSize + bytesForPrev + bytesForNext + bytesForSelf
 }
+
 func (l *Link) ChildObjects() []store.ObjectId {
 	objs := make([]store.ObjectId, 0, l.maxSize)
 	for _, objId := range l.elementsFileObjIds {
@@ -318,15 +323,17 @@ func (l *Link) ChildObjects() []store.ObjectId {
 	}
 	return objs
 }
+
 func (l *Link) Delete() error {
-	for _, obj :=  range l.ChildObjects() {
-		err:= l.chain.store.DeleteObj(obj)
+	for _, obj := range l.ChildObjects() {
+		err := l.chain.store.DeleteObj(obj)
 		if err != nil {
 			return err
 		}
 	}
 	return nil
 }
+
 func (l *Link) ObjectId() (store.ObjectId, error) {
 	if l.objectId != nil {
 		return *l.objectId, nil
@@ -338,6 +345,7 @@ func (l *Link) ObjectId() (store.ObjectId, error) {
 	l.objectId = &objId
 	return objId, nil
 }
+
 func (l *Link) writeElements() error {
 	for i, element := range l.elements {
 		if l.elementsFileObjIds[i] == store.ObjNotAllocated {
@@ -350,100 +358,101 @@ func (l *Link) writeElements() error {
 	}
 	return nil
 }
+
 // Marshal the striuct into a fized size byte array
 func (l *Link) Marshal() ([]byte, error) {
-    // Ensure elementsFileObjIds are populated
-    if err := l.writeElements(); err != nil {
-        return nil, err
-    }
+	// Ensure elementsFileObjIds are populated
+	if err := l.writeElements(); err != nil {
+		return nil, err
+	}
 
-    // Calculate the total size needed for the marshalled data
-    size := l.bytesNeeded()
-    data := make([]byte, size)
-    offset := 0
-	
-    // Write the number of elements
-    binary.LittleEndian.PutUint32(data[offset:4], uint32(len(l.elementsFileObjIds)))
-    offset += 4
+	// Calculate the total size needed for the marshalled data
+	size := l.bytesNeeded()
+	data := make([]byte, size)
+	offset := 0
+
+	// Write the number of elements
+	binary.LittleEndian.PutUint32(data[offset:4], uint32(len(l.elementsFileObjIds)))
+	offset += 4
 	// Write the maxSize
 	binary.LittleEndian.PutUint32(data[offset:offset+4], uint32(l.maxSize))
 	offset += 4
 
-    // Write the elementsFileObjIds
-    for _, objId := range l.elementsFileObjIds {
-        binary.LittleEndian.PutUint64(data[offset:offset+8], uint64(objId))
-        offset += 8
-    }
+	// Write the elementsFileObjIds
+	for _, objId := range l.elementsFileObjIds {
+		binary.LittleEndian.PutUint64(data[offset:offset+8], uint64(objId))
+		offset += 8
+	}
 
+	// Write the prevObjectId
+	prevObjectId := store.ObjNotAllocated
+	if l.prev != nil && l.prev.objectId != nil {
+		prevObjectId = *l.prev.objectId
+	}
+	binary.LittleEndian.PutUint64(data[offset:offset+8], uint64(prevObjectId))
+	offset += 8
 
-    // Write the prevObjectId
-    prevObjectId := store.ObjNotAllocated
-    if l.prev != nil && l.prev.objectId != nil {
-        prevObjectId = *l.prev.objectId
-    }
-    binary.LittleEndian.PutUint64(data[offset:offset+8], uint64(prevObjectId))
-    offset += 8
+	// Write the nextObjectId
+	nextObjectId := store.ObjNotAllocated
+	if l.next != nil && l.next.objectId != nil {
+		nextObjectId = *l.next.objectId
+	}
+	binary.LittleEndian.PutUint64(data[offset:offset+8], uint64(nextObjectId))
+	offset += 8
 
-    // Write the nextObjectId
-    nextObjectId := store.ObjNotAllocated
-    if l.next != nil && l.next.objectId != nil {
-        nextObjectId = *l.next.objectId
-    }
-    binary.LittleEndian.PutUint64(data[offset:offset+8], uint64(nextObjectId))
-    offset += 8
+	// Write the self objectId
+	selfObjectId := store.ObjNotAllocated
+	if l.objectId != nil {
+		selfObjectId = *l.objectId
+	}
+	binary.LittleEndian.PutUint64(data[offset:offset+8], uint64(selfObjectId))
 
-    // Write the self objectId
-    selfObjectId := store.ObjNotAllocated
-    if l.objectId != nil {
-        selfObjectId = *l.objectId
-    }
-    binary.LittleEndian.PutUint64(data[offset:offset+8], uint64(selfObjectId))
-
-    return data, nil
+	return data, nil
 }
 
 func (l *Link) unmarshal(data []byte) error {
-	offset :=0
+	offset := 0
 
-    // Read the number of elements
-    numElements := binary.LittleEndian.Uint32(data[offset:4])
-    l.elementsFileObjIds = make([]store.ObjectId, numElements)
+	// Read the number of elements
+	numElements := binary.LittleEndian.Uint32(data[offset:4])
+	l.elementsFileObjIds = make([]store.ObjectId, numElements)
 
 	// Read the maxSize
 	l.maxSize = int(binary.LittleEndian.Uint32(data[offset : offset+4]))
 	offset += 4
 
-    // Read the elementsFileObjIds
-    offset += 4
-    for i := 0; i < int(numElements); i++ {
-        l.elementsFileObjIds[i] = store.ObjectId(binary.LittleEndian.Uint64(data[offset : offset+8]))
-        offset += 8
-    }
+	// Read the elementsFileObjIds
+	offset += 4
+	for i := 0; i < int(numElements); i++ {
+		l.elementsFileObjIds[i] = store.ObjectId(binary.LittleEndian.Uint64(data[offset : offset+8]))
+		offset += 8
+	}
 
-    // Read the prevObjectId
-    prevObjectId := store.ObjectId(binary.LittleEndian.Uint64(data[offset : offset+8]))
-    offset += 8
-    if prevObjectId != store.ObjNotAllocated {
-        l.prev = &Link{objectId: &prevObjectId}
-    }
+	// Read the prevObjectId
+	prevObjectId := store.ObjectId(binary.LittleEndian.Uint64(data[offset : offset+8]))
+	offset += 8
+	if prevObjectId != store.ObjNotAllocated {
+		l.prev = &Link{objectId: &prevObjectId}
+	}
 
-    // Read the nextObjectId
-    nextObjectId := store.ObjectId(binary.LittleEndian.Uint64(data[offset : offset+8]))
-    offset += 8
-    if nextObjectId != store.ObjNotAllocated {
-        l.next = &Link{objectId: &nextObjectId}
-    }
+	// Read the nextObjectId
+	nextObjectId := store.ObjectId(binary.LittleEndian.Uint64(data[offset : offset+8]))
+	offset += 8
+	if nextObjectId != store.ObjNotAllocated {
+		l.next = &Link{objectId: &nextObjectId}
+	}
 
-    // Read the self objectId
-    selfObjectId := store.ObjectId(binary.LittleEndian.Uint64(data[offset : offset+8]))
-    if selfObjectId != store.ObjNotAllocated {
-        l.objectId = &selfObjectId
-    }
+	// Read the self objectId
+	selfObjectId := store.ObjectId(binary.LittleEndian.Uint64(data[offset : offset+8]))
+	if selfObjectId != store.ObjNotAllocated {
+		l.objectId = &selfObjectId
+	}
 
-    return nil
+	return nil
 }
+
 func (l *Link) Unmarshal(data []byte, newObj func() any) error {
-	err:=  l.unmarshal(data)
+	err := l.unmarshal(data)
 	if err != nil {
 		return err
 	}

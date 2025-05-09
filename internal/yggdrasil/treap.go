@@ -41,8 +41,8 @@ type TreapNodeInterface[T any] interface {
 type TreapNode[T any] struct {
 	key      Key[T]
 	priority Priority
-	left     *TreapNode[T]
-	right    *TreapNode[T]
+	left     TreapNodeInterface[T] // Changed to interface
+	right    TreapNodeInterface[T] // Changed to interface
 }
 
 // GetKey returns the key of the node.
@@ -71,31 +71,17 @@ func (n *TreapNode[T]) GetRight() TreapNodeInterface[T] {
 
 // SetLeft sets the left child of the node.
 func (n *TreapNode[T]) SetLeft(left TreapNodeInterface[T]) {
-	if left == nil {
-		n.left = nil
-		return
-	}
-	n.left = left.(*TreapNode[T])
+	n.left = left
 }
 
 // SetRight sets the right child of the node.
 func (n *TreapNode[T]) SetRight(right TreapNodeInterface[T]) {
-	if right == nil {
-		n.right = nil
-		return
-	}
-	n.right = right.(*TreapNode[T])
+	n.right = right
 }
 
 // IsNil checks if the node is nil.
 func (n *TreapNode[T]) IsNil() bool {
 	return n == nil
-}
-
-// Treap represents a treap data structure.
-type Treap[T any] struct {
-	root TreapNodeInterface[T]
-	Less func(a, b T) bool
 }
 
 // NewTreapNode creates a new TreapNode with the given key and priority.
@@ -106,6 +92,12 @@ func NewTreapNode[T any](key Key[T], priority Priority) *TreapNode[T] {
 		left:     nil,
 		right:    nil,
 	}
+}
+
+// Treap represents a treap data structure.
+type Treap[T any] struct {
+	root TreapNodeInterface[T]
+	Less func(a, b T) bool
 }
 
 // NewTreap creates a new Treap with the given comparison function.
@@ -164,13 +156,13 @@ func (t *Treap[T]) delete(node TreapNodeInterface[T], key T) TreapNodeInterface[
 	} else if t.Less(node.GetKey().Value(), key) {
 		node.SetRight(t.delete(node.GetRight(), key))
 	} else {
-		left := node.GetLeft().(*TreapNode[T])
-		right := node.GetRight().(*TreapNode[T])
+		left := node.GetLeft()
+		right := node.GetRight()
 
-		if left == nil {
+		if left == nil || left.IsNil() {
 			return right
 		}
-		if right == nil {
+		if right == nil || right.IsNil() {
 			return left
 		}
 		leftPriority := left.GetPriority()
@@ -189,7 +181,7 @@ func (t *Treap[T]) delete(node TreapNodeInterface[T], key T) TreapNodeInterface[
 
 // search searches for the node with the given key in the treap.
 func (t *Treap[T]) search(node TreapNodeInterface[T], key T) TreapNodeInterface[T] {
-	if node.IsNil() {
+	if node == nil || node.IsNil() {
 		return node
 	}
 	currentKey := node.GetKey()

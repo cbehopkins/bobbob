@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/cbehopkins/bobbob/internal/store"
+	"bobbob/internal/store"
 )
 
 func TestChainAndLink(t *testing.T) {
@@ -175,6 +175,7 @@ func setupTestStore(t *testing.T) (string, store.Storer) {
 
 	return dir, store
 }
+
 func TestChainMarshalUnmarshalOneInt(t *testing.T) {
 	dir, store := setupTestStore(t)
 	defer os.RemoveAll(dir)
@@ -207,7 +208,7 @@ func TestChainMarshalUnmarshalOneInt(t *testing.T) {
 	newLink := NewLink(16)
 	newLink.chain = c
 
-	err = newLink.Unmarshal(data, func() any {var i int64; return &i})
+	err = newLink.Unmarshal(data, func() any { var i int64; return &i })
 	if err != nil {
 		t.Fatalf("expected no error unmarshalling link, got %v", err)
 	}
@@ -222,50 +223,50 @@ func TestChainMarshalUnmarshalOneInt(t *testing.T) {
 }
 
 func TestChainGrowth(t *testing.T) {
-    // Create a Chain with a max link size of 4
-    createLink := func() *Link {
-        return NewLink(4)
-    }
-    less := func(i, j any) bool {
-        return *i.(*int32) < *j.(*int32)
-    }
-    c := NewChain(createLink, less)
+	// Create a Chain with a max link size of 4
+	createLink := func() *Link {
+		return NewLink(4)
+	}
+	less := func(i, j any) bool {
+		return *i.(*int32) < *j.(*int32)
+	}
+	c := NewChain(createLink, less)
 
-    // Add 12 objects to the chain
-    for i := int32(0); i < 12; i++ {
-        val := i
-        err := c.InsertElement(&val)
-        if err != nil {
-            t.Fatalf("expected no error, got %v", err)
-        }
-    }
+	// Add 12 objects to the chain
+	for i := int32(0); i < 12; i++ {
+		val := i
+		err := c.InsertElement(&val)
+		if err != nil {
+			t.Fatalf("expected no error, got %v", err)
+		}
+	}
 
-    // Count the number of links in the chain
-    linkCount := 0
-    for link := c.head; link != nil; link = link.next {
-        linkCount++
-    }
+	// Count the number of links in the chain
+	linkCount := 0
+	for link := c.head; link != nil; link = link.next {
+		linkCount++
+	}
 
-    // Check if the number of links is as expected
-    expectedLinks := 3
-    if linkCount != expectedLinks {
-        t.Errorf("expected %d links, got %d", expectedLinks, linkCount)
-    }
+	// Check if the number of links is as expected
+	expectedLinks := 3
+	if linkCount != expectedLinks {
+		t.Errorf("expected %d links, got %d", expectedLinks, linkCount)
+	}
 }
+
 func TestLinkSort(t *testing.T) {
-    // Create a mock mockStore
+	// Create a mock mockStore
 	dir, mockStore := setupTestStore(t)
 	defer os.RemoveAll(dir)
 	defer mockStore.Close()
 
-
-    // Create a chain with a simple less function for integers
-    chain := NewChain(func() *Link {
-        return NewLink(10)
-    }, func(i, j any) bool {
-        return i.(int) < j.(int)
-    })
-    chain.store = mockStore
+	// Create a chain with a simple less function for integers
+	chain := NewChain(func() *Link {
+		return NewLink(10)
+	}, func(i, j any) bool {
+		return i.(int) < j.(int)
+	})
+	chain.store = mockStore
 
 	elementMapping := make(map[int]int)
 	elementMapping[1] = 1
@@ -274,26 +275,26 @@ func TestLinkSort(t *testing.T) {
 	elementMapping[8] = 3
 	elementMapping[7] = 8
 
-    // Create a link and add elements
-    link := chain.AddLink(nil)
+	// Create a link and add elements
+	link := chain.AddLink(nil)
 
-	for key, value:= range elementMapping {
+	for key, value := range elementMapping {
 		link.AddElementAndObj(key, store.ObjectId(value))
 	}
 
-    // Sort the link
-    link.Sort(nil)
+	// Sort the link
+	link.Sort(nil)
 
-    // Verify that elements are sorted
-    expectedElements := []int{1, 3, 5, 7, 8}
-    for i, element := range link.elements {
-        if element.(int) != expectedElements[i] {
-            t.Errorf("expected element %d, got %d", expectedElements[i], element.(int))
-        }
-		actualObjId := int(link.elementsFileObjIds[i] )
+	// Verify that elements are sorted
+	expectedElements := []int{1, 3, 5, 7, 8}
+	for i, element := range link.elements {
+		if element.(int) != expectedElements[i] {
+			t.Errorf("expected element %d, got %d", expectedElements[i], element.(int))
+		}
+		actualObjId := int(link.elementsFileObjIds[i])
 		expectedObjId := elementMapping[element.(int)]
 		if actualObjId != expectedObjId {
 			t.Errorf("expected object ID %d, got %d", expectedObjId, actualObjId)
 		}
-    }
+	}
 }

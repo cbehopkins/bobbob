@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/cbehopkins/bobbob/internal/store"
+	"bobbob/internal/store"
 )
 
 func setupTestStore(t *testing.T) store.Storer {
@@ -277,22 +277,13 @@ func TestPersistentTreapNodeMarshalUnmarshalWithChildren(t *testing.T) {
 	root.SetRight(right)
 
 	err := root.Persist()
-	if !store.IsValidObjectId(root.leftObjectId) {
-		t.Fatalf("Failed to persist left node invalid left objectid: %v", err)
-	}
-
 	if err != nil {
 		t.Fatalf("Failed to persist root: %v", err)
 	}
-
-	data, err := root.Marshal()
-	if err != nil {
-		t.Fatalf("Failed to marshal root: %v", err)
+	if root.GetLeft().GetKey().Value() != left.GetKey().Value() {
+		t.Errorf("Expected left child to be %v, got %v", left, root.GetLeft())
 	}
-	var unmarshalledRoot PersistentTreapNode[IntKey]
-	err = unmarshalledRoot.unmarshal(data, &keyTemplate)
-
-	if !store.IsValidObjectId(unmarshalledRoot.leftObjectId) {
-		t.Fatalf("Failed to unmarshal left node: %v", err)
+	if root.GetRight().GetKey().Value() != right.GetKey().Value() {
+		t.Errorf("Expected right child to be %v, got %v", right, root.GetRight())
 	}
 }

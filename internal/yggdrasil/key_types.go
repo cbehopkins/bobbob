@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 
-	"github.com/cbehopkins/bobbob/internal/store"
+	"bobbob/internal/store"
 )
 
 type Key[T any] interface {
