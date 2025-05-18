@@ -5,7 +5,7 @@ import (
 	"log"
 	"os"
 
-	"github.com/cbehopkins/bobbob/internal/store"
+	"bobbob/internal/store"
 )
 
 func main() {
