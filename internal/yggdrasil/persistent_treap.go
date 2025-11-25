@@ -1,13 +1,17 @@
 package yggdrasil
 
 import (
+	"errors"
+
 	"bobbob/internal/store"
 )
+
+var errNotFullyPersisted = errors.New("node not fully persisted")
 
 type PersistentObjectId store.ObjectId
 
 func (id PersistentObjectId) New() PersistentKey[PersistentObjectId] {
-	v := PersistentObjectId(store.ObjectId(-1))
+	v := PersistentObjectId(store.ObjectId(store.ObjNotAllocated))
 	return &v
 }
 
@@ -34,9 +38,10 @@ func (id PersistentObjectId) Value() PersistentObjectId {
 
 type PersistentTreapNodeInterface[T any] interface {
 	TreapNodeInterface[T]
-	ObjectId() store.ObjectId
-	SetObjectId(store.ObjectId)
-	Persist() error
+	ObjectId() store.ObjectId   // Returns the object ID of the node, allocating one if necessary
+	SetObjectId(store.ObjectId) // Sets the object ID of the node
+	Persist() error             // Persist the node and its children to the store
+	Flush() error               // Flush the node and its children from memory
 }
 
 // PersistentTreapNode represents a node in the persistent treap.
@@ -142,13 +147,18 @@ func PersistentTreapObjectSizes() []int {
 	}
 }
 
+// ObjectId returns the object ID of the node, allocating one if necessary.
 func (n *PersistentTreapNode[T]) ObjectId() store.ObjectId {
 	if n == nil {
 		return store.ObjNotAllocated
 	}
 	if n.objectId < 0 {
-		// FIXME ignored error - update to return error
-		n.objectId, _ = n.Store.NewObj(n.sizeInBytes())
+		objId, err := n.Store.NewObj(n.sizeInBytes())
+		if err != nil {
+			// FIXME Refactor method signature to return an error
+			panic(err) // This should never happen
+		}
+		n.objectId = objId
 	}
 	return n.objectId
 }
@@ -158,6 +168,7 @@ func (n *PersistentTreapNode[T]) SetObjectId(id store.ObjectId) {
 	n.objectId = id
 }
 
+// Persist the node and its children to the store.
 func (n *PersistentTreapNode[T]) Persist() error {
 	if n == nil {
 		return nil
@@ -171,9 +182,6 @@ func (n *PersistentTreapNode[T]) Persist() error {
 			}
 		}
 		n.leftObjectId = leftNode.ObjectId()
-		// I don't think we should remove it from the tree
-		// That should be some sort of flush operation
-		// n.TreapNode.left = nil
 	}
 	if n.TreapNode.right != nil && !store.IsValidObjectId(n.rightObjectId) {
 		rightNode := n.TreapNode.right.(PersistentTreapNodeInterface[T])
@@ -184,9 +192,55 @@ func (n *PersistentTreapNode[T]) Persist() error {
 			}
 		}
 		n.rightObjectId = rightNode.ObjectId()
-		// n.TreapNode.right = nil
 	}
 	return n.persist()
+}
+
+// flushChild flushes the given child node if it exists and is persisted, then clears its objectId and pointer.
+func (n *PersistentTreapNode[T]) flushChild(child *TreapNodeInterface[T], childObjectId *store.ObjectId) error {
+	if *child == nil {
+		return nil
+	}
+	if !store.IsValidObjectId(*childObjectId) {
+		return errNotFullyPersisted
+	}
+	err := (*child).(PersistentTreapNodeInterface[T]).Flush()
+	if err != nil {
+		return err
+	}
+	// Simply clear the pointer to the child
+	// We still have the object ID if we want to re-load it
+	// FIXME - one day we will use a sync.Pool to avoid allocations
+	*child = nil
+	return nil
+}
+
+// Flush the node and its children from memory.
+func (n *PersistentTreapNode[T]) Flush() error {
+	if n == nil {
+		return nil
+	}
+	// This is needed as we still want to try to flush the children where we can
+	// even if one node fails
+	allChildrenPersisted := true
+	if err := n.flushChild(&n.TreapNode.left, &n.leftObjectId); err != nil {
+		if errors.Is(err, errNotFullyPersisted) {
+			allChildrenPersisted = false
+		} else {
+			return err
+		}
+	}
+	if err := n.flushChild(&n.TreapNode.right, &n.rightObjectId); err != nil {
+		if errors.Is(err, errNotFullyPersisted) {
+			allChildrenPersisted = false
+		} else {
+			return err
+		}
+	}
+	if allChildrenPersisted {
+		return nil
+	}
+	return errNotFullyPersisted
 }
 
 func (n *PersistentTreapNode[T]) persist() error {
@@ -356,6 +410,7 @@ func (t *PersistentTreap[T]) insert(node TreapNodeInterface[T], newNode TreapNod
 	nodeCast := result.(PersistentTreapNodeInterface[T])
 	objId := nodeCast.ObjectId()
 	if objId > store.ObjNotAllocated {
+		// We are modifying an existing node, so delete the old object
 		t.Store.DeleteObj(store.ObjectId(objId))
 	}
 	nodeCast.SetObjectId(store.ObjNotAllocated)

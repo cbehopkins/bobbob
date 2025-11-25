@@ -18,9 +18,13 @@ func (p MockPayload) Marshal() ([]byte, error) {
 	return []byte(p.Data), nil
 }
 
-func (p MockPayload) Unmarshal(data []byte) (MockPayload, error) {
+func (p MockPayload) Unmarshal(data []byte) (UntypedPersistentPayload, error) {
 	p.Data = string(data)
 	return p, nil
+}
+
+func (p MockPayload) SizeInBytes() int {
+	return len(p.Data)
 }
 
 func TestPersistentPayloadTreapNodeMarshalUnmarshal(t *testing.T) {
@@ -244,6 +248,58 @@ func TestPersistentPayloadTreapInsertDeleteAndVerify(t *testing.T) {
 	}
 }
 
+func TestPersistentPayloadTreapPersistenceOne(t *testing.T) {
+	// Create the store and treap
+	tempDir := t.TempDir()
+	tempFile := filepath.Join(tempDir, "test_store.bin")
+	store0, err := store.NewBasicStore(tempFile)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	keyTemplate := (*IntKey)(new(int32))
+	treap := NewPersistentPayloadTreap[IntKey, MockPayload](IntLess, keyTemplate, store0)
+
+	// Insert data into the treap
+	key := IntKey(42)
+	payload := MockPayload{Data: fmt.Sprintf("payload_%d", 42)}
+	treap.Insert(&key, Priority(rand.Intn(100)), payload)
+
+	// Persist the treap
+	err = treap.Persist()
+	if err != nil {
+		t.Fatalf("Failed to persist treap: %v", err)
+	}
+
+	// Simplification for this test
+	// We will implement an object lookup mechanism later
+	var treapObjectId store.ObjectId
+	treapObjectId = treap.root.(*PersistentPayloadTreapNode[IntKey, MockPayload]).ObjectId()
+
+	// Close the store
+	store0.Close()
+
+	// Create a new store loading the data from the file
+	store1, err := store.LoadBaseStore(tempFile)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer store1.Close()
+
+	// Create a new treap with the loaded store
+	treap = NewPersistentPayloadTreap[IntKey, MockPayload](IntLess, (*IntKey)(new(int32)), store1)
+	err = treap.Load(treapObjectId)
+	if err != nil {
+		t.Fatalf("Failed to load treap: %v", err)
+	}
+	// Test that the data is reloaded correctly
+	node := treap.Search(&key)
+	if node == nil || node.IsNil() {
+		t.Errorf("Expected to find key %d in the treap, but it was not found", key)
+	} else if !key.Equals(node.GetKey().Value()) {
+		t.Errorf("Expected to find key %d, but found key %d instead", key, node.GetKey())
+	}
+}
+
 func TestPersistentPayloadTreapPersistence(t *testing.T) {
 	// Create the store and treap
 	tempDir := t.TempDir()
@@ -269,6 +325,15 @@ func TestPersistentPayloadTreapPersistence(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to persist treap: %v", err)
 	}
+	// Verify that the data is still accessible
+	for _, key := range keys {
+		node := treap.Search(key)
+		if node == nil || node.IsNil() {
+			t.Errorf("Expected to find key %d in the treap, but it was not found", *key)
+		} else if !key.Equals(node.GetKey().Value()) {
+			t.Errorf("Expected to find key %d, but found key %d instead", *key, node.GetKey())
+		}
+	}
 
 	// Simplification for this test
 	// We will implement an object lookup mechanism later
@@ -277,7 +342,7 @@ func TestPersistentPayloadTreapPersistence(t *testing.T) {
 	var bob PersistentTreap[IntKey]
 	bob.keyTemplate = (*IntKey)(new(int32))
 	bob.Store = store0
-	bobNode, err := NewFromObjectId(treapObjectId, &bob, store0)
+	bobNode, err := NewPayloadFromObjectId[IntKey, MockPayload](treapObjectId, &bob, store0)
 	if err != nil {
 		t.Fatalf("Failed to read treap: %v", err)
 	}
@@ -310,10 +375,50 @@ func TestPersistentPayloadTreapPersistence(t *testing.T) {
 	// Test that the data is reloaded correctly
 	for _, key := range keys {
 		node := treap.Search(key)
-		if node.IsNil() {
+		if node == nil || node.IsNil() {
 			t.Errorf("Expected to find key %d in the treap, but it was not found", *key)
 		} else if !key.Equals(node.GetKey().Value()) {
 			t.Errorf("Expected to find key %d, but found key %d instead", *key, node.GetKey())
 		}
+	}
+}
+
+func TestPersistentPayloadTreapNodeMarshalToObjectId(t *testing.T) {
+	stre := setupTestStore(t)
+	defer stre.Close()
+
+	// Create a DummyPayload node
+	var key IntKey = 99
+	priority := Priority(150)
+	payload := MockPayload{Data: "dummy_payload_data"}
+	treap := NewPersistentPayloadTreap[IntKey, MockPayload](IntLess, (*IntKey)(new(int32)), stre)
+	node := NewPersistentPayloadTreapNode[IntKey, MockPayload](&key, priority, payload, stre, treap)
+
+	// Test MarshalToObjectId - this should write the node to the store
+	objId, err := node.MarshalToObjectId(stre)
+	if err != nil {
+		t.Fatalf("Failed to marshal node to ObjectId: %v", err)
+	}
+
+	// Verify that we got a valid ObjectId
+	if !store.IsValidObjectId(objId) {
+		t.Fatalf("Expected valid ObjectId, got: %v", objId)
+	}
+
+	// Unmarshal from the ObjectId using NewPayloadFromObjectId (read from store)
+	newNode, err := NewPayloadFromObjectId[IntKey, MockPayload](objId, &treap.PersistentTreap, stre)
+	if err != nil {
+		t.Fatalf("Failed to unmarshal node from ObjectId: %v", err)
+	}
+
+	// Verify the unmarshalled data matches the original
+	if newNode.GetKey().Value() != node.GetKey().Value() {
+		t.Errorf("Expected key %d, got %d", node.GetKey().Value(), newNode.GetKey().Value())
+	}
+	if newNode.GetPriority() != node.GetPriority() {
+		t.Errorf("Expected priority %d, got %d", node.GetPriority(), newNode.GetPriority())
+	}
+	if newNode.GetPayload().Data != node.GetPayload().Data {
+		t.Errorf("Expected payload data %s, got %s", node.GetPayload().Data, newNode.GetPayload().Data)
 	}
 }

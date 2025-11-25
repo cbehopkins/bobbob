@@ -7,6 +7,8 @@ import (
 	"io"
 )
 
+var ErrorNoData = fmt.Errorf("no data to unmarshal")
+
 // MarshalSimple is an interface for basic types that can be marshalled in one step
 type MarshalSimple interface {
 	Marshal() ([]byte, error)
@@ -139,14 +141,12 @@ func unmarshalComplexObj(s Storer, obj UnmarshalComplex, objId ObjectId) error {
 
 // unmarshalSimpleObj unmarshals a simple object
 func unmarshalSimpleObj(s Storer, obj UnmarshalSimple, objId ObjectId) error {
-	objReader, finisher, err := s.LateReadObj(objId)
+	data, err := ReadBytesFromObj(s, objId)
 	if err != nil {
 		return err
 	}
-	defer finisher()
-	data, err := io.ReadAll(objReader)
-	if err != nil {
-		return err
+	if len(data) == 0 {
+		return ErrorNoData
 	}
 	return obj.Unmarshal(data)
 }
@@ -157,7 +157,6 @@ func unmarshalGeneric(s Storer, obj any, objId ObjectId) error {
 	case *int:
 		var temp int64
 		objReader, finisher, err := s.LateReadObj(objId)
-
 		if err != nil {
 			return err
 		}

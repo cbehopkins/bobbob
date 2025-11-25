@@ -41,8 +41,8 @@ type TreapNodeInterface[T any] interface {
 type TreapNode[T any] struct {
 	key      Key[T]
 	priority Priority
-	left     TreapNodeInterface[T] // Changed to interface
-	right    TreapNodeInterface[T] // Changed to interface
+	left     TreapNodeInterface[T]
+	right    TreapNodeInterface[T]
 }
 
 // GetKey returns the key of the node.

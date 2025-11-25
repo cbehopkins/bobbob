@@ -5,9 +5,11 @@ import (
 	"io"
 )
 
-var ObjNotWritten = ObjectId(-1)
-var ObjNotAllocated = ObjectId(-2)
-var objNotPreAllocated = ObjectId(-3)
+var (
+	ObjNotWritten      = ObjectId(-1)
+	ObjNotAllocated    = ObjectId(-2)
+	objNotPreAllocated = ObjectId(-3)
+)
 
 func IsValidObjectId(objId ObjectId) bool {
 	// Note object 0 is reserved for a store's internal use
@@ -82,6 +84,18 @@ func WriteBytesToObj(s Storer, data []byte, objectId ObjectId) error {
 		return errors.New("did not write all the data")
 	}
 	return nil
+}
+
+func ReadBytesFromObj(s Storer, objId ObjectId) ([]byte, error) {
+	objReader, finisher, err := s.LateReadObj(objId)
+	if err != nil {
+		return nil, err
+	}
+	if finisher != nil {
+		defer finisher()
+	}
+
+	return io.ReadAll(objReader)
 }
 
 // WriteGeneric writes a generic object to the store

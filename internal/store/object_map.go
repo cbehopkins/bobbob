@@ -23,11 +23,6 @@ func (id ObjectId) Equals(other ObjectId) bool {
 	return id == other
 }
 
-// func (id ObjectId) New() *ObjectId {
-// 	v := ObjectId(-1)
-// 	return &v
-// }
-
 type FileOffset int64
 
 // Marshal converts the ObjectId into a fixed length bytes encoding

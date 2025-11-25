@@ -71,6 +71,50 @@ func (k *IntKey) Unmarshal(data []byte) error {
 	return nil
 }
 
+// ShortUIntKey is like IntKey but uses uint16
+type ShortUIntKey uint16
+
+func (k ShortUIntKey) Equals(other ShortUIntKey) bool {
+	return k == other
+}
+
+func (k ShortUIntKey) Value() ShortUIntKey {
+	return k
+}
+
+func (k ShortUIntKey) New() PersistentKey[ShortUIntKey] {
+	v := ShortUIntKey(0)
+	return &v
+}
+
+func (k ShortUIntKey) SizeInBytes() int {
+	return 2
+}
+
+func (k ShortUIntKey) MarshalToObjectId(stre store.Storer) (store.ObjectId, error) {
+	// Store as uint16 in ObjectId's lower bytes
+	return store.ObjectId(k), nil
+}
+
+func (k *ShortUIntKey) UnmarshalFromObjectId(id store.ObjectId, stre store.Storer) error {
+	*k = ShortUIntKey(uint16(id))
+	return nil
+}
+
+func (k ShortUIntKey) Marshal() ([]byte, error) {
+	buf := make([]byte, 2)
+	binary.LittleEndian.PutUint16(buf, uint16(k))
+	return buf, nil
+}
+
+func (k *ShortUIntKey) Unmarshal(data []byte) error {
+	if len(data) != 2 {
+		return errors.New("invalid data length for ShortUIntKey")
+	}
+	*k = ShortUIntKey(binary.LittleEndian.Uint16(data))
+	return nil
+}
+
 type StringKey string
 
 func (k StringKey) Value() StringKey {
@@ -104,7 +148,10 @@ func (k StringKey) New() PersistentKey[StringKey] {
 }
 
 func (k StringKey) MarshalToObjectId(stre store.Storer) (store.ObjectId, error) {
-	marshalled, _ := k.Marshal()
+	marshalled, err := k.Marshal()
+	if err != nil {
+		return 0, err
+	}
 	return store.WriteNewObjFromBytes(stre, marshalled)
 }
 

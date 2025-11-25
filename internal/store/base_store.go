@@ -151,8 +151,8 @@ func (s *baseStore) LateWriteNewObj(size int) (ObjectId, io.Writer, Finisher, er
 	if err != nil {
 		return ObjNotAllocated, nil, nil, err
 	}
-	// Create a writer that writes to the file
-	writer := io.Writer(s.file)
+	// Create a section writer that writes to the correct offset in the file
+	writer := NewSectionWriter(s.file, int64(fileOffset), int64(size))
 
 	s.objectMap.Set(objId, ObjectInfo{Offset: fileOffset, Size: size})
 
