@@ -422,3 +422,105 @@ func TestPersistentPayloadTreapNodeMarshalToObjectId(t *testing.T) {
 		t.Errorf("Expected payload data %s, got %s", node.GetPayload().Data, newNode.GetPayload().Data)
 	}
 }
+
+// TestPersistentPayloadTreapLazyLoading verifies that loading a persisted treap from disk
+// only loads the root node, not the entire tree structure.
+func TestPersistentPayloadTreapLazyLoading(t *testing.T) {
+	stre := setupTestStore(t)
+	defer stre.Close()
+
+	treap := NewPersistentPayloadTreap[IntKey, MockPayload](IntLess, (*IntKey)(new(int32)), stre)
+
+	// Insert nodes with controlled priorities to create a predictable tree structure
+	// Root will be key=50 (highest priority=100)
+	// Left child will be key=30 (priority=80)
+	// Right child will be key=70 (priority=90)
+	keys := []*IntKey{
+		(*IntKey)(new(int32)),
+		(*IntKey)(new(int32)),
+		(*IntKey)(new(int32)),
+	}
+	*keys[0] = 50
+	*keys[1] = 30
+	*keys[2] = 70
+
+	priorities := []Priority{100, 80, 90}
+	payloads := []MockPayload{
+		{Data: "payload_50"},
+		{Data: "payload_30"},
+		{Data: "payload_70"},
+	}
+
+	// Insert in order to create the tree structure
+	for i, key := range keys {
+		treap.Insert(key, priorities[i], payloads[i])
+	}
+
+	// Persist the entire tree to disk
+	err := treap.Persist()
+	if err != nil {
+		t.Fatalf("Failed to persist treap: %v", err)
+	}
+
+	// Get the root object ID
+	rootObjectId := treap.root.(*PersistentPayloadTreapNode[IntKey, MockPayload]).ObjectId()
+
+	// Create a new treap and load only the root from disk
+	treap2 := NewPersistentPayloadTreap[IntKey, MockPayload](IntLess, (*IntKey)(new(int32)), stre)
+	err = treap2.Load(rootObjectId)
+	if err != nil {
+		t.Fatalf("Failed to load treap from ObjectId: %v", err)
+	}
+
+	// Now verify that only the root is loaded, not its children
+	rootNode := treap2.root.(*PersistentPayloadTreapNode[IntKey, MockPayload])
+
+	// Verify the root node data is correct
+	if rootNode.GetKey().Value() != IntKey(50) {
+		t.Errorf("Expected root key 50, got %d", rootNode.GetKey().Value())
+	}
+
+	// Critical test: verify that child pointers are nil but their ObjectIds are valid
+	// This proves lazy loading is working - the children are not loaded yet
+	if rootNode.TreapNode.left != nil {
+		t.Errorf("Expected left child pointer to be nil (not loaded yet), but it was not nil")
+	}
+	if !store.IsValidObjectId(rootNode.leftObjectId) {
+		t.Errorf("Expected left child ObjectId to be valid, but got: %v", rootNode.leftObjectId)
+	}
+
+	if rootNode.TreapNode.right != nil {
+		t.Errorf("Expected right child pointer to be nil (not loaded yet), but it was not nil")
+	}
+	if !store.IsValidObjectId(rootNode.rightObjectId) {
+		t.Errorf("Expected right child ObjectId to be valid, but got: %v", rootNode.rightObjectId)
+	}
+
+	// Now verify that accessing the children via GetLeft()/GetRight() triggers lazy loading
+	leftNode := rootNode.GetLeft()
+	if leftNode == nil {
+		t.Fatalf("Expected GetLeft() to load and return left child, but got nil")
+	}
+	if leftNode.GetKey().Value() != IntKey(30) {
+		t.Errorf("Expected left child key 30, got %d", leftNode.GetKey().Value())
+	}
+
+	// After calling GetLeft(), the left pointer should now be populated
+	if rootNode.TreapNode.left == nil {
+		t.Errorf("Expected left child pointer to be populated after GetLeft(), but it was nil")
+	}
+
+	// Similarly for the right child
+	rightNode := rootNode.GetRight()
+	if rightNode == nil {
+		t.Fatalf("Expected GetRight() to load and return right child, but got nil")
+	}
+	if rightNode.GetKey().Value() != IntKey(70) {
+		t.Errorf("Expected right child key 70, got %d", rightNode.GetKey().Value())
+	}
+
+	// After calling GetRight(), the right pointer should now be populated
+	if rootNode.TreapNode.right == nil {
+		t.Errorf("Expected right child pointer to be populated after GetRight(), but it was nil")
+	}
+}

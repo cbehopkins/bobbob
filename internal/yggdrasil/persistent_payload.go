@@ -266,7 +266,7 @@ func (n *PersistentPayloadTreapNode[K, P]) Persist() error {
 			return err
 		}
 	}
-	
+
 	// Now marshal and persist this node
 	objId, err := n.MarshalToObjectId(n.Store)
 	if err != nil {
