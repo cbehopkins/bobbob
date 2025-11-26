@@ -98,6 +98,8 @@ func (tm *TypeMap) AddType(t any) {
 	tm.NextShortCode++
 }
 
+// GetTypeByName retrieves the type tuple for a given type name.
+// Returns the tuple and a boolean indicating whether the type was found.
 func (tm TypeMap) GetTypeByName(typeName string) (typeTuple, bool) {
 	tuple, exists := tm.Types[typeName]
 	return tuple, exists
