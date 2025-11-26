@@ -2,7 +2,6 @@ package store
 
 import (
 	"bytes"
-	cryptorand "crypto/rand"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -354,7 +353,7 @@ func TestConcurrentWriteToObj(t *testing.T) {
 	for i := 0; i < numTestObjects; i++ {
 		length := rand.Intn(1024) + 1 // Length between 1 and 1024 bytes
 		testObjects[i] = make([]byte, length)
-		cryptorand.Read(testObjects[i]) // Fill with random data
+		rand.Read(testObjects[i]) // Fill with random data
 	}
 
 	// Create a dict to track the test objects
@@ -416,7 +415,7 @@ func mutateOneObject(testObj *TstObject, store *baseStore) error {
 
 	// Write some arbitrary data to the object
 	newData := make([]byte, rand.Intn(testObj.size)+1) // Ensure new data is not larger than the old data
-	cryptorand.Read(newData)
+	rand.Read(newData)
 	writer, closer, err := store.WriteToObj(testObj.id)
 	if err != nil {
 		return fmt.Errorf("expected no error, got %v", err)
@@ -663,7 +662,7 @@ func BenchmarkWriteAt(b *testing.B) {
 		for _, concurrency := range concurrencyLevels {
 			b.Run(fmt.Sprintf("PayloadSize=%d_Concurrency=%d", payloadSize, concurrency), func(b *testing.B) {
 				data := make([]byte, payloadSize)
-				cryptorand.Read(data) // Fill with random data
+				rand.Read(data) // Fill with random data
 
 				b.ResetTimer()
 				var wg sync.WaitGroup
@@ -709,7 +708,7 @@ func BenchmarkWriteAtSingleCall(b *testing.B) {
 		for _, concurrency := range concurrencyLevels {
 			b.Run(fmt.Sprintf("PayloadSize=%d_Concurrency=%d", payloadSize, concurrency), func(b *testing.B) {
 				data := make([]byte, payloadSize)
-				cryptorand.Read(data) // Fill with random data
+				rand.Read(data) // Fill with random data
 
 				b.ResetTimer()
 				var wg sync.WaitGroup

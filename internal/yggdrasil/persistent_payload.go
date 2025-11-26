@@ -1,6 +1,7 @@
 package yggdrasil
 
 import (
+	"errors"
 	"fmt"
 
 	"bobbob/internal/store"
@@ -128,8 +129,10 @@ func (n *PersistentPayloadTreapNode[K, P]) SetObjectId(id store.ObjectId) {
 }
 
 type PersistentPayloadTreapInterface[T any, P any] interface {
-	Insert(key PersistentKey[T], priority Priority, payload P)
+	Insert(key PersistentKey[T], payload P)
+	InsertComplex(key PersistentKey[T], priority Priority, payload P)
 	Search(key PersistentKey[T]) PersistentPayloadNodeInterface[T, P]
+	SearchComplex(key PersistentKey[T], callback func(TreapNodeInterface[T])) PersistentPayloadNodeInterface[T, P]
 	UpdatePriority(key PersistentKey[T], newPriority Priority)
 	UpdatePayload(key PersistentKey[T], newPayload P)
 	Persist() error
@@ -177,12 +180,19 @@ func NewPersistentPayloadTreap[K any, P PersistentPayload[P]](lessFunc func(a, b
 	}
 }
 
-// Insert inserts a new node with the given key, priority, and payload into the persistent payload treap.
-func (t *PersistentPayloadTreap[K, P]) Insert(key PersistentKey[K], priority Priority, payload P) {
+// InsertComplex inserts a new node with the given key, priority, and payload into the persistent payload treap.
+// Use this method when you need to specify a custom priority value.
+func (t *PersistentPayloadTreap[K, P]) InsertComplex(key PersistentKey[K], priority Priority, payload P) {
 	newNode := NewPersistentPayloadTreapNode(key, priority, payload, t.Store, t)
 	var tmp TreapNodeInterface[K]
 	tmp = t.insert(t.root, newNode)
 	t.root = tmp
+}
+
+// Insert inserts a new node with the given key and payload into the persistent payload treap with a random priority.
+// This is the preferred method for most use cases.
+func (t *PersistentPayloadTreap[K, P]) Insert(key PersistentKey[K], payload P) {
+	t.InsertComplex(key, randomPriority(), payload)
 }
 
 // NewPayloadFromObjectId creates a PersistentPayloadTreapNode from the given object ID.
@@ -207,17 +217,39 @@ func (t *PersistentPayloadTreap[K, P]) Load(objId store.ObjectId) error {
 	return err
 }
 
-// Search searches for the node with the given key in the persistent treap.
-func (t *PersistentPayloadTreap[K, P]) Search(key PersistentKey[K]) PersistentPayloadNodeInterface[K, P] {
-	node := t.search(t.root, key.Value())
+// SearchComplex searches for the node with the given key in the persistent treap.
+// It accepts a callback that is called when a node is accessed during the search.
+// The callback receives the node that was accessed, allowing for custom operations
+// such as updating access times for LRU caching or flushing stale nodes.
+// This method automatically updates the lastAccessTime on each accessed node.
+func (t *PersistentPayloadTreap[K, P]) SearchComplex(key PersistentKey[K], callback func(TreapNodeInterface[K])) PersistentPayloadNodeInterface[K, P] {
+	// Create a wrapper callback that updates the access time
+	wrappedCallback := func(node TreapNodeInterface[K]) {
+		// Update the access time if this is a persistent node
+		if pNode, ok := node.(*PersistentPayloadTreapNode[K, P]); ok {
+			pNode.TouchAccessTime()
+		}
+		// Call the user's callback if provided
+		if callback != nil {
+			callback(node)
+		}
+	}
+
+	node := t.searchComplex(t.root, key.Value(), wrappedCallback)
 	if node == nil {
 		return nil
 	}
 	n, ok := node.(*PersistentPayloadTreapNode[K, P])
 	if !ok {
-		panic("Invalid type assertion in Search")
+		panic("Invalid type assertion in SearchComplex")
 	}
 	return n
+}
+
+// Search searches for the node with the given key in the persistent treap.
+// It calls SearchComplex with a nil callback.
+func (t *PersistentPayloadTreap[K, P]) Search(key PersistentKey[K]) PersistentPayloadNodeInterface[K, P] {
+	return t.SearchComplex(key, nil)
 }
 
 // UpdatePayload updates the payload of the node with the given key.
@@ -236,6 +268,94 @@ func (t *PersistentPayloadTreap[K, P]) Persist() error {
 		return rootNode.Persist()
 	}
 	return nil
+}
+
+// PayloadNodeInfo contains information about a payload node in memory, including its access timestamp.
+type PayloadNodeInfo[K any, P PersistentPayload[P]] struct {
+	Node           *PersistentPayloadTreapNode[K, P]
+	LastAccessTime int64
+	Key            PersistentKey[K]
+}
+
+// GetInMemoryNodes traverses the treap and collects all nodes currently in memory.
+// This method does NOT load nodes from disk and does NOT update access timestamps.
+// It only includes nodes that are already loaded in memory.
+// Returns a slice of PayloadNodeInfo containing each node and its last access time.
+func (t *PersistentPayloadTreap[K, P]) GetInMemoryNodes() []PayloadNodeInfo[K, P] {
+	var nodes []PayloadNodeInfo[K, P]
+	t.collectInMemoryPayloadNodes(t.root, &nodes)
+	return nodes
+}
+
+// collectInMemoryPayloadNodes is a helper that recursively collects in-memory nodes.
+// It only traverses nodes that are already loaded (does not trigger disk reads).
+func (t *PersistentPayloadTreap[K, P]) collectInMemoryPayloadNodes(node TreapNodeInterface[K], nodes *[]PayloadNodeInfo[K, P]) {
+	if node == nil || node.IsNil() {
+		return
+	}
+
+	// Convert to PersistentPayloadTreapNode to access in-memory state
+	pNode, ok := node.(*PersistentPayloadTreapNode[K, P])
+	if !ok {
+		return
+	}
+
+	// Add this node to the list
+	*nodes = append(*nodes, PayloadNodeInfo[K, P]{
+		Node:           pNode,
+		LastAccessTime: pNode.GetLastAccessTime(),
+		Key:            pNode.GetKey().(PersistentKey[K]),
+	})
+
+	// Only traverse children that are already in memory
+	// Check the left child without triggering a load
+	if pNode.TreapNode.left != nil {
+		t.collectInMemoryPayloadNodes(pNode.TreapNode.left, nodes)
+	}
+
+	// Check the right child without triggering a load
+	if pNode.TreapNode.right != nil {
+		t.collectInMemoryPayloadNodes(pNode.TreapNode.right, nodes)
+	}
+}
+
+// FlushOlderThan flushes all nodes that haven't been accessed since the given timestamp.
+// This method first persists any unpersisted nodes, then removes them from memory
+// if their last access time is older than the specified cutoff timestamp.
+// Nodes can be reloaded later from disk when needed.
+// Returns the number of nodes flushed and any error encountered.
+func (t *PersistentPayloadTreap[K, P]) FlushOlderThan(cutoffTimestamp int64) (int, error) {
+	// First, persist the entire tree to ensure all nodes are saved
+	err := t.Persist()
+	if err != nil {
+		return 0, err
+	}
+
+	// Get all in-memory nodes
+	nodes := t.GetInMemoryNodes()
+
+	// Count how many we flush
+	flushedCount := 0
+
+	// Flush nodes older than the cutoff
+	for _, nodeInfo := range nodes {
+		if nodeInfo.LastAccessTime < cutoffTimestamp {
+			// Attempt to flush this node
+			err := nodeInfo.Node.Flush()
+			if err != nil {
+				// If we get errNotFullyPersisted, it means children weren't persisted
+				// but we already called Persist() above, so this shouldn't happen
+				// Continue anyway to flush what we can
+				if !errors.Is(err, errNotFullyPersisted) {
+					return flushedCount, err
+				}
+			} else {
+				flushedCount++
+			}
+		}
+	}
+
+	return flushedCount, nil
 }
 
 func (n *PersistentPayloadTreapNode[K, P]) MarshalToObjectId(stre store.Storer) (store.ObjectId, error) {

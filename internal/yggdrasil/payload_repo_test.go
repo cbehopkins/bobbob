@@ -56,7 +56,7 @@ func TestPayloadRepo_Get_IntKey(t *testing.T) {
 	if treap1 == nil {
 		t.Fatalf("Expected non-nil payload from Get")
 	}
-	treap1.Insert(&key, Priority(0), dummyPayload{val: 42})
+	treap1.InsertComplex(&key, Priority(0), dummyPayload{val: 42})
 	result1 := treap1.Search(&key)
 	if result1 == nil {
 		t.Errorf("Expected to find the key in the payload1, but it was not found")

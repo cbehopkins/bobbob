@@ -3,6 +3,7 @@ package yggdrasil
 import (
 	"encoding/binary"
 	"errors"
+	"math/rand"
 )
 
 // Priority represents the heap priority for a node in the treap.
@@ -28,6 +29,11 @@ func (p *Priority) Unmarshal(data []byte) error {
 	}
 	*p = Priority(binary.LittleEndian.Uint32(data[:4]))
 	return nil
+}
+
+// randomPriority generates a random priority value using math/rand.
+func randomPriority() Priority {
+	return Priority(rand.Uint32())
 }
 
 // TreapNodeInterface defines the interface for a node in the treap data structure.
@@ -93,7 +99,6 @@ func (n *TreapNode[T]) IsNil() bool {
 }
 
 // NewTreapNode creates a new TreapNode with the given key and priority.
-// NewTreapNode creates a new treap node with the given key and priority.
 func NewTreapNode[T any](key Key[T], priority Priority) *TreapNode[T] {
 	return &TreapNode[T]{
 		key:      key,
@@ -188,30 +193,51 @@ func (t *Treap[T]) delete(node TreapNodeInterface[T], key T) TreapNodeInterface[
 	return node
 }
 
-// search searches for the node with the given key in the treap.
-func (t *Treap[T]) search(node TreapNodeInterface[T], key T) TreapNodeInterface[T] {
+// searchComplex searches for the node with the given key in the treap.
+// It accepts an optional callback that is called when a node is accessed during the search.
+func (t *Treap[T]) searchComplex(node TreapNodeInterface[T], key T, callback func(TreapNodeInterface[T])) TreapNodeInterface[T] {
 	if node == nil || node.IsNil() {
 		return node
 	}
+
+	// Call the callback if provided
+	if callback != nil {
+		callback(node)
+	}
+
 	currentKey := node.GetKey()
 	if currentKey.Equals(key) {
 		return node
 	}
 
 	if t.Less(key, currentKey.Value()) {
-		return t.search(node.GetLeft(), key)
+		return t.searchComplex(node.GetLeft(), key, callback)
 	} else {
-		return t.search(node.GetRight(), key)
+		return t.searchComplex(node.GetRight(), key, callback)
 	}
 }
 
-// Insert inserts a new node with the given value and priority into the treap.
+// search searches for the node with the given key in the treap.
+// It calls searchComplex with a nil callback.
+func (t *Treap[T]) search(node TreapNodeInterface[T], key T) TreapNodeInterface[T] {
+	return t.searchComplex(node, key, nil)
+}
+
+// InsertComplex inserts a new node with the given value and priority into the treap.
 // The type T must implement the Key[T] interface (e.g., IntKey, StringKey).
-func (t *Treap[T]) Insert(value T, priority Priority) {
+// Use this method when you need to specify a custom priority value.
+func (t *Treap[T]) InsertComplex(value T, priority Priority) {
 	// Since T implements Key[T], we can use the value directly as the key
 	key := any(value).(Key[T])
 	newNode := NewTreapNode(key, priority)
 	t.root = t.insert(t.root, newNode)
+}
+
+// Insert inserts a new node with the given value into the treap with a random priority.
+// The type T must implement the Key[T] interface (e.g., IntKey, StringKey).
+// This is the preferred method for most use cases.
+func (t *Treap[T]) Insert(value T) {
+	t.InsertComplex(value, randomPriority())
 }
 
 // Delete removes the node with the given value from the treap.
@@ -221,11 +247,20 @@ func (t *Treap[T]) Delete(value T) {
 	t.root = t.delete(t.root, key.Value())
 }
 
-// Search searches for the node with the given value in the treap.
-func (t *Treap[T]) Search(value T) TreapNodeInterface[T] {
+// SearchComplex searches for the node with the given value in the treap.
+// It accepts a callback that is called when a node is accessed during the search.
+// The callback receives the node that was accessed, allowing for custom operations
+// such as updating access times for LRU caching.
+func (t *Treap[T]) SearchComplex(value T, callback func(TreapNodeInterface[T])) TreapNodeInterface[T] {
 	// Since T implements Key[T], convert to get the comparable value
 	key := any(value).(Key[T])
-	return t.search(t.root, key.Value())
+	return t.searchComplex(t.root, key.Value(), callback)
+}
+
+// Search searches for the node with the given value in the treap.
+// It calls SearchComplex with a nil callback.
+func (t *Treap[T]) Search(value T) TreapNodeInterface[T] {
+	return t.SearchComplex(value, nil)
 }
 
 // UpdatePriority updates the priority of the node with the given value.
@@ -235,7 +270,7 @@ func (t *Treap[T]) UpdatePriority(value T, newPriority Priority) {
 	if node != nil && !node.IsNil() {
 		node.SetPriority(newPriority)
 		t.Delete(value)
-		t.Insert(value, newPriority)
+		t.InsertComplex(value, newPriority)
 	}
 }
 

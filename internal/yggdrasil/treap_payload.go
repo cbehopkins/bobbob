@@ -71,11 +71,18 @@ func NewPayloadTreap[K any, P any](lessFunc func(a, b K) bool) *PayloadTreap[K, 
 	}
 }
 
-// Insert inserts a new node with the given value, priority, and payload into the treap.
+// InsertComplex inserts a new node with the given value, priority, and payload into the treap.
 // The type K must implement the Key[K] interface (e.g., IntKey, StringKey).
-func (t *PayloadTreap[K, P]) Insert(value K, priority Priority, payload P) {
+// Use this method when you need to specify a custom priority value.
+func (t *PayloadTreap[K, P]) InsertComplex(value K, priority Priority, payload P) {
 	// Since K implements Key[K], convert to use as key
 	key := any(value).(Key[K])
 	newNode := NewPayloadTreapNode(key, priority, payload)
 	t.Treap.root = t.Treap.insert(t.Treap.root, newNode)
+}
+
+// Insert inserts a new node with the given value and payload into the treap with a random priority.
+// This is the preferred method for most use cases.
+func (t *PayloadTreap[K, P]) Insert(value K, payload P) {
+	t.InsertComplex(value, randomPriority(), payload)
 }

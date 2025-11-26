@@ -2,7 +2,6 @@ package yggdrasil
 
 import (
 	"fmt"
-	"math/rand"
 
 	"bobbob/internal/store"
 )
@@ -46,6 +45,6 @@ func PayloadRepoGet[T, P any](pr *PayloadRepo, key Key[T], pc PayloadConstructor
 	if !ok {
 		return nil, fmt.Errorf("payload does not implement PersistentPayload[UntypedPersistentPayload]")
 	}
-	pr.PersistentPayloadTreap.Insert(&shortCode, Priority(rand.Intn(100)), bob)
+	pr.PersistentPayloadTreap.Insert(&shortCode, bob)
 	return newPayload, nil
 }

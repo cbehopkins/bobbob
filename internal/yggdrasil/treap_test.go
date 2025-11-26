@@ -1,7 +1,6 @@
 package yggdrasil
 
 import (
-	"math/rand"
 	"testing"
 )
 
@@ -11,7 +10,7 @@ func TestTreap(t *testing.T) {
 	keys := []IntKey{10, 20, 15, 5, 30}
 
 	for _, key := range keys {
-		treap.Insert(key, Priority(rand.Intn(100)))
+		treap.Insert(key)
 	}
 
 	for _, key := range keys {
@@ -42,6 +41,34 @@ func TestTreap(t *testing.T) {
 	} else if updatedNode.GetPriority() != newPriority {
 		t.Errorf("Expected priority %d, but got %d", newPriority, updatedNode.GetPriority())
 	}
+
+	// Test SearchComplex with callback
+	var accessedNodes []IntKey
+	callback := func(node TreapNodeInterface[IntKey]) {
+		if node != nil && !node.IsNil() {
+			accessedNodes = append(accessedNodes, node.GetKey().(IntKey))
+		}
+	}
+
+	searchKey := IntKey(15)
+	foundNode := treap.SearchComplex(searchKey, callback)
+	if foundNode == nil {
+		t.Errorf("Expected to find key %d in the treap using SearchComplex", searchKey)
+	}
+	if len(accessedNodes) == 0 {
+		t.Errorf("Expected callback to be called at least once during SearchComplex")
+	}
+	// Verify the callback was called with the searched key
+	found := false
+	for _, k := range accessedNodes {
+		if k == searchKey {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("Expected callback to be called with key %d, but it was not in the accessed nodes: %v", searchKey, accessedNodes)
+	}
 }
 
 func TestPayloadTreap(t *testing.T) {
@@ -51,7 +78,7 @@ func TestPayloadTreap(t *testing.T) {
 
 	payloads := []string{"ten", "twenty", "fifteen", "five", "thirty"}
 	for i, key := range keys {
-		treap.Insert(key, Priority(rand.Intn(100)), payloads[i])
+		treap.Insert(key, payloads[i])
 	}
 
 	for i, key := range keys {
@@ -82,7 +109,7 @@ func TestStringKeyTreap(t *testing.T) {
 
 	payloads := []int{1, 2, 3, 4, 5}
 	for i, key := range keys {
-		treap.Insert(key, Priority(rand.Intn(100)), payloads[i])
+		treap.Insert(key, payloads[i])
 	}
 
 	for i, key := range keys {
@@ -118,7 +145,7 @@ func TestCustomKeyTreap(t *testing.T) {
 	}
 	payloads := []string{"payload1", "payload2", "payload3", "payload4", "payload5"}
 	for i, key := range keys {
-		treap.Insert(key, Priority(rand.Intn(100)), payloads[i])
+		treap.Insert(key, payloads[i])
 	}
 
 	for i, key := range keys {
@@ -151,7 +178,7 @@ func TestTreapWalk(t *testing.T) {
 	keys := []IntKey{10, 20, 15, 5, 30}
 
 	for _, key := range keys {
-		treap.Insert(key, Priority(rand.Intn(100)))
+		treap.Insert(key)
 	}
 
 	var walkedKeys []IntKey
@@ -173,7 +200,7 @@ func TestTreapWalkReverse(t *testing.T) {
 	keys := []IntKey{10, 20, 15, 5, 30}
 
 	for _, key := range keys {
-		treap.Insert(key, Priority(rand.Intn(100)))
+		treap.Insert(key)
 	}
 
 	var walkedKeys []IntKey
@@ -196,7 +223,7 @@ func TestPointerKeyEquality(t *testing.T) {
 	key2 := IntKey(10)
 
 	// Insert key1 into the treap
-	treap.Insert(key1, Priority(rand.Intn(100)))
+	treap.Insert(key1)
 
 	// Search for key2 in the treap
 	node := treap.Search(key2)

@@ -2,11 +2,18 @@ package yggdrasil
 
 import (
 	"errors"
+	"time"
 
 	"bobbob/internal/store"
 )
 
 var errNotFullyPersisted = errors.New("node not fully persisted")
+
+// currentUnixTime returns the current Unix timestamp in seconds.
+// This is used for tracking node access times for age-based memory management.
+func currentUnixTime() int64 {
+	return time.Now().Unix()
+}
 
 type PersistentObjectId store.ObjectId
 
@@ -46,12 +53,13 @@ type PersistentTreapNodeInterface[T any] interface {
 
 // PersistentTreapNode represents a node in the persistent treap.
 type PersistentTreapNode[T any] struct {
-	TreapNode[T]  // Embed TreapNode to reuse its logic
-	objectId      store.ObjectId
-	leftObjectId  store.ObjectId
-	rightObjectId store.ObjectId
-	Store         store.Storer
-	parent        *PersistentTreap[T]
+	TreapNode[T]   // Embed TreapNode to reuse its logic
+	objectId       store.ObjectId
+	leftObjectId   store.ObjectId
+	rightObjectId  store.ObjectId
+	Store          store.Storer
+	parent         *PersistentTreap[T]
+	lastAccessTime int64 // Unix timestamp of last access (in-memory only, not persisted)
 }
 
 func (n *PersistentTreapNode[T]) newFromObjectId(objId store.ObjectId) (*PersistentTreapNode[T], error) {
@@ -129,6 +137,32 @@ func (n *PersistentTreapNode[T]) SetRight(right TreapNodeInterface[T]) {
 // IsNil checks if the node is nil.
 func (n *PersistentTreapNode[T]) IsNil() bool {
 	return n == nil
+}
+
+// GetLastAccessTime returns the Unix timestamp of the last access to this node.
+// This is an in-memory field only and is not persisted to disk.
+func (n *PersistentTreapNode[T]) GetLastAccessTime() int64 {
+	if n == nil {
+		return 0
+	}
+	return n.lastAccessTime
+}
+
+// SetLastAccessTime sets the Unix timestamp of the last access to this node.
+// This is an in-memory field only and is not persisted to disk.
+func (n *PersistentTreapNode[T]) SetLastAccessTime(timestamp int64) {
+	if n == nil {
+		return
+	}
+	n.lastAccessTime = timestamp
+}
+
+// TouchAccessTime updates the last access time to the current time.
+func (n *PersistentTreapNode[T]) TouchAccessTime() {
+	if n == nil {
+		return
+	}
+	n.lastAccessTime = currentUnixTime()
 }
 
 func (n *PersistentTreapNode[T]) sizeInBytes() int {
@@ -448,10 +482,17 @@ func (t *PersistentTreap[T]) delete(node TreapNodeInterface[T], key T) TreapNode
 	return result
 }
 
-// Insert inserts a new node with the given key and priority into the persistent treap.
-func (t *PersistentTreap[T]) Insert(key PersistentKey[T], priority Priority) {
+// InsertComplex inserts a new node with the given key and priority into the persistent treap.
+// Use this method when you need to specify a custom priority value.
+func (t *PersistentTreap[T]) InsertComplex(key PersistentKey[T], priority Priority) {
 	newNode := NewPersistentTreapNode(key, priority, t.Store, t)
 	t.root = t.insert(t.root, newNode)
+}
+
+// Insert inserts a new node with the given key into the persistent treap with a random priority.
+// This is the preferred method for most use cases.
+func (t *PersistentTreap[T]) Insert(key PersistentKey[T]) {
+	t.InsertComplex(key, randomPriority())
 }
 
 // Delete removes the node with the given key from the persistent treap.
@@ -459,9 +500,30 @@ func (t *PersistentTreap[T]) Delete(key PersistentKey[T]) {
 	t.root = t.delete(t.root, key.Value())
 }
 
+// SearchComplex searches for the node with the given key in the persistent treap.
+// It accepts a callback that is called when a node is accessed during the search.
+// The callback receives the node that was accessed, allowing for custom operations
+// such as updating access times for LRU caching or flushing stale nodes.
+// This method automatically updates the lastAccessTime on each accessed node.
+func (t *PersistentTreap[T]) SearchComplex(key PersistentKey[T], callback func(TreapNodeInterface[T])) TreapNodeInterface[T] {
+	// Create a wrapper callback that updates the access time
+	wrappedCallback := func(node TreapNodeInterface[T]) {
+		// Update the access time if this is a persistent node
+		if pNode, ok := node.(*PersistentTreapNode[T]); ok {
+			pNode.TouchAccessTime()
+		}
+		// Call the user's callback if provided
+		if callback != nil {
+			callback(node)
+		}
+	}
+	return t.searchComplex(t.root, key.Value(), wrappedCallback)
+}
+
 // Search searches for the node with the given key in the persistent treap.
+// It calls SearchComplex with a nil callback.
 func (t *PersistentTreap[T]) Search(key PersistentKey[T]) TreapNodeInterface[T] {
-	return t.search(t.root, key.Value())
+	return t.SearchComplex(key, nil)
 }
 
 // UpdatePriority updates the priority of the node with the given key.
@@ -469,11 +531,13 @@ func (t *PersistentTreap[T]) UpdatePriority(key PersistentKey[T], newPriority Pr
 	node := t.Search(key)
 	if node != nil && !node.IsNil() {
 		node.SetPriority(newPriority)
+		// Delete and re-add as the priority change may violate treap properties
 		t.Delete(key)
-		t.Insert(key, newPriority)
+		t.InsertComplex(key, newPriority)
 	}
 }
 
+// Persist persists the entire treap to the store.
 func (t *PersistentTreap[T]) Persist() error {
 	if t.root != nil {
 		rootNode := t.root.(PersistentTreapNodeInterface[T])
@@ -482,8 +546,97 @@ func (t *PersistentTreap[T]) Persist() error {
 	return nil
 }
 
+// Load loads the treap from the store using the given root ObjectId.
 func (t *PersistentTreap[T]) Load(objId store.ObjectId) error {
 	var err error
 	t.root, err = NewFromObjectId(objId, t, t.Store)
 	return err
+}
+
+// NodeInfo contains information about a node in memory, including its access timestamp.
+type NodeInfo[T any] struct {
+	Node           *PersistentTreapNode[T]
+	LastAccessTime int64
+	Key            PersistentKey[T]
+}
+
+// GetInMemoryNodes traverses the treap and collects all nodes currently in memory.
+// This method does NOT load nodes from disk and does NOT update access timestamps.
+// It only includes nodes that are already loaded in memory.
+// Returns a slice of NodeInfo containing each node and its last access time.
+func (t *PersistentTreap[T]) GetInMemoryNodes() []NodeInfo[T] {
+	var nodes []NodeInfo[T]
+	t.collectInMemoryNodes(t.root, &nodes)
+	return nodes
+}
+
+// collectInMemoryNodes is a helper that recursively collects in-memory nodes.
+// It only traverses nodes that are already loaded (does not trigger disk reads).
+func (t *PersistentTreap[T]) collectInMemoryNodes(node TreapNodeInterface[T], nodes *[]NodeInfo[T]) {
+	if node == nil || node.IsNil() {
+		return
+	}
+
+	// Convert to PersistentTreapNode to access in-memory state
+	pNode, ok := node.(*PersistentTreapNode[T])
+	if !ok {
+		return
+	}
+
+	// Add this node to the list
+	*nodes = append(*nodes, NodeInfo[T]{
+		Node:           pNode,
+		LastAccessTime: pNode.GetLastAccessTime(),
+		Key:            pNode.GetKey().(PersistentKey[T]),
+	})
+
+	// Only traverse children that are already in memory
+	// Check the left child without triggering a load
+	if pNode.TreapNode.left != nil {
+		t.collectInMemoryNodes(pNode.TreapNode.left, nodes)
+	}
+
+	// Check the right child without triggering a load
+	if pNode.TreapNode.right != nil {
+		t.collectInMemoryNodes(pNode.TreapNode.right, nodes)
+	}
+}
+
+// FlushOlderThan flushes all nodes that haven't been accessed since the given timestamp.
+// This method first persists any unpersisted nodes, then removes them from memory
+// if their last access time is older than the specified cutoff timestamp.
+// Nodes can be reloaded later from disk when needed.
+// Returns the number of nodes flushed and any error encountered.
+func (t *PersistentTreap[T]) FlushOlderThan(cutoffTimestamp int64) (int, error) {
+	// First, persist the entire tree to ensure all nodes are saved
+	err := t.Persist()
+	if err != nil {
+		return 0, err
+	}
+
+	// Get all in-memory nodes
+	nodes := t.GetInMemoryNodes()
+
+	// Count how many we flush
+	flushedCount := 0
+
+	// Flush nodes older than the cutoff
+	for _, nodeInfo := range nodes {
+		if nodeInfo.LastAccessTime < cutoffTimestamp {
+			// Attempt to flush this node
+			err := nodeInfo.Node.Flush()
+			if err != nil {
+				// If we get errNotFullyPersisted, it means children weren't persisted
+				// but we already called Persist() above, so this shouldn't happen
+				// Continue anyway to flush what we can
+				if !errors.Is(err, errNotFullyPersisted) {
+					return flushedCount, err
+				}
+			} else {
+				flushedCount++
+			}
+		}
+	}
+
+	return flushedCount, nil
 }

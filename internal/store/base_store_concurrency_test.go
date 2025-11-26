@@ -2,8 +2,8 @@ package store
 
 import (
 	"bytes"
-	cryptorand "crypto/rand"
 	"fmt"
+	"math/rand"
 	"os"
 	"sync"
 	"testing"
@@ -117,7 +117,7 @@ func TestBaseStoreConcurrentReadWriteRace(t *testing.T) {
 	objects := make([]ObjectId, numObjects)
 	for i := 0; i < numObjects; i++ {
 		data := make([]byte, 100)
-		cryptorand.Read(data)
+		rand.Read(data)
 		objId, writer, finisher, err := store.LateWriteNewObj(len(data))
 		if err != nil {
 			t.Fatalf("Failed to create initial object %d: %v", i, err)
@@ -175,7 +175,7 @@ func TestBaseStoreConcurrentReadWriteRace(t *testing.T) {
 					return
 				default:
 					data := make([]byte, 100)
-					cryptorand.Read(data)
+					rand.Read(data)
 					objId, writer, finisher, err := store.LateWriteNewObj(len(data))
 					if err != nil {
 						errChan <- fmt.Errorf("writer %d: write failed: %w", writerID, err)
@@ -234,7 +234,7 @@ func TestBaseStoreDeleteWhileReading(t *testing.T) {
 
 	// Create an object
 	data := make([]byte, 1000)
-	cryptorand.Read(data)
+	rand.Read(data)
 	objId, writer, finisher, err := store.LateWriteNewObj(len(data))
 	if err != nil {
 		t.Fatalf("Failed to create object: %v", err)

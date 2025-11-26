@@ -15,9 +15,9 @@ func Example() {
 	treap := NewTreap[IntKey](IntLess)
 
 	// Insert some key-priority pairs
-	treap.Insert(IntKey(10), 50)
-	treap.Insert(IntKey(5), 30)
-	treap.Insert(IntKey(15), 40)
+	treap.InsertComplex(IntKey(10), 50)
+	treap.InsertComplex(IntKey(5), 30)
+	treap.InsertComplex(IntKey(15), 40)
 
 	// Search for a key
 	node := treap.Search(IntKey(10))
@@ -32,10 +32,10 @@ func ExampleTreap_Walk() {
 	treap := NewTreap[IntKey](IntLess)
 
 	// Insert keys with priorities
-	treap.Insert(IntKey(30), 1)
-	treap.Insert(IntKey(10), 2)
-	treap.Insert(IntKey(20), 3)
-	treap.Insert(IntKey(40), 4)
+	treap.InsertComplex(IntKey(30), 1)
+	treap.InsertComplex(IntKey(10), 2)
+	treap.InsertComplex(IntKey(20), 3)
+	treap.InsertComplex(IntKey(40), 4)
 
 	// Walk through in sorted order
 	treap.Walk(func(node TreapNodeInterface[IntKey]) {
@@ -51,9 +51,9 @@ func ExamplePayloadTreap() {
 	treap := NewPayloadTreap[StringKey, int](StringLess)
 
 	// Insert key-value pairs
-	treap.Insert(StringKey("age"), 100, 25)
-	treap.Insert(StringKey("score"), 200, 95)
-	treap.Insert(StringKey("level"), 150, 7)
+	treap.InsertComplex(StringKey("age"), 100, 25)
+	treap.InsertComplex(StringKey("score"), 200, 95)
+	treap.InsertComplex(StringKey("level"), 150, 7)
 
 	// Search and retrieve payload
 	node := treap.Search(StringKey("score"))
@@ -97,9 +97,9 @@ func ExamplePersistentPayloadTreap() {
 	key100, key200, key300 := IntKey(100), IntKey(200), IntKey(300)
 
 	// Insert key-value pairs
-	treap.Insert(&key100, 1, SimplePayload(42))
-	treap.Insert(&key200, 2, SimplePayload(99))
-	treap.Insert(&key300, 3, SimplePayload(17))
+	treap.InsertComplex(&key100, 1, SimplePayload(42))
+	treap.InsertComplex(&key200, 2, SimplePayload(99))
+	treap.InsertComplex(&key300, 3, SimplePayload(17))
 
 	// Persist to storage
 	treap.Persist()
@@ -126,7 +126,7 @@ func ExamplePersistentPayloadTreap_Load() {
 		treap := NewPersistentPayloadTreap[IntKey, SimplePayload](IntLess, (*IntKey)(new(int32)), s)
 
 		key42 := IntKey(42)
-		treap.Insert(&key42, 1, SimplePayload(123))
+		treap.InsertComplex(&key42, 1, SimplePayload(123))
 		treap.Persist()
 
 		// Get the root object ID for later loading
@@ -174,9 +174,9 @@ func ExampleTreap_Delete() {
 	treap := NewTreap[IntKey](IntLess)
 
 	// Insert keys
-	treap.Insert(IntKey(10), 1)
-	treap.Insert(IntKey(20), 2)
-	treap.Insert(IntKey(30), 3)
+	treap.InsertComplex(IntKey(10), 1)
+	treap.InsertComplex(IntKey(20), 2)
+	treap.InsertComplex(IntKey(30), 3)
 
 	// Delete a node
 	treap.Delete(IntKey(20))
@@ -201,9 +201,9 @@ func ExamplePersistentTreap() {
 
 	// Create and insert keys with priorities
 	key5, key3, key7 := IntKey(5), IntKey(3), IntKey(7)
-	treap.Insert(&key5, 100)
-	treap.Insert(&key3, 200)
-	treap.Insert(&key7, 150)
+	treap.InsertComplex(&key5, 100)
+	treap.InsertComplex(&key3, 200)
+	treap.InsertComplex(&key7, 150)
 
 	// Persist to disk
 	treap.Persist()
@@ -221,7 +221,7 @@ func ExampleTreap_UpdatePriority() {
 	treap := NewTreap[IntKey](IntLess)
 
 	// Insert with initial priority
-	treap.Insert(IntKey(100), 50)
+	treap.InsertComplex(IntKey(100), 50)
 
 	// Update priority (causes rebalancing)
 	treap.UpdatePriority(IntKey(100), 250)
@@ -324,19 +324,19 @@ func ExamplePersistentPayloadTreap_stringToStruct() {
 	imgPath := StringKey("/home/user/photo.jpg")
 	vidPath := StringKey("/home/user/video.mp4")
 
-	treap.Insert(&docPath, 100, FileInfo{
+	treap.InsertComplex(&docPath, 100, FileInfo{
 		Name: "document.txt",
 		Type: "text/plain",
 		Size: 2048,
 	})
 
-	treap.Insert(&imgPath, 200, FileInfo{
+	treap.InsertComplex(&imgPath, 200, FileInfo{
 		Name: "photo.jpg",
 		Type: "image/jpeg",
 		Size: 524288,
 	})
 
-	treap.Insert(&vidPath, 150, FileInfo{
+	treap.InsertComplex(&vidPath, 150, FileInfo{
 		Name: "video.mp4",
 		Type: "video/mp4",
 		Size: 10485760,
@@ -400,15 +400,15 @@ func ExampleJsonPayload() {
 	mouse := StringKey("mouse")
 	keyboard := StringKey("keyboard")
 
-	treap.Insert(&laptop, 100, JsonPayload[Product]{
+	treap.InsertComplex(&laptop, 100, JsonPayload[Product]{
 		Value: Product{Name: "Gaming Laptop", Price: 1299.99, Stock: 5},
 	})
 
-	treap.Insert(&mouse, 200, JsonPayload[Product]{
+	treap.InsertComplex(&mouse, 200, JsonPayload[Product]{
 		Value: Product{Name: "Wireless Mouse", Price: 29.99, Stock: 50},
 	})
 
-	treap.Insert(&keyboard, 150, JsonPayload[Product]{
+	treap.InsertComplex(&keyboard, 150, JsonPayload[Product]{
 		Value: Product{Name: "Mechanical Keyboard", Price: 89.99, Stock: 20},
 	})
 
@@ -447,7 +447,7 @@ func ExampleJsonPayload_loadAndUpdate() {
 
 		// Add initial product
 		sku := StringKey("SKU-001")
-		treap.Insert(&sku, 100, JsonPayload[Product]{
+		treap.InsertComplex(&sku, 100, JsonPayload[Product]{
 			Value: Product{Name: "Widget", Price: 19.99, Stock: 100},
 		})
 

@@ -2,7 +2,6 @@ package yggdrasil
 
 import (
 	"fmt"
-	"math/rand"
 	"path/filepath"
 	"testing"
 
@@ -85,7 +84,7 @@ func TestPersistentPayloadTreapInsertAndSearch(t *testing.T) {
 	}
 
 	for i, key := range keys {
-		treap.Insert(key, Priority(rand.Intn(100)), payloads[i])
+		treap.Insert(key, payloads[i])
 	}
 
 	for i, key := range keys {
@@ -109,7 +108,7 @@ func TestPersistentPayloadTreapUpdatePayload(t *testing.T) {
 
 	key := IntKey(42)
 	payload := MockPayload{Data: "initial_payload"}
-	treap.Insert(&key, Priority(50), payload)
+	treap.InsertComplex(&key, Priority(50), payload)
 
 	// Update the payload
 	newPayload := MockPayload{Data: "updated_payload"}
@@ -142,7 +141,7 @@ func TestPersistentPayloadTreapInsertLargeNumberOfPairs(t *testing.T) {
 		keys[i] = &key
 		payload := MockPayload{Data: fmt.Sprintf("payload_%d", i)}
 		payloads[i] = payload
-		treap.Insert(&key, Priority(rand.Intn(100)), payload)
+		treap.Insert(&key, payload)
 	}
 
 	// Update each key with a new payload
@@ -181,7 +180,7 @@ func TestPersistentPayloadTreapLargeScaleUpdateAndVerify(t *testing.T) {
 		keys[i] = &key
 		payload := MockPayload{Data: fmt.Sprintf("initial_payload_%d", i)}
 		payloads[i] = payload
-		treap.Insert(&key, Priority(rand.Intn(100)), payload)
+		treap.Insert(&key, payload)
 	}
 
 	// Update payloads
@@ -220,7 +219,7 @@ func TestPersistentPayloadTreapInsertDeleteAndVerify(t *testing.T) {
 		keys[i] = &key
 		payload := MockPayload{Data: fmt.Sprintf("payload_%d", i)}
 		payloads[i] = payload
-		treap.Insert(&key, Priority(rand.Intn(100)), payload)
+		treap.Insert(&key, payload)
 	}
 
 	// Delete some keys
@@ -262,7 +261,7 @@ func TestPersistentPayloadTreapPersistenceOne(t *testing.T) {
 	// Insert data into the treap
 	key := IntKey(42)
 	payload := MockPayload{Data: fmt.Sprintf("payload_%d", 42)}
-	treap.Insert(&key, Priority(rand.Intn(100)), payload)
+	treap.Insert(&key, payload)
 
 	// Persist the treap
 	err = treap.Persist()
@@ -317,7 +316,7 @@ func TestPersistentPayloadTreapPersistence(t *testing.T) {
 		keys[i] = (*IntKey)(new(int32))
 		*keys[i] = IntKey(i)
 		payload := MockPayload{Data: fmt.Sprintf("payload_%d", i)}
-		treap.Insert(keys[i], Priority(rand.Intn(100)), payload)
+		treap.Insert(keys[i], payload)
 	}
 
 	// Persist the treap
@@ -453,7 +452,7 @@ func TestPersistentPayloadTreapLazyLoading(t *testing.T) {
 
 	// Insert in order to create the tree structure
 	for i, key := range keys {
-		treap.Insert(key, priorities[i], payloads[i])
+		treap.InsertComplex(key, priorities[i], payloads[i])
 	}
 
 	// Persist the entire tree to disk
@@ -522,5 +521,433 @@ func TestPersistentPayloadTreapLazyLoading(t *testing.T) {
 	// After calling GetRight(), the right pointer should now be populated
 	if rootNode.TreapNode.right == nil {
 		t.Errorf("Expected right child pointer to be populated after GetRight(), but it was nil")
+	}
+}
+
+func TestPersistentPayloadTreapTimestamps(t *testing.T) {
+	store := setupTestStore(t)
+	defer store.Close()
+
+	treap := NewPersistentPayloadTreap[IntKey, MockPayload](IntLess, (*IntKey)(new(int32)), store)
+
+	// Insert some keys with payloads
+	keys := []*IntKey{
+		(*IntKey)(new(int32)),
+		(*IntKey)(new(int32)),
+		(*IntKey)(new(int32)),
+	}
+	*keys[0] = 10
+	*keys[1] = 20
+	*keys[2] = 30
+
+	payloads := []MockPayload{
+		{Data: "payload_10"},
+		{Data: "payload_20"},
+		{Data: "payload_30"},
+	}
+
+	for i, key := range keys {
+		treap.Insert(key, payloads[i])
+	}
+
+	// Search for a key - this should update timestamps
+	node := treap.Search(keys[1])
+	if node == nil {
+		t.Fatalf("Expected to find key %d", *keys[1])
+	}
+
+	// Check that the node has a timestamp
+	pNode := node.(*PersistentPayloadTreapNode[IntKey, MockPayload])
+	timestamp := pNode.GetLastAccessTime()
+	if timestamp == 0 {
+		t.Errorf("Expected lastAccessTime to be set after search, but got 0")
+	}
+
+	// Verify the payload is correct
+	if pNode.GetPayload().Data != payloads[1].Data {
+		t.Errorf("Expected payload %s, got %s", payloads[1].Data, pNode.GetPayload().Data)
+	}
+
+	// Search for all keys to ensure they all have timestamps
+	for _, key := range keys {
+		treap.Search(key)
+	}
+
+	// Get all in-memory nodes
+	inMemoryNodes := treap.GetInMemoryNodes()
+	if len(inMemoryNodes) == 0 {
+		t.Errorf("Expected to find in-memory nodes, but got none")
+	}
+
+	// Verify that all nodes now have timestamps (after being searched)
+	for _, nodeInfo := range inMemoryNodes {
+		if nodeInfo.LastAccessTime == 0 {
+			t.Errorf("Expected node with key %v to have a timestamp after search", nodeInfo.Key)
+		}
+	}
+}
+
+func TestPersistentPayloadTreapGetInMemoryNodes(t *testing.T) {
+	store := setupTestStore(t)
+	defer store.Close()
+
+	treap := NewPersistentPayloadTreap[IntKey, MockPayload](IntLess, (*IntKey)(new(int32)), store)
+
+	// Insert and search for keys
+	keys := []*IntKey{
+		(*IntKey)(new(int32)),
+		(*IntKey)(new(int32)),
+		(*IntKey)(new(int32)),
+		(*IntKey)(new(int32)),
+	}
+	*keys[0] = 10
+	*keys[1] = 20
+	*keys[2] = 5
+	*keys[3] = 15
+
+	payloads := []MockPayload{
+		{Data: "payload_10"},
+		{Data: "payload_20"},
+		{Data: "payload_5"},
+		{Data: "payload_15"},
+	}
+
+	for i, key := range keys {
+		treap.Insert(key, payloads[i])
+	}
+
+	// Search for all keys to ensure they're in memory
+	for _, key := range keys {
+		treap.Search(key)
+	}
+
+	// Get in-memory nodes
+	inMemoryNodes := treap.GetInMemoryNodes()
+
+	// We should have all the nodes we inserted
+	if len(inMemoryNodes) != len(keys) {
+		t.Errorf("Expected %d in-memory nodes, got %d", len(keys), len(inMemoryNodes))
+	}
+
+	// Verify each key is present
+	keyMap := make(map[int32]bool)
+	for _, nodeInfo := range inMemoryNodes {
+		key := nodeInfo.Key.(*IntKey)
+		keyMap[int32(*key)] = true
+	}
+
+	for _, key := range keys {
+		if !keyMap[int32(*key)] {
+			t.Errorf("Expected to find key %d in in-memory nodes", *key)
+		}
+	}
+}
+
+func TestPersistentPayloadTreapFlushOlderThan(t *testing.T) {
+	store := setupTestStore(t)
+	defer store.Close()
+
+	treap := NewPersistentPayloadTreap[IntKey, MockPayload](IntLess, (*IntKey)(new(int32)), store)
+
+	// Insert keys with payloads
+	keys := []*IntKey{
+		(*IntKey)(new(int32)),
+		(*IntKey)(new(int32)),
+		(*IntKey)(new(int32)),
+	}
+	*keys[0] = 10
+	*keys[1] = 20
+	*keys[2] = 30
+
+	payloads := []MockPayload{
+		{Data: "payload_10"},
+		{Data: "payload_20"},
+		{Data: "payload_30"},
+	}
+
+	for i, key := range keys {
+		treap.Insert(key, payloads[i])
+	}
+
+	// Search for all keys to set timestamps
+	for _, key := range keys {
+		treap.Search(key)
+	}
+
+	// Persist the tree
+	err := treap.Persist()
+	if err != nil {
+		t.Fatalf("Failed to persist tree: %v", err)
+	}
+
+	// Get the current time
+	currentTime := currentUnixTime()
+
+	// All nodes should be in memory
+	initialNodes := treap.GetInMemoryNodes()
+	if len(initialNodes) != len(keys) {
+		t.Errorf("Expected %d nodes in memory before flush, got %d", len(keys), len(initialNodes))
+	}
+
+	// Flush nodes older than current time + 1 second (should flush all)
+	flushedCount, err := treap.FlushOlderThan(currentTime + 1)
+	if err != nil {
+		t.Fatalf("Failed to flush old nodes: %v", err)
+	}
+
+	if flushedCount == 0 {
+		t.Errorf("Expected to flush some nodes, but flushed %d", flushedCount)
+	}
+
+	// After flushing, we should have fewer nodes in memory
+	afterFlushNodes := treap.GetInMemoryNodes()
+	if len(afterFlushNodes) >= len(initialNodes) {
+		t.Errorf("Expected fewer nodes after flush. Before: %d, After: %d", len(initialNodes), len(afterFlushNodes))
+	}
+
+	// But we should still be able to search for all keys (they'll be loaded from disk)
+	for i, key := range keys {
+		node := treap.Search(key)
+		if node == nil {
+			t.Errorf("Expected to find key %d after flush, but it was not found", *key)
+		} else {
+			// Verify the payload is still correct
+			pNode := node.(*PersistentPayloadTreapNode[IntKey, MockPayload])
+			if pNode.GetPayload().Data != payloads[i].Data {
+				t.Errorf("Expected payload %s for key %d, got %s", payloads[i].Data, *key, pNode.GetPayload().Data)
+			}
+		}
+	}
+}
+
+func TestPersistentPayloadTreapSelectiveFlush(t *testing.T) {
+	store := setupTestStore(t)
+	defer store.Close()
+
+	treap := NewPersistentPayloadTreap[IntKey, MockPayload](IntLess, (*IntKey)(new(int32)), store)
+
+	// Insert keys with payloads
+	keys := []*IntKey{
+		(*IntKey)(new(int32)),
+		(*IntKey)(new(int32)),
+		(*IntKey)(new(int32)),
+	}
+	*keys[0] = 10
+	*keys[1] = 20
+	*keys[2] = 30
+
+	payloads := []MockPayload{
+		{Data: "payload_10"},
+		{Data: "payload_20"},
+		{Data: "payload_30"},
+	}
+
+	for i, key := range keys {
+		treap.Insert(key, payloads[i])
+	}
+
+	// Search for first two keys
+	treap.Search(keys[0])
+	treap.Search(keys[1])
+
+	// Record the timestamp after searching for the first two
+	midTimestamp := currentUnixTime()
+
+	// Search for the third key and manually set a newer timestamp
+	node2 := treap.Search(keys[2])
+	pNode2 := node2.(*PersistentPayloadTreapNode[IntKey, MockPayload])
+	pNode2.SetLastAccessTime(midTimestamp + 10) // Manually set a newer timestamp
+
+	// Persist everything
+	err := treap.Persist()
+	if err != nil {
+		t.Fatalf("Failed to persist tree: %v", err)
+	}
+
+	// Flush nodes older than midTimestamp + 5 (should flush keys[0] and keys[1], but not keys[2])
+	flushedCount, err := treap.FlushOlderThan(midTimestamp + 5)
+	if err != nil {
+		t.Fatalf("Failed to flush old nodes: %v", err)
+	}
+
+	if flushedCount == 0 {
+		t.Errorf("Expected to flush some nodes, got %d", flushedCount)
+	}
+
+	// The third key should still be in memory with its newer timestamp
+	inMemoryNodes := treap.GetInMemoryNodes()
+	foundKey2 := false
+	for _, nodeInfo := range inMemoryNodes {
+		key := nodeInfo.Key.(*IntKey)
+		if *key == *keys[2] {
+			foundKey2 = true
+			if nodeInfo.LastAccessTime < midTimestamp+5 {
+				t.Errorf("Expected key %d to have timestamp >= %d, got %d", *key, midTimestamp+5, nodeInfo.LastAccessTime)
+			}
+		}
+	}
+
+	if !foundKey2 {
+		t.Logf("Key %d was flushed (or not found), which is acceptable depending on tree structure", *keys[2])
+	}
+
+	// All keys should still be searchable and have correct payloads
+	for i, key := range keys {
+		node := treap.Search(key)
+		if node == nil {
+			t.Errorf("Expected to find key %d (keys[%d]) after selective flush", *key, i)
+		} else {
+			pNode := node.(*PersistentPayloadTreapNode[IntKey, MockPayload])
+			if pNode.GetPayload().Data != payloads[i].Data {
+				t.Errorf("Expected payload %s for key %d, got %s", payloads[i].Data, *key, pNode.GetPayload().Data)
+			}
+		}
+	}
+}
+
+func TestPersistentPayloadTreapFlushAndReload(t *testing.T) {
+	store := setupTestStore(t)
+	defer store.Close()
+
+	treap := NewPersistentPayloadTreap[IntKey, MockPayload](IntLess, (*IntKey)(new(int32)), store)
+
+	// Insert a larger number of keys
+	const numKeys = 20
+	keys := make([]*IntKey, numKeys)
+	payloads := make([]MockPayload, numKeys)
+
+	for i := 0; i < numKeys; i++ {
+		keys[i] = (*IntKey)(new(int32))
+		*keys[i] = IntKey(i * 10)
+		payloads[i] = MockPayload{Data: fmt.Sprintf("payload_%d", i*10)}
+		treap.Insert(keys[i], payloads[i])
+	}
+
+	// Search for all keys to load them into memory and set timestamps
+	for _, key := range keys {
+		treap.Search(key)
+	}
+
+	// Persist the tree
+	err := treap.Persist()
+	if err != nil {
+		t.Fatalf("Failed to persist tree: %v", err)
+	}
+
+	// Record how many nodes are in memory before flush
+	beforeFlush := treap.GetInMemoryNodes()
+	t.Logf("Nodes in memory before flush: %d", len(beforeFlush))
+
+	// Flush all nodes
+	currentTime := currentUnixTime()
+	flushedCount, err := treap.FlushOlderThan(currentTime + 1)
+	if err != nil {
+		t.Fatalf("Failed to flush nodes: %v", err)
+	}
+
+	t.Logf("Flushed %d nodes", flushedCount)
+
+	// Verify fewer nodes are in memory
+	afterFlush := treap.GetInMemoryNodes()
+	t.Logf("Nodes in memory after flush: %d", len(afterFlush))
+
+	if len(afterFlush) >= len(beforeFlush) {
+		t.Errorf("Expected fewer nodes after flush. Before: %d, After: %d", len(beforeFlush), len(afterFlush))
+	}
+
+	// Search for a subset of keys - they should be reloaded from disk
+	searchIndices := []int{5, 10, 15}
+	for _, idx := range searchIndices {
+		node := treap.Search(keys[idx])
+		if node == nil {
+			t.Errorf("Expected to find key %d after flush and reload", *keys[idx])
+		} else {
+			pNode := node.(*PersistentPayloadTreapNode[IntKey, MockPayload])
+			if pNode.GetPayload().Data != payloads[idx].Data {
+				t.Errorf("Expected payload %s for key %d, got %s", payloads[idx].Data, *keys[idx], pNode.GetPayload().Data)
+			}
+			// Verify the timestamp was updated by the search
+			if pNode.GetLastAccessTime() == 0 {
+				t.Errorf("Expected timestamp to be set after reload for key %d", *keys[idx])
+			}
+		}
+	}
+
+	// Now we should have more nodes in memory again (the ones we just searched for)
+	afterSearch := treap.GetInMemoryNodes()
+	t.Logf("Nodes in memory after searching: %d", len(afterSearch))
+
+	if len(afterSearch) <= len(afterFlush) {
+		t.Logf("Note: Expected more nodes after searching, but got %d (was %d). This may be OK depending on tree structure.", len(afterSearch), len(afterFlush))
+	}
+}
+
+func TestPersistentPayloadTreapFlushWithNoNodes(t *testing.T) {
+	store := setupTestStore(t)
+	defer store.Close()
+
+	treap := NewPersistentPayloadTreap[IntKey, MockPayload](IntLess, (*IntKey)(new(int32)), store)
+
+	// Try to flush when there are no nodes
+	currentTime := currentUnixTime()
+	flushedCount, err := treap.FlushOlderThan(currentTime)
+	if err != nil {
+		t.Fatalf("Expected no error when flushing empty tree, got: %v", err)
+	}
+
+	if flushedCount != 0 {
+		t.Errorf("Expected to flush 0 nodes from empty tree, got %d", flushedCount)
+	}
+}
+
+func TestPersistentPayloadTreapFlushNoneOlderThan(t *testing.T) {
+	store := setupTestStore(t)
+	defer store.Close()
+
+	treap := NewPersistentPayloadTreap[IntKey, MockPayload](IntLess, (*IntKey)(new(int32)), store)
+
+	// Insert keys
+	keys := []*IntKey{
+		(*IntKey)(new(int32)),
+		(*IntKey)(new(int32)),
+	}
+	*keys[0] = 10
+	*keys[1] = 20
+
+	payloads := []MockPayload{
+		{Data: "payload_10"},
+		{Data: "payload_20"},
+	}
+
+	for i, key := range keys {
+		treap.Insert(key, payloads[i])
+	}
+
+	// Search to set timestamps
+	for _, key := range keys {
+		treap.Search(key)
+	}
+
+	// Persist
+	err := treap.Persist()
+	if err != nil {
+		t.Fatalf("Failed to persist tree: %v", err)
+	}
+
+	// Try to flush with a cutoff time in the past (no nodes should be flushed)
+	pastTime := currentUnixTime() - 3600 // 1 hour ago
+	flushedCount, err := treap.FlushOlderThan(pastTime)
+	if err != nil {
+		t.Fatalf("Failed to flush: %v", err)
+	}
+
+	if flushedCount != 0 {
+		t.Errorf("Expected to flush 0 nodes (all newer than cutoff), got %d", flushedCount)
+	}
+
+	// All nodes should still be in memory
+	inMemoryNodes := treap.GetInMemoryNodes()
+	if len(inMemoryNodes) != len(keys) {
+		t.Errorf("Expected %d nodes still in memory, got %d", len(keys), len(inMemoryNodes))
 	}
 }

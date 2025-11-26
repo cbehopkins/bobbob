@@ -1,7 +1,7 @@
 package testutil
 
 import (
-	cryptorand "crypto/rand"
+	"math/rand"
 	"testing"
 )
 
@@ -10,10 +10,7 @@ func RandomBytes(tb testing.TB, length int) []byte {
 	tb.Helper()
 
 	data := make([]byte, length)
-	_, err := cryptorand.Read(data)
-	if err != nil {
-		tb.Fatalf("failed to generate random bytes: %v", err)
-	}
+	rand.Read(data)
 	return data
 }
 
