@@ -11,33 +11,50 @@ var (
 	objNotPreAllocated = ObjectId(-3)
 )
 
+// IsValidObjectId reports whether the given ObjectId is valid.
+// Object 0 is reserved for the store's internal use (typically a config table),
+// so valid IDs must be greater than 0.
 func IsValidObjectId(objId ObjectId) bool {
-	// Note object 0 is reserved for a store's internal use
-	// usually this will be used as some sort of config table
-	// for that is in the store
 	return objId > 0
 }
 
 // Finisher is a callback that must be called when you have finished
-// With the request in question
+// with the associated I/O operation. It releases resources and ensures
+// data is properly flushed or locks are released.
 type Finisher func() error
 
-// ObjReader is an interface for getting an io.Reader for an object
+// ObjReader provides read access to stored objects.
 type ObjReader interface {
+	// LateReadObj returns a reader for the object with the given ID.
+	// The Finisher must be called when reading is complete.
 	LateReadObj(id ObjectId) (io.Reader, Finisher, error)
 }
+
+// ObjWriter provides write access to stored objects.
 type ObjWriter interface {
+	// LateWriteNewObj creates a new object of the given size and returns
+	// its ID and a writer. The Finisher must be called when writing is complete.
 	LateWriteNewObj(size int) (ObjectId, io.Writer, Finisher, error)
+	// WriteToObj returns a writer for an existing object.
+	// The Finisher must be called when writing is complete.
 	WriteToObj(objectId ObjectId) (io.Writer, Finisher, error)
 }
+
+// Storer is the primary interface for object storage.
+// It provides methods to create, read, write, and delete objects.
 type Storer interface {
+	// NewObj allocates a new object of the given size and returns its ID.
 	NewObj(size int) (ObjectId, error)
+	// DeleteObj removes the object with the given ID.
 	DeleteObj(objId ObjectId) error
+	// Close closes the store and releases all resources.
 	Close() error
 	ObjReader
 	ObjWriter
 }
 
+// ObjectInfo contains metadata about a stored object,
+// including its file offset and size in bytes.
 type ObjectInfo struct {
 	Offset FileOffset
 	Size   int
@@ -66,9 +83,9 @@ func WriteNewObjFromBytes(s Storer, data []byte) (ObjectId, error) {
 	return objId, err
 }
 
-// WriteBytesToObj writes a byte slice to an existing object in the store
-// It is preferred to create a new object, write to it and then delete the old object
-// This allows for less risk of file corruption
+// WriteBytesToObj writes a byte slice to an existing object in the store.
+// It is preferred to create a new object, write to it, and then delete the old object.
+// This allows for less risk of file corruption.
 func WriteBytesToObj(s Storer, data []byte, objectId ObjectId) error {
 	writer, closer, err := s.WriteToObj(objectId)
 	if err != nil {
@@ -86,6 +103,7 @@ func WriteBytesToObj(s Storer, data []byte, objectId ObjectId) error {
 	return nil
 }
 
+// ReadBytesFromObj reads all bytes from an object in the store.
 func ReadBytesFromObj(s Storer, objId ObjectId) ([]byte, error) {
 	objReader, finisher, err := s.LateReadObj(objId)
 	if err != nil {

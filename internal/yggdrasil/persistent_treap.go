@@ -63,6 +63,8 @@ func (n *PersistentTreapNode[T]) newFromObjectId(objId store.ObjectId) (*Persist
 	return tmp, nil
 }
 
+// NewFromObjectId creates a PersistentTreapNode by loading it from the store.
+// It reads the node data from the given ObjectId and deserializes it.
 func NewFromObjectId[T any](objId store.ObjectId, parent *PersistentTreap[T], stre store.Storer) (*PersistentTreapNode[T], error) {
 	tmp := NewPersistentTreapNode[T](parent.keyTemplate.New(), 0, stre, parent)
 	err := store.ReadGeneric(stre, tmp, objId)
@@ -139,6 +141,8 @@ func (n *PersistentTreapNode[T]) sizeInBytes() int {
 	return keySize + prioritySize + leftSize + rightSize + selfSize
 }
 
+// PersistentTreapObjectSizes returns the standard object sizes used by persistent treap nodes.
+// This is used by allocators to pre-allocate blocks of the right sizes for efficient storage.
 func PersistentTreapObjectSizes() []int {
 	n := &PersistentTreapNode[any]{}
 	return []int{
@@ -147,7 +151,9 @@ func PersistentTreapObjectSizes() []int {
 	}
 }
 
-// ObjectId returns the object ID of the node, allocating one if necessary.
+// ObjectId returns the ObjectId of this node in the store.
+// If the node hasn't been persisted yet, it allocates a new object.
+// FIXME: Refactor method signature to return an error instead of panicking.
 func (n *PersistentTreapNode[T]) ObjectId() store.ObjectId {
 	if n == nil {
 		return store.ObjNotAllocated
@@ -163,12 +169,14 @@ func (n *PersistentTreapNode[T]) ObjectId() store.ObjectId {
 	return n.objectId
 }
 
-// SetObjectId sets the object ID of the node.
+// SetObjectId sets the ObjectId for this node.
+// This is typically used when loading a node from the store.
 func (n *PersistentTreapNode[T]) SetObjectId(id store.ObjectId) {
 	n.objectId = id
 }
 
-// Persist the node and its children to the store.
+// Persist saves this node and its children to the store.
+// It recursively persists child nodes that haven't been saved yet.
 func (n *PersistentTreapNode[T]) Persist() error {
 	if n == nil {
 		return nil
@@ -215,7 +223,9 @@ func (n *PersistentTreapNode[T]) flushChild(child *TreapNodeInterface[T], childO
 	return nil
 }
 
-// Flush the node and its children from memory.
+// Flush saves this node and its children to the store, then removes them from memory.
+// This is used to reduce memory usage while keeping the tree accessible via the store.
+// The node can be reloaded later using its ObjectId.
 func (n *PersistentTreapNode[T]) Flush() error {
 	if n == nil {
 		return nil
@@ -362,11 +372,14 @@ func (n *PersistentTreapNode[T]) unmarshal(data []byte, key PersistentKey[T]) er
 	return nil
 }
 
+// Unmarshal deserializes this node from bytes.
+// It populates the key, priority, and child ObjectIds.
 func (n *PersistentTreapNode[T]) Unmarshal(data []byte) error {
 	return n.unmarshal(data, n.parent.keyTemplate)
 }
 
-// PersistentTreap represents a persistent treap data structure.
+// PersistentTreap is a treap that stores its nodes in a persistent store.
+// It extends the in-memory Treap with the ability to save and load nodes from disk.
 type PersistentTreap[T any] struct {
 	Treap[T]
 	keyTemplate PersistentKey[T]

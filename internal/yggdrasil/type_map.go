@@ -42,12 +42,17 @@ type (
 	}
 )
 
+// TypeMap maintains a bidirectional mapping between type names and short codes.
+// It allows efficient serialization of type information by using compact short codes
+// instead of full type names.
 type TypeMap struct {
 	Types         map[string]typeTuple     `json:"types"`
 	ShortMap      map[ShortCodeType]string `json:"short_map"`
 	NextShortCode ShortCodeType            `json:"next_short_code"`
 }
 
+// NewTypeMap creates a new TypeMap pre-populated with common built-in types.
+// This includes basic integer types, strings, and the key types used in yggdrasil.
 func NewTypeMap() *TypeMap {
 	tmp := &TypeMap{}
 	tmp.AddType(tmp)
@@ -63,7 +68,9 @@ func NewTypeMap() *TypeMap {
 	return tmp
 }
 
-// AddType adds a new type to the type map
+// AddType registers a new type in the type map with a unique short code.
+// If the type is already registered, it updates the type reference.
+// Each type is assigned a monotonically increasing short code.
 func (tm *TypeMap) AddType(t any) {
 	if tm.Types == nil {
 		tm.Types = make(map[string]typeTuple)

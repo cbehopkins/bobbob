@@ -9,20 +9,23 @@ import (
 	"sync"
 )
 
-// ObjectInfo is an identifier unique within the store of an object
-// A user refers to an object by its ObjectId
-// It is up to the store, how this is handled internally
+// ObjectId is an identifier unique within the store for an object.
+// A user refers to an object by its ObjectId.
+// It is up to the store how this is handled internally.
 type ObjectId int64
 
-// It must satisfy the PersistentKey interface
+// SizeInBytes returns the number of bytes required to marshal this ObjectId.
+// It must satisfy the PersistentKey interface.
 func (id ObjectId) SizeInBytes() int {
 	return 8
 }
 
+// Equals reports whether this ObjectId equals another.
 func (id ObjectId) Equals(other ObjectId) bool {
 	return id == other
 }
 
+// FileOffset represents a byte offset within a file.
 type FileOffset int64
 
 // Marshal converts the ObjectId into a fixed length bytes encoding
@@ -41,13 +44,14 @@ func (id *ObjectId) Unmarshal(data []byte) error {
 	return nil
 }
 
-// PreMarshal specifies how many objects of how many bytes are
-// needed to store the ObjectId
+// PreMarshal returns the sizes of sub-objects needed to store the ObjectId.
+// For ObjectId, this is a single 8-byte value.
 func (id ObjectId) PreMarshal() []int {
 	return []int{8}
 }
 
-// ObjectIdLut represents a lookup table of ObjectIds
+// ObjectIdLut represents a lookup table of ObjectIds.
+// It provides marshaling support for a slice of ObjectIds.
 type ObjectIdLut struct {
 	Ids []ObjectId
 }
@@ -79,17 +83,22 @@ func (lut *ObjectIdLut) Unmarshal(data []byte) error {
 	return nil
 }
 
+// ObjectMap maps ObjectIds to ObjectInfo, providing thread-safe access
+// to object metadata including file offset and size.
 type ObjectMap struct {
 	mu    sync.RWMutex
 	store map[ObjectId]ObjectInfo
 }
 
+// NewObjectMap creates a new empty ObjectMap.
 func NewObjectMap() *ObjectMap {
 	return &ObjectMap{
 		store: make(map[ObjectId]ObjectInfo),
 	}
 }
 
+// Get retrieves the ObjectInfo for the given ObjectId.
+// Returns the info and a boolean indicating whether the object was found.
 func (om *ObjectMap) Get(id ObjectId) (ObjectInfo, bool) {
 	om.mu.RLock()
 	defer om.mu.RUnlock()
@@ -97,18 +106,23 @@ func (om *ObjectMap) Get(id ObjectId) (ObjectInfo, bool) {
 	return obj, found
 }
 
+// Set stores the ObjectInfo for the given ObjectId.
 func (om *ObjectMap) Set(id ObjectId, info ObjectInfo) {
 	om.mu.Lock()
 	defer om.mu.Unlock()
 	om.store[id] = info
 }
 
+// Delete removes the ObjectId from the map.
 func (om *ObjectMap) Delete(id ObjectId) {
 	om.mu.Lock()
 	defer om.mu.Unlock()
 	delete(om.store, id)
 }
 
+// GetAndDelete atomically retrieves and removes an object.
+// The callback is invoked with the ObjectInfo before deletion.
+// Returns the info and a boolean indicating whether the object was found.
 func (om *ObjectMap) GetAndDelete(id ObjectId, callback func(ObjectInfo)) (ObjectInfo, bool) {
 	om.mu.Lock()
 	defer om.mu.Unlock()
@@ -120,6 +134,7 @@ func (om *ObjectMap) GetAndDelete(id ObjectId, callback func(ObjectInfo)) (Objec
 	return obj, found
 }
 
+// Serialize encodes the ObjectMap to bytes using gob encoding.
 func (om *ObjectMap) Serialize() ([]byte, error) {
 	om.mu.RLock()
 	defer om.mu.RUnlock()
@@ -132,6 +147,7 @@ func (om *ObjectMap) Serialize() ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
+// Deserialize decodes the ObjectMap from bytes using gob encoding.
 func (om *ObjectMap) Deserialize(data []byte) error {
 	om.mu.Lock()
 	defer om.mu.Unlock()
@@ -140,14 +156,19 @@ func (om *ObjectMap) Deserialize(data []byte) error {
 	return decoder.Decode(&om.store)
 }
 
+// Marshal encodes the ObjectMap to bytes (alias for Serialize).
 func (om *ObjectMap) Marshal() ([]byte, error) {
 	return om.Serialize()
 }
 
+// Unmarshal decodes the ObjectMap from bytes (alias for Deserialize).
 func (om *ObjectMap) Unmarshal(data []byte) error {
 	return om.Deserialize(data)
 }
 
+// FindGaps returns a channel that yields gaps (unused regions) in the file.
+// The gaps are computed by sorting all object offsets and finding regions
+// between consecutive objects.
 func (om *ObjectMap) FindGaps() <-chan Gap {
 	gapChan := make(chan Gap)
 	go func() {

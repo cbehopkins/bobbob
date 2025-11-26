@@ -5,18 +5,23 @@ import (
 	"errors"
 )
 
+// Priority represents the heap priority for a node in the treap.
+// Higher priority nodes are rotated towards the root during insertion.
 type Priority uint32
 
+// SizeInBytes returns the size of the priority value in bytes.
 func (p Priority) SizeInBytes() int {
 	return 4
 }
 
+// Marshal encodes the priority to a 4-byte little-endian representation.
 func (p Priority) Marshal() ([]byte, error) {
 	buf := make([]byte, 4)
 	binary.LittleEndian.PutUint32(buf, uint32(p))
 	return buf, nil
 }
 
+// Unmarshal decodes the priority from a 4-byte little-endian representation.
 func (p *Priority) Unmarshal(data []byte) error {
 	if len(data) < 4 {
 		return errors.New("invalid data length for Priority")
@@ -25,7 +30,8 @@ func (p *Priority) Unmarshal(data []byte) error {
 	return nil
 }
 
-// TreapNodeInterface defines the interface for a node in the treap.
+// TreapNodeInterface defines the interface for a node in the treap data structure.
+// A treap combines properties of a binary search tree (ordered by key) and a heap (ordered by priority).
 type TreapNodeInterface[T any] interface {
 	GetKey() Key[T]
 	GetPriority() Priority
@@ -37,7 +43,8 @@ type TreapNodeInterface[T any] interface {
 	IsNil() bool
 }
 
-// TreapNode represents a node in the treap.
+// TreapNode represents a node in an in-memory treap.
+// It maintains both a key (for BST ordering) and a priority (for heap ordering).
 type TreapNode[T any] struct {
 	key      Key[T]
 	priority Priority
@@ -55,6 +62,7 @@ func (n *TreapNode[T]) GetPriority() Priority {
 	return n.priority
 }
 
+// SetPriority updates the priority of the node.
 func (n *TreapNode[T]) SetPriority(p Priority) {
 	n.priority = p
 }
@@ -85,6 +93,7 @@ func (n *TreapNode[T]) IsNil() bool {
 }
 
 // NewTreapNode creates a new TreapNode with the given key and priority.
+// NewTreapNode creates a new treap node with the given key and priority.
 func NewTreapNode[T any](key Key[T], priority Priority) *TreapNode[T] {
 	return &TreapNode[T]{
 		key:      key,

@@ -9,17 +9,21 @@ import (
 	"bobbob/internal/store"
 )
 
-// Chain represents a list of links with a callback to create new links.
+// Chain represents a doubly-linked list of Link nodes.
+// It maintains references to head and tail, and provides methods
+// to insert, delete, and sort elements across links.
 type Chain struct {
 	createLink func() *Link
 	less       func(i, j any) bool
 	store      store.Storer
 	head       *Link
 	tail       *Link
-	UnSorted   bool // New member to specify if the chain is unsorted
+	UnSorted   bool // UnSorted specifies if the chain maintains sorted order
 }
 
-// NewChain creates a new Chain with the given callback to create new links and a less function.
+// NewChain creates a new Chain with the given link factory and comparison function.
+// The createLink function is called when new links need to be created.
+// The less function is used to maintain sorted order of elements.
 func NewChain(createLink func() *Link, less func(i, j any) bool) *Chain {
 	return &Chain{
 		createLink: createLink,
@@ -27,7 +31,8 @@ func NewChain(createLink func() *Link, less func(i, j any) bool) *Chain {
 	}
 }
 
-// AddLink adds a new link to the chain.
+// AddLink appends a link to the end of the chain.
+// If link is nil, a new link is created using the chain's createLink function.
 func (c *Chain) AddLink(link *Link) *Link {
 	if link == nil {
 		link = c.createLink()
@@ -44,7 +49,8 @@ func (c *Chain) AddLink(link *Link) *Link {
 	return link
 }
 
-// DeleteLink removes a link from the chain.
+// DeleteLink removes a link from the chain and updates the prev/next pointers
+// of adjacent links. It also calls Delete on the link to clean up resources.
 func (c *Chain) DeleteLink(link *Link) error {
 	if link.prev != nil {
 		link.prev.next = link.next
@@ -62,7 +68,8 @@ func (c *Chain) DeleteLink(link *Link) error {
 	return link.Delete()
 }
 
-// SortMultiple sorts elements across multiple links and creates a new list of links with the sorted elements.
+// SortMultiple takes multiple links, merges all their elements, sorts them,
+// and redistributes them into a new list of links respecting maxSize constraints.
 func (c *Chain) SortMultiple(links []*Link) []*Link {
 	var allElements []any
 	for _, link := range links {
@@ -91,7 +98,9 @@ func (c *Chain) SortMultiple(links []*Link) []*Link {
 	return sortedLinks
 }
 
-// InsertElement inserts an element into the correct link in the chain.
+// InsertElement inserts an element into the appropriate link in the chain.
+// If the chain is sorted, it finds the correct position based on the less function.
+// If unsorted, it inserts into the head or tail link depending on available space.
 func (c *Chain) InsertElement(element any) error {
 	if c.head == nil {
 		// If the chain is empty, create a new link and add the element.
@@ -152,7 +161,9 @@ func (c *Chain) InsertElement(element any) error {
 // Therefore let's break this problem down. I'm assuming we are using our store to store this. Therefore our Link will need two new fields, prevFileObjId and nextFileObjId. These will be of type ObjectId
 // We will also need an elementsFileObjIds - which is an
 
-// Link represents a slice of elements with a maximum size and pointers to the previous and next links.
+// Link represents a node in a Chain containing a slice of elements.
+// Each link has a maximum capacity and maintains pointers to prev/next links.
+// Links can be persisted to a store with their elements.
 type Link struct {
 	elements           []any
 	maxSize            int
@@ -165,6 +176,7 @@ type Link struct {
 }
 
 // NewLink creates a new Link with the given maximum size.
+// Returns nil if maxSize is invalid (<= 0 or > 2^31-1).
 func NewLink(maxSize int) *Link {
 	if maxSize <= 0 {
 		return nil
@@ -195,13 +207,15 @@ func (l *Link) markStale() {
 	l.objectId = nil
 }
 
-// AddElement adds an element to the link. If the link exceeds its maximum size, it creates a new link and adds the element there.
+// AddElement adds an element to the link.
+// If the link is at capacity, a new link is created and added to the chain.
 func (l *Link) AddElement(element any) error {
 	return l.AddElementAndObj(element, store.ObjNotAllocated)
 }
 
-// AddElement adds an element to the link. If the link exceeds its maximum size, it creates a new link and adds the element there.
-// This allows you to specify the OnjectIfd in the store at the same time
+// AddElementAndObj adds an element to the link with an associated ObjectId.
+// This allows you to specify the ObjectId in the store at the same time.
+// If the link is at capacity, a new link is created.
 func (l *Link) AddElementAndObj(element any, objId store.ObjectId) error {
 	l.markStale()
 	if len(l.elements) >= l.maxSize {
@@ -219,8 +233,9 @@ func (l *Link) AddElementAndObj(element any, objId store.ObjectId) error {
 	return nil
 }
 
-// DeleteElement deletes an element from the link by index. Returns an error if the index is out of range.
-// If the link has no elements remaining after deletion, it removes the link from the chain.
+// DeleteElement removes the element at the given index.
+// Returns an error if the index is out of range.
+// If the link becomes empty after deletion, it is removed from the chain.
 func (l *Link) DeleteElement(index int) error {
 	l.markStale()
 	if index < 0 || index >= len(l.elements) {
@@ -237,7 +252,9 @@ func (l *Link) DeleteElement(index int) error {
 	return nil
 }
 
-// Sort the elements within the link.
+// Sort sorts the elements within the link using the provided less function.
+// If the link is already sorted or less is nil, it uses the chain's less function.
+// This also sorts the corresponding elementsFileObjIds.
 func (l *Link) Sort(less func(i, j any) bool) {
 	if l.sorted {
 		return
@@ -277,7 +294,8 @@ func (l *Link) Sort(less func(i, j any) bool) {
 	l.elementsFileObjIds = sortedElementsFileObjIds
 }
 
-// Min returns the first element in the link
+// Min returns the smallest element in the link.
+// The link is sorted if necessary before returning the minimum.
 func (l *Link) Min() (any, error) {
 	if !l.sorted {
 		l.Sort(nil)
@@ -288,7 +306,8 @@ func (l *Link) Min() (any, error) {
 	return l.elements[0], nil
 }
 
-// Max returns the last element in the link
+// Max returns the largest element in the link.
+// The link is sorted if necessary before returning the maximum.
 func (l *Link) Max() (any, error) {
 	if !l.sorted {
 		l.Sort(nil)
@@ -314,6 +333,8 @@ func (l Link) bytesNeeded() int {
 	return bytesForElements + bytesForElementLen + bytesForMaxSize + bytesForPrev + bytesForNext + bytesForSelf
 }
 
+// ChildObjects returns the ObjectIds of all allocated elements in the link.
+// It excludes any elements that have not yet been allocated (ObjNotAllocated).
 func (l *Link) ChildObjects() []store.ObjectId {
 	objs := make([]store.ObjectId, 0, l.maxSize)
 	for _, objId := range l.elementsFileObjIds {
@@ -324,6 +345,8 @@ func (l *Link) ChildObjects() []store.ObjectId {
 	return objs
 }
 
+// Delete removes all child objects from the store.
+// This should be called when removing the link from the chain.
 func (l *Link) Delete() error {
 	for _, obj := range l.ChildObjects() {
 		err := l.chain.store.DeleteObj(obj)
@@ -334,6 +357,8 @@ func (l *Link) Delete() error {
 	return nil
 }
 
+// ObjectId returns the ObjectId for this link in the store.
+// If the link hasn't been persisted yet, it allocates a new object.
 func (l *Link) ObjectId() (store.ObjectId, error) {
 	if l.objectId != nil {
 		return *l.objectId, nil
@@ -359,7 +384,8 @@ func (l *Link) writeElements() error {
 	return nil
 }
 
-// Marshal the striuct into a fized size byte array
+// Marshal serializes the link into a fixed-size byte array.
+// This includes the element ObjectIds, maxSize, and prev/next/self ObjectIds.
 func (l *Link) Marshal() ([]byte, error) {
 	// Ensure elementsFileObjIds are populated
 	if err := l.writeElements(); err != nil {
@@ -451,6 +477,9 @@ func (l *Link) unmarshal(data []byte) error {
 	return nil
 }
 
+// Unmarshal deserializes the link from a byte array and loads all elements.
+// The newObj function is called to create instances for each element,
+// which are then populated by reading from the store.
 func (l *Link) Unmarshal(data []byte, newObj func() any) error {
 	err := l.unmarshal(data)
 	if err != nil {

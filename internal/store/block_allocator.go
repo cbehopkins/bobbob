@@ -15,12 +15,13 @@ type blockAllocator struct {
 	allAllocated       bool
 }
 
-// NewBlockAllocator creates a new block allocator
-// This allocator is useful if you know the size of the blocks you want to allocate
-// Rather than maintaing an allocation map, it's simply a list of booleans
-// So far smaller
-// blockSize is the size of each block in bytes
-// blockCount is the number of blocks in each allocator
+// NewBlockAllocator creates a new block allocator for fixed-size blocks.
+// This allocator is useful when you know the size of the blocks you want to allocate.
+// It uses a simple boolean array instead of an allocation map, making it more space-efficient.
+// blockSize is the size of each block in bytes.
+// blockCount is the number of blocks in the allocator.
+// startingFileOffset is the file offset where the first block begins.
+// startingObjectId is the ObjectId for the first block.
 func NewBlockAllocator(blockSize, blockCount int, startingFileOffset FileOffset, startingObjectId ObjectId) *blockAllocator {
 	allocatedList := make([]bool, blockCount)
 	return &blockAllocator{
@@ -99,11 +100,11 @@ type multiBlockAllocator struct {
 	postParentAllocate func(ObjectId, FileOffset) error
 }
 
-// NewMultiBlockAllocator creates a new multi-block allocator
-// This allocator is useful if you know the size of the blocks you want to allocate
-// blockSize is the size of each block in bytes
-// blockCount is the number of blocks in each allocator
-// parent is the parent allocator that will be used to allocate new blocks
+// NewMultiBlockAllocator creates a new multi-block allocator that manages multiple block allocators.
+// When all existing block allocators are full, it automatically allocates a new one from the parent.
+// blockSize is the size of each block in bytes.
+// blockCount is the number of blocks in each sub-allocator.
+// parent is the parent allocator used to allocate new block regions.
 func NewMultiBlockAllocator(blockSize, blockCount int, parent Allocator) *multiBlockAllocator {
 	return &multiBlockAllocator{
 		blockSize:  blockSize,
@@ -254,6 +255,11 @@ type omniBlockAllocator struct {
 	postFree     func(fileOffset FileOffset, size int) error
 }
 
+// NewOmniBlockAllocator creates an allocator that manages multiple block sizes.
+// It maintains a separate block allocator for each requested size.
+// blockSize is a slice of different block sizes to support.
+// blockCount is the number of blocks in each sub-allocator.
+// parent is the fallback allocator for sizes not in the blockSize slice.
 func NewOmniBlockAllocator(blockSize []int, blockCount int, parent Allocator) *omniBlockAllocator {
 	blockMap := make(map[int]*blockAllocator)
 	for i, size := range blockSize {

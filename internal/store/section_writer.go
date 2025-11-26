@@ -27,6 +27,7 @@ func NewSectionWriter(writer io.WriterAt, offset, limit int64) *SectionWriter {
 }
 
 // Write writes data to the underlying writer up to the limit.
+// Returns ErrWriteLimitExceeded if the write would exceed the section boundary.
 func (sw *SectionWriter) Write(p []byte) (int, error) {
 	if sw.pos >= sw.limit {
 		return 0, ErrWriteLimitExceeded
@@ -42,7 +43,8 @@ func (sw *SectionWriter) Write(p []byte) (int, error) {
 	return n, err
 }
 
-// WriteAt writes data to the underlying writer at a specific offset up to the limit.
+// WriteAt writes data to the underlying writer at a specific offset within the section.
+// Returns ErrWriteLimitExceeded if the write would exceed the section boundary.
 func (sw *SectionWriter) WriteAt(p []byte, off int64) (int, error) {
 	if off >= sw.limit {
 		return 0, ErrWriteLimitExceeded

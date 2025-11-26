@@ -81,4 +81,3 @@ func CreateTempFile(tb testing.TB, pattern string) (filePath string, cleanup fun
 
 	return filePath, cleanup
 }
-

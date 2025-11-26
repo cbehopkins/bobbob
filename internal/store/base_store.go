@@ -5,18 +5,23 @@ import (
 	"errors"
 	"io"
 	"os"
+	"sync"
 )
 
 var errStoreNotInitialized = errors.New("store is not initialized")
 
 type baseStore struct {
+	mu        sync.RWMutex // Protects file operations and store state
 	filePath  string
 	file      *os.File
 	objectMap *ObjectMap
 	allocator Allocator
+	closed    bool // Track if store is closed
 }
 
-// NewBasicStore creates a new Store and initializes it with a basic ObjectMap
+// NewBasicStore creates a new baseStore at the given file path.
+// If the file already exists, it loads the existing store.
+// Otherwise, it creates a new file and initializes an empty store.
 func NewBasicStore(filePath string) (*baseStore, error) {
 	if _, err := os.Stat(filePath); err == nil {
 		return LoadBaseStore(filePath)
@@ -49,6 +54,8 @@ func NewBasicStore(filePath string) (*baseStore, error) {
 	return store, nil
 }
 
+// LoadBaseStore loads an existing baseStore from the given file path.
+// It reads the object map from the file and initializes the allocator.
 func LoadBaseStore(filePath string) (*baseStore, error) {
 	file, err := os.OpenFile(filePath, os.O_RDWR, 0o666)
 	if err != nil {
@@ -103,13 +110,18 @@ func LoadBaseStore(filePath string) (*baseStore, error) {
 
 // Helper function to check if the file is initialized
 func (s *baseStore) checkFileInitialized() error {
+	// Caller should hold lock
 	if s.file == nil {
 		return errStoreNotInitialized
+	}
+	if s.closed {
+		return errors.New("store is closed")
 	}
 	return nil
 }
 
 // Helper function to update the initial offset in the file
+// Caller must hold the write lock
 func (s *baseStore) updateInitialOffset(fileOffset FileOffset) error {
 	objOffset := int64(fileOffset)
 	offsetBytes := make([]byte, 8)
@@ -127,6 +139,9 @@ func (s *baseStore) updateInitialOffset(fileOffset FileOffset) error {
 // NewObj is the externally visible interface when you want to just allocate an object
 // But you don't want to write to it immediately
 func (s *baseStore) NewObj(size int) (ObjectId, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	if err := s.checkFileInitialized(); err != nil {
 		return 0, err
 	}
@@ -143,6 +158,9 @@ func (s *baseStore) NewObj(size int) (ObjectId, error) {
 // LateWriteNewObj allows you to allocate an object and write to it later
 // This is useful when you want to write a large object and you don't want to keep it in memory
 func (s *baseStore) LateWriteNewObj(size int) (ObjectId, io.Writer, Finisher, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	if err := s.checkFileInitialized(); err != nil {
 		return ObjNotAllocated, nil, nil, err
 	}
@@ -164,6 +182,9 @@ func (s *baseStore) LateWriteNewObj(size int) (ObjectId, io.Writer, Finisher, er
 // Only one writer should be allowed to write to an object at a time
 // If multiple writers try to write, then they (FIXME will be one implemented) queued
 func (s *baseStore) WriteToObj(objectId ObjectId) (io.Writer, Finisher, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
 	if err := s.checkFileInitialized(); err != nil {
 		return nil, nil, err
 	}
@@ -196,6 +217,9 @@ func (s *baseStore) LateReadObj(objId ObjectId) (io.Reader, Finisher, error) {
 }
 
 func (s *baseStore) lateReadObj(objId ObjectId) (io.Reader, Finisher, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
 	if err := s.checkFileInitialized(); err != nil {
 		return nil, nil, err
 	}
@@ -215,6 +239,9 @@ func (s *baseStore) DeleteObj(objId ObjectId) error {
 	// And then we recursively delete them
 	// However we canly do that on the Unmarshalled type - so we do not have that information here
 	// Therefore complex Objects need to implement a delete method
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	if err := s.checkFileInitialized(); err != nil {
 		return err
 	}
@@ -231,6 +258,9 @@ func (s *baseStore) DeleteObj(objId ObjectId) error {
 
 // Sync flushes the file to disk
 func (s *baseStore) Sync() error {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
 	if err := s.checkFileInitialized(); err != nil {
 		return err
 	}
@@ -239,9 +269,16 @@ func (s *baseStore) Sync() error {
 
 // Close closes the store and writes the ObjectMap to disk
 func (s *baseStore) Close() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	if err := s.checkFileInitialized(); err != nil {
 		return err
 	}
+
+	// Mark as closed to prevent further operations
+	s.closed = true
+
 	data, err := s.objectMap.Marshal()
 	if err != nil {
 		return err
