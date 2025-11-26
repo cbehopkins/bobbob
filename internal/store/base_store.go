@@ -136,27 +136,23 @@ func (s *baseStore) updateInitialOffset(fileOffset FileOffset) error {
 	return nil
 }
 
-// NewObj is the externally visible interface when you want to just allocate an object
-// But you don't want to write to it immediately
+// NewObj is a convenience wrapper around LateWriteNewObj that allocates an object
+// without returning a writer. Use this when you want to allocate an object but
+// will write to it later via WriteToObj.
 func (s *baseStore) NewObj(size int) (ObjectId, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if err := s.checkFileInitialized(); err != nil {
-		return 0, err
-	}
-	objId, fileOffset, err := s.allocator.Allocate(size)
+	objId, _, finisher, err := s.LateWriteNewObj(size)
 	if err != nil {
 		return 0, err
 	}
-	objInfo := &ObjectInfo{Offset: fileOffset, Size: size}
-	s.objectMap.Set(objId, *objInfo)
-
+	if finisher != nil {
+		finisher() // Close immediately since we're not using the writer
+	}
 	return objId, nil
 }
 
-// LateWriteNewObj allows you to allocate an object and write to it later
-// This is useful when you want to write a large object and you don't want to keep it in memory
+// LateWriteNewObj is the fundamental allocation method that allocates an object
+// and returns a writer for immediate use. This is the primitive operation;
+// NewObj is a convenience wrapper around this method.
 func (s *baseStore) LateWriteNewObj(size int) (ObjectId, io.Writer, Finisher, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -177,10 +173,11 @@ func (s *baseStore) LateWriteNewObj(size int) (ObjectId, io.Writer, Finisher, er
 	return objId, writer, nil, nil
 }
 
-// WriteToObj writes to an existing object in the store
-// This is something that should be done with extreme caution and avoided where possible
-// Only one writer should be allowed to write to an object at a time
-// If multiple writers try to write, then they (FIXME will be one implemented) queued
+// WriteToObj is a Late method that returns a writer for an existing object.
+// This should be done with extreme caution and avoided where possible.
+// Prefer creating a new object, writing to it, then deleting the old one.
+// Only one writer should be allowed to write to an object at a time.
+// If multiple writers try to write, then they (FIXME will be one implemented) queued.
 func (s *baseStore) WriteToObj(objectId ObjectId) (io.Writer, Finisher, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -207,8 +204,8 @@ func (s *baseStore) createCloser(objectId ObjectId) func() error {
 	}
 }
 
-// LateReadObj reads an object from the store
-// Returns a reader so as to not force large objects into memory
+// LateReadObj is the fundamental read method that returns a reader for streaming access.
+// This is the primitive operation; ReadBytesFromObj is a convenience wrapper.
 func (s *baseStore) LateReadObj(objId ObjectId) (io.Reader, Finisher, error) {
 	if !IsValidObjectId(objId) {
 		return nil, nil, errors.New("invalid objectId")

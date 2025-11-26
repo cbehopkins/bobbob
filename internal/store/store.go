@@ -1,3 +1,58 @@
+// Package store provides a persistent binary object storage system.
+//
+// # Architecture
+//
+// The store API is built on a "Late method" pattern where streaming I/O
+// primitives (methods prefixed with "Late") form the foundation, and
+// convenience wrappers are built on top for common use cases.
+//
+// # Late Methods (Fundamental Primitives)
+//
+// Late methods provide streaming I/O with explicit resource management:
+//   - LateWriteNewObj: allocate and stream data to a new object
+//   - LateReadObj: stream data from an existing object
+//   - WriteToObj: stream data to update an existing object
+//
+// All Late methods return a Finisher callback that must be called when
+// the I/O operation completes to properly release resources.
+//
+// # Convenience Wrappers
+//
+// Built on top of Late methods for common patterns:
+//   - NewObj: allocate without immediate write (wraps LateWriteNewObj)
+//   - ReadBytesFromObj: read entire object into memory (wraps LateReadObj)
+//   - WriteNewObjFromBytes: write in-memory data (wraps LateWriteNewObj)
+//
+// # Usage Example
+//
+//	// Create a store
+//	store, err := NewBasicStore("data.blob")
+//	if err != nil {
+//	    return err
+//	}
+//	defer store.Close()
+//
+//	// Write using Late method (streaming)
+//	objId, writer, finisher, err := store.LateWriteNewObj(1024)
+//	if err != nil {
+//	    return err
+//	}
+//	defer finisher()
+//	io.Copy(writer, dataSource)
+//
+//	// Write using convenience wrapper (in-memory)
+//	objId, err = WriteNewObjFromBytes(store, []byte("hello"))
+//
+//	// Read using Late method (streaming)
+//	reader, finisher, err := store.LateReadObj(objId)
+//	if err != nil {
+//	    return err
+//	}
+//	defer finisher()
+//	io.Copy(destination, reader)
+//
+//	// Read using convenience wrapper (in-memory)
+//	data, err := ReadBytesFromObj(store, objId)
 package store
 
 import (
@@ -23,32 +78,46 @@ func IsValidObjectId(objId ObjectId) bool {
 // data is properly flushed or locks are released.
 type Finisher func() error
 
-// ObjReader provides read access to stored objects.
-type ObjReader interface {
-	// LateReadObj returns a reader for the object with the given ID.
-	// The Finisher must be called when reading is complete.
-	LateReadObj(id ObjectId) (io.Reader, Finisher, error)
-}
-
-// ObjWriter provides write access to stored objects.
-type ObjWriter interface {
-	// LateWriteNewObj creates a new object of the given size and returns
-	// its ID and a writer. The Finisher must be called when writing is complete.
-	LateWriteNewObj(size int) (ObjectId, io.Writer, Finisher, error)
-	// WriteToObj returns a writer for an existing object.
-	// The Finisher must be called when writing is complete.
-	WriteToObj(objectId ObjectId) (io.Writer, Finisher, error)
-}
-
-// Storer is the primary interface for object storage.
-// It provides methods to create, read, write, and delete objects.
-type Storer interface {
+// BasicStorer provides basic object lifecycle management.
+// It handles allocation, deletion, and closing of the store.
+// NewObj is a convenience wrapper around the Late methods.
+type BasicStorer interface {
 	// NewObj allocates a new object of the given size and returns its ID.
+	// This is a convenience wrapper around LateWriteNewObj for when you don't
+	// need immediate write access.
 	NewObj(size int) (ObjectId, error)
 	// DeleteObj removes the object with the given ID.
 	DeleteObj(objId ObjectId) error
 	// Close closes the store and releases all resources.
 	Close() error
+}
+
+// ObjReader provides streaming read access to stored objects.
+// The Late methods are the fundamental primitives for I/O operations.
+type ObjReader interface {
+	// LateReadObj returns a reader for streaming access to the object.
+	// This is the fundamental read primitive. The Finisher must be called
+	// when reading is complete to release resources.
+	LateReadObj(id ObjectId) (io.Reader, Finisher, error)
+}
+
+// ObjWriter provides streaming write access to stored objects.
+// The Late methods are the fundamental primitives for I/O operations.
+type ObjWriter interface {
+	// LateWriteNewObj is the fundamental allocation and write primitive.
+	// It creates a new object of the given size and returns its ID along with
+	// a writer. The Finisher must be called when writing is complete.
+	LateWriteNewObj(size int) (ObjectId, io.Writer, Finisher, error)
+	// WriteToObj returns a writer for an existing object.
+	// This is a Late method for streaming writes. The Finisher must be called
+	// when writing is complete.
+	WriteToObj(objectId ObjectId) (io.Writer, Finisher, error)
+}
+
+// Storer is the primary interface for object storage.
+// It combines basic lifecycle management with streaming read/write operations.
+type Storer interface {
+	BasicStorer
 	ObjReader
 	ObjWriter
 }
@@ -60,8 +129,11 @@ type ObjectInfo struct {
 	Size   int
 }
 
-// WriteNewObjFromBytes writes a new object to the store from a byte slice
-// This is useful when you have the data in memory and you want to write it to the store
+// WriteNewObjFromBytes is a convenience wrapper around LateWriteNewObj that writes
+// a byte slice from memory to a new object in the store.
+// This is useful when you have the data in memory and want a simple write operation.
+// For large data or streaming scenarios, use LateWriteNewObj directly.
+// If an error occurs during writing, the allocated object is automatically deleted.
 func WriteNewObjFromBytes(s Storer, data []byte) (ObjectId, error) {
 	size := len(data)
 	objId, writer, finisher, err := s.LateWriteNewObj(size)
@@ -74,18 +146,22 @@ func WriteNewObjFromBytes(s Storer, data []byte) (ObjectId, error) {
 
 	n, err := writer.Write(data)
 	if err != nil {
-		return objId, err
+		s.DeleteObj(objId) // Clean up allocated object on write error
+		return 0, err
 	}
 	if n != size {
-		return objId, errors.New("did not write all the data")
+		s.DeleteObj(objId) // Clean up allocated object on incomplete write
+		return 0, errors.New("did not write all the data")
 	}
 
-	return objId, err
+	return objId, nil
 }
 
-// WriteBytesToObj writes a byte slice to an existing object in the store.
+// WriteBytesToObj is a convenience wrapper around WriteToObj that writes a byte slice
+// from memory to an existing object in the store.
 // It is preferred to create a new object, write to it, and then delete the old object.
 // This allows for less risk of file corruption.
+// For large data or streaming scenarios, use WriteToObj directly.
 func WriteBytesToObj(s Storer, data []byte, objectId ObjectId) error {
 	writer, closer, err := s.WriteToObj(objectId)
 	if err != nil {
@@ -103,7 +179,9 @@ func WriteBytesToObj(s Storer, data []byte, objectId ObjectId) error {
 	return nil
 }
 
-// ReadBytesFromObj reads all bytes from an object in the store.
+// ReadBytesFromObj is a convenience wrapper around LateReadObj that reads
+// all bytes from an object into memory.
+// For large objects or streaming scenarios, use LateReadObj directly.
 func ReadBytesFromObj(s Storer, objId ObjectId) ([]byte, error) {
 	objReader, finisher, err := s.LateReadObj(objId)
 	if err != nil {

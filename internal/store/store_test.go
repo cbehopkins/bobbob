@@ -207,6 +207,7 @@ func TestWriteToObj(t *testing.T) {
 		t.Fatalf("expected read data to be %v, got %v", newData, readData[:len(newData)])
 	}
 }
+
 func TestWriteToObjAndVerify(t *testing.T) {
 	dir, store := setupTestStore(t)
 	defer os.RemoveAll(dir)
@@ -281,6 +282,7 @@ func TestWriteToObjAndVerify(t *testing.T) {
 		t.Fatalf("expected read data to be %v, got %v", data2, readData2)
 	}
 }
+
 func TestWriteToObjExceedLimit(t *testing.T) {
 	dir, store := setupTestStore(t)
 	defer os.RemoveAll(dir)
@@ -416,7 +418,6 @@ func mutateOneObject(testObj *TstObject, store *baseStore) error {
 	newData := make([]byte, rand.Intn(testObj.size)+1) // Ensure new data is not larger than the old data
 	cryptorand.Read(newData)
 	writer, closer, err := store.WriteToObj(testObj.id)
-
 	if err != nil {
 		return fmt.Errorf("expected no error, got %v", err)
 	}
@@ -430,7 +431,6 @@ func mutateOneObject(testObj *TstObject, store *baseStore) error {
 	reader, finisher, err := store.LateReadObj(testObj.id)
 	if err != nil {
 		return fmt.Errorf("expected no error reading data, got %v", err)
-
 	}
 	defer finisher()
 	readData := make([]byte, len(newData))
@@ -481,6 +481,7 @@ func TestLoadStore(t *testing.T) {
 		t.Fatalf("expected object size to be %d, got %d", len(data), obj.Size)
 	}
 }
+
 func TestDeleteObj(t *testing.T) {
 	dir, store := setupTestStore(t)
 	defer os.RemoveAll(dir)
@@ -535,6 +536,116 @@ func TestDeleteNonExistentObj(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected error deleting non-existent object, got nil")
 	}
+}
+
+// Example demonstrates basic store usage: create, write, and read an object.
+func Example() {
+	// Create a temporary file for the store
+	tmpFile := filepath.Join(os.TempDir(), "example_store.bin")
+	defer os.Remove(tmpFile)
+
+	// Create a new store
+	s, _ := NewBasicStore(tmpFile)
+	defer s.Close()
+
+	// Write data to a new object using the convenience function
+	data := []byte("Hello, Store!")
+	objId, _ := WriteNewObjFromBytes(s, data)
+
+	// Read the data back
+	readData, _ := ReadBytesFromObj(s, objId)
+
+	fmt.Printf("%s\n", string(readData))
+	// Output: Hello, Store!
+}
+
+// ExampleStorer_lateWriteNewObj demonstrates the Late method pattern for streaming writes.
+func ExampleStorer_lateWriteNewObj() {
+	tmpFile := filepath.Join(os.TempDir(), "example_late_write.bin")
+	defer os.Remove(tmpFile)
+
+	s, _ := NewBasicStore(tmpFile)
+	defer s.Close()
+
+	// Use the Late method for fine-grained control over writing
+	data := []byte("Streaming data")
+	objId, writer, finisher, _ := s.LateWriteNewObj(len(data))
+
+	// Write the data in chunks if needed
+	writer.Write(data)
+
+	// Always call finisher when done
+	if finisher != nil {
+		finisher()
+	}
+
+	// Read it back
+	readData, _ := ReadBytesFromObj(s, objId)
+	fmt.Printf("%s\n", string(readData))
+	// Output: Streaming data
+}
+
+// ExampleStorer_writeToObj demonstrates updating an existing object.
+func ExampleStorer_writeToObj() {
+	tmpFile := filepath.Join(os.TempDir(), "example_update.bin")
+	defer os.Remove(tmpFile)
+
+	s, _ := NewBasicStore(tmpFile)
+	defer s.Close()
+
+	// Create an object with initial data
+	initialData := []byte("Initial")
+	objId, _ := WriteNewObjFromBytes(s, initialData)
+
+	// Update the object with new data (must not exceed original size)
+	newData := []byte("Updated")
+	WriteBytesToObj(s, newData, objId)
+
+	// Read the updated data
+	readData, _ := ReadBytesFromObj(s, objId)
+	fmt.Printf("%s\n", string(readData))
+	// Output: Updated
+}
+
+// ExampleStorer_deleteObj demonstrates deleting objects and reclaiming space.
+func ExampleStorer_deleteObj() {
+	tmpFile := filepath.Join(os.TempDir(), "example_delete.bin")
+	defer os.Remove(tmpFile)
+
+	s, _ := NewBasicStore(tmpFile)
+	defer s.Close()
+
+	// Create two objects
+	obj1, _ := WriteNewObjFromBytes(s, []byte("Object 1"))
+	obj2, _ := WriteNewObjFromBytes(s, []byte("Object 2"))
+
+	// Delete the first object
+	s.DeleteObj(obj1)
+
+	// The second object is still accessible
+	data, _ := ReadBytesFromObj(s, obj2)
+	fmt.Printf("%s\n", string(data))
+	// Output: Object 2
+}
+
+// ExampleLoadBaseStore demonstrates persisting and loading a store.
+func ExampleLoadBaseStore() {
+	tmpFile := filepath.Join(os.TempDir(), "example_persist.bin")
+	defer os.Remove(tmpFile)
+
+	// Create and populate a store
+	s, _ := NewBasicStore(tmpFile)
+	objId, _ := WriteNewObjFromBytes(s, []byte("Persistent data"))
+	s.Close()
+
+	// Load the store from disk
+	loadedStore, _ := LoadBaseStore(tmpFile)
+	defer loadedStore.Close()
+
+	// Read the persisted object
+	data, _ := ReadBytesFromObj(loadedStore, objId)
+	fmt.Printf("%s\n", string(data))
+	// Output: Persistent data
 }
 
 // These benchmarks seem to show that we should (unsurprisingly)

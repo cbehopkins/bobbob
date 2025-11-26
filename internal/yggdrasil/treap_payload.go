@@ -33,6 +33,16 @@ func (n *PayloadTreapNode[K, P]) IsNil() bool {
 	return n == nil
 }
 
+// GetPayload returns the payload of the node.
+func (n *PayloadTreapNode[K, P]) GetPayload() P {
+	return n.payload
+}
+
+// SetPayload sets the payload of the node.
+func (n *PayloadTreapNode[K, P]) SetPayload(payload P) {
+	n.payload = payload
+}
+
 // PayloadTreap represents a treap with payloads.
 type PayloadTreap[K any, P any] struct {
 	Treap[K]
