@@ -107,6 +107,57 @@ type PersistentPayloadTreapNode[K any, P PersistentPayload[P]] struct {
 
 **Use case**: Persistent key-value store with both keys and values on disk.
 
+## Payload Serialization
+
+For persistent treaps, payloads must implement the `PersistentPayload` interface:
+
+```go
+type PersistentPayload[T any] interface {
+    Marshal() ([]byte, error)
+    Unmarshal([]byte) (UntypedPersistentPayload, error)
+    SizeInBytes() int
+}
+```
+
+### JsonPayload - Automatic Serialization
+
+For convenience, the `JsonPayload[T]` wrapper provides automatic JSON-based serialization for any type, eliminating the need to implement custom Marshal/Unmarshal methods:
+
+```go
+type Product struct {
+    Name  string
+    Price float64
+    Stock int
+}
+
+// Use JsonPayload wrapper - no Marshal/Unmarshal implementation needed!
+treap := NewPersistentPayloadTreap[StringKey, JsonPayload[Product]](
+    StringLess,
+    (*StringKey)(new(string)),
+    store,
+)
+
+// Insert wrapped values
+treap.Insert(&key, priority, JsonPayload[Product]{
+    Value: Product{Name: "Widget", Price: 19.99, Stock: 100},
+})
+
+// Access wrapped values
+node := treap.Search(&key)
+product := node.GetPayload().Value  // Access the Product struct
+```
+
+**When to use JsonPayload:**
+- Quick prototyping without implementing serialization
+- Simple structs that work well with JSON
+- Cases where serialization performance is not critical
+
+**When to implement custom Marshal/Unmarshal:**
+- Performance-critical code (JSON is slower than binary)
+- Need compact binary representation
+- Complex data structures with special serialization needs
+- See `FileInfo` in examples_test.go for a custom implementation
+
 ## Key Types
 
 The package uses a `Key` interface to support various key types:

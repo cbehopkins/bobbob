@@ -235,3 +235,255 @@ func ExampleTreap_UpdatePriority() {
 	}
 	// Output: Key 100 has new priority 250
 }
+
+// FileInfo represents metadata about a file.
+type FileInfo struct {
+	Name string
+	Type string
+	Size int
+}
+
+// Marshal serializes FileInfo to bytes.
+func (f FileInfo) Marshal() ([]byte, error) {
+	// Calculate size: 4 bytes for name length + name + 4 bytes for type length + type + 8 bytes for size
+	nameBytes := []byte(f.Name)
+	typeBytes := []byte(f.Type)
+	totalSize := 4 + len(nameBytes) + 4 + len(typeBytes) + 8
+
+	data := make([]byte, totalSize)
+	offset := 0
+
+	// Write name length and name
+	binary.LittleEndian.PutUint32(data[offset:], uint32(len(nameBytes)))
+	offset += 4
+	copy(data[offset:], nameBytes)
+	offset += len(nameBytes)
+
+	// Write type length and type
+	binary.LittleEndian.PutUint32(data[offset:], uint32(len(typeBytes)))
+	offset += 4
+	copy(data[offset:], typeBytes)
+	offset += len(typeBytes)
+
+	// Write size
+	binary.LittleEndian.PutUint64(data[offset:], uint64(f.Size))
+
+	return data, nil
+}
+
+// Unmarshal deserializes FileInfo from bytes.
+func (f FileInfo) Unmarshal(data []byte) (UntypedPersistentPayload, error) {
+	offset := 0
+
+	// Read name
+	nameLen := binary.LittleEndian.Uint32(data[offset:])
+	offset += 4
+	name := string(data[offset : offset+int(nameLen)])
+	offset += int(nameLen)
+
+	// Read type
+	typeLen := binary.LittleEndian.Uint32(data[offset:])
+	offset += 4
+	fileType := string(data[offset : offset+int(typeLen)])
+	offset += int(typeLen)
+
+	// Read size
+	size := int(binary.LittleEndian.Uint64(data[offset:]))
+
+	return FileInfo{
+		Name: name,
+		Type: fileType,
+		Size: size,
+	}, nil
+}
+
+// SizeInBytes returns the serialized size of FileInfo.
+func (f FileInfo) SizeInBytes() int {
+	return 4 + len(f.Name) + 4 + len(f.Type) + 8
+}
+
+// ExamplePersistentPayloadTreap_stringToStruct demonstrates using a persistent treap
+// to store a map from strings to structs with custom serialization.
+// For a simpler approach using JSON, see ExampleJsonPayload.
+func ExamplePersistentPayloadTreap_stringToStruct() {
+	tmpFile := filepath.Join(os.TempDir(), "file_metadata.bin")
+	defer os.Remove(tmpFile)
+
+	s, _ := store.NewBasicStore(tmpFile)
+	defer s.Close()
+
+	// Create a persistent treap mapping file paths (StringKey) to FileInfo
+	treap := NewPersistentPayloadTreap[StringKey, FileInfo](
+		StringLess,
+		(*StringKey)(new(string)),
+		s,
+	)
+
+	// Add file metadata entries
+	docPath := StringKey("/home/user/document.txt")
+	imgPath := StringKey("/home/user/photo.jpg")
+	vidPath := StringKey("/home/user/video.mp4")
+
+	treap.Insert(&docPath, 100, FileInfo{
+		Name: "document.txt",
+		Type: "text/plain",
+		Size: 2048,
+	})
+
+	treap.Insert(&imgPath, 200, FileInfo{
+		Name: "photo.jpg",
+		Type: "image/jpeg",
+		Size: 524288,
+	})
+
+	treap.Insert(&vidPath, 150, FileInfo{
+		Name: "video.mp4",
+		Type: "video/mp4",
+		Size: 10485760,
+	})
+
+	// Persist to disk
+	treap.Persist()
+
+	// Look up metadata by path
+	searchPath := StringKey("/home/user/photo.jpg")
+	node := treap.Search(&searchPath)
+	if node != nil && !node.IsNil() {
+		info := node.GetPayload()
+		fmt.Printf("File: %s, Type: %s, Size: %d bytes\n",
+			info.Name, info.Type, info.Size)
+	}
+
+	// Walk through all entries in sorted order
+	fmt.Println("All files:")
+	treap.Walk(func(node TreapNodeInterface[StringKey]) {
+		path := *node.GetKey().(*StringKey)
+		payloadNode := node.(*PersistentPayloadTreapNode[StringKey, FileInfo])
+		info := payloadNode.GetPayload()
+		fmt.Printf("  %s: %s (%d bytes)\n", path, info.Type, info.Size)
+	})
+
+	// Output:
+	// File: photo.jpg, Type: image/jpeg, Size: 524288 bytes
+	// All files:
+	//   /home/user/document.txt: text/plain (2048 bytes)
+	//   /home/user/photo.jpg: image/jpeg (524288 bytes)
+	//   /home/user/video.mp4: video/mp4 (10485760 bytes)
+}
+
+// Product represents a simple product struct for demonstration.
+type Product struct {
+	Name  string
+	Price float64
+	Stock int
+}
+
+// ExampleJsonPayload demonstrates using JsonPayload to avoid implementing Marshal/Unmarshal.
+// This is the simplest way to use persistent treaps with custom structs.
+func ExampleJsonPayload() {
+	tmpFile := filepath.Join(os.TempDir(), "products.bin")
+	defer os.Remove(tmpFile)
+
+	s, _ := store.NewBasicStore(tmpFile)
+	defer s.Close()
+
+	// Create a persistent treap using JsonPayload wrapper
+	// No need to implement Marshal/Unmarshal for Product!
+	treap := NewPersistentPayloadTreap[StringKey, JsonPayload[Product]](
+		StringLess,
+		(*StringKey)(new(string)),
+		s,
+	)
+
+	// Add products
+	laptop := StringKey("laptop")
+	mouse := StringKey("mouse")
+	keyboard := StringKey("keyboard")
+
+	treap.Insert(&laptop, 100, JsonPayload[Product]{
+		Value: Product{Name: "Gaming Laptop", Price: 1299.99, Stock: 5},
+	})
+
+	treap.Insert(&mouse, 200, JsonPayload[Product]{
+		Value: Product{Name: "Wireless Mouse", Price: 29.99, Stock: 50},
+	})
+
+	treap.Insert(&keyboard, 150, JsonPayload[Product]{
+		Value: Product{Name: "Mechanical Keyboard", Price: 89.99, Stock: 20},
+	})
+
+	// Persist to disk
+	treap.Persist()
+
+	// Search for a product
+	searchKey := StringKey("mouse")
+	node := treap.Search(&searchKey)
+	if node != nil && !node.IsNil() {
+		product := node.GetPayload().Value
+		fmt.Printf("Product: %s, Price: $%.2f, Stock: %d\n",
+			product.Name, product.Price, product.Stock)
+	}
+
+	// Output: Product: Wireless Mouse, Price: $29.99, Stock: 50
+}
+
+// ExampleJsonPayload_loadAndUpdate demonstrates loading a persisted treap
+// and updating values using JsonPayload.
+func ExampleJsonPayload_loadAndUpdate() {
+	tmpFile := filepath.Join(os.TempDir(), "inventory.bin")
+	defer os.Remove(tmpFile)
+
+	var rootObjId store.ObjectId
+
+	// Create and persist initial inventory
+	{
+		s, _ := store.NewBasicStore(tmpFile)
+
+		treap := NewPersistentPayloadTreap[StringKey, JsonPayload[Product]](
+			StringLess,
+			(*StringKey)(new(string)),
+			s,
+		)
+
+		// Add initial product
+		sku := StringKey("SKU-001")
+		treap.Insert(&sku, 100, JsonPayload[Product]{
+			Value: Product{Name: "Widget", Price: 19.99, Stock: 100},
+		})
+
+		treap.Persist()
+
+		// Save root for later loading
+		rootNode := treap.root.(*PersistentPayloadTreapNode[StringKey, JsonPayload[Product]])
+		rootObjId = rootNode.ObjectId()
+
+		s.Close()
+	}
+
+	// Load and update inventory
+	{
+		s, _ := store.LoadBaseStore(tmpFile)
+		defer s.Close()
+
+		treap := NewPersistentPayloadTreap[StringKey, JsonPayload[Product]](
+			StringLess,
+			(*StringKey)(new(string)),
+			s,
+		)
+		treap.Load(rootObjId)
+
+		// Update stock after sale
+		sku := StringKey("SKU-001")
+		node := treap.Search(&sku)
+		if node != nil && !node.IsNil() {
+			product := node.GetPayload().Value
+			product.Stock -= 10 // Sold 10 units
+
+			// Update the treap with new stock
+			treap.UpdatePayload(&sku, JsonPayload[Product]{Value: product})
+
+			fmt.Printf("Updated: %s, New Stock: %d\n", product.Name, product.Stock)
+		}
+	}
+	// Output: Updated: Widget, New Stock: 90
+}
