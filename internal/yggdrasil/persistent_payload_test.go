@@ -272,7 +272,7 @@ func TestPersistentPayloadTreapPersistenceOne(t *testing.T) {
 	// Simplification for this test
 	// We will implement an object lookup mechanism later
 	var treapObjectId store.ObjectId
-	treapObjectId = treap.root.(*PersistentPayloadTreapNode[IntKey, MockPayload]).ObjectId()
+	treapObjectId, _ = treap.root.(*PersistentPayloadTreapNode[IntKey, MockPayload]).ObjectId()
 
 	// Close the store
 	store0.Close()
@@ -337,7 +337,7 @@ func TestPersistentPayloadTreapPersistence(t *testing.T) {
 	// Simplification for this test
 	// We will implement an object lookup mechanism later
 	var treapObjectId store.ObjectId
-	treapObjectId = treap.root.(*PersistentPayloadTreapNode[IntKey, MockPayload]).ObjectId()
+	treapObjectId, _ = treap.root.(*PersistentPayloadTreapNode[IntKey, MockPayload]).ObjectId()
 	var bob PersistentTreap[IntKey]
 	bob.keyTemplate = (*IntKey)(new(int32))
 	bob.Store = store0
@@ -462,7 +462,7 @@ func TestPersistentPayloadTreapLazyLoading(t *testing.T) {
 	}
 
 	// Get the root object ID
-	rootObjectId := treap.root.(*PersistentPayloadTreapNode[IntKey, MockPayload]).ObjectId()
+	rootObjectId, _ := treap.root.(*PersistentPayloadTreapNode[IntKey, MockPayload]).ObjectId()
 
 	// Create a new treap and load only the root from disk
 	treap2 := NewPersistentPayloadTreap[IntKey, MockPayload](IntLess, (*IntKey)(new(int32)), stre)

@@ -180,7 +180,7 @@ func ExamplePersistentPayloadTreap_Load() {
 
 		// Get the root object ID for later loading
 		rootNode := treap.root.(*PersistentPayloadTreapNode[IntKey, SimplePayload])
-		rootObjId = rootNode.ObjectId()
+		rootObjId, _ = rootNode.ObjectId()
 
 		s.Close()
 	}
@@ -628,7 +628,7 @@ func ExampleJsonPayload_loadAndUpdate() {
 
 		// Save root for later loading
 		rootNode := treap.root.(*PersistentPayloadTreapNode[StringKey, JsonPayload[Product]])
-		rootObjId = rootNode.ObjectId()
+		rootObjId, _ = rootNode.ObjectId()
 
 		s.Close()
 	}

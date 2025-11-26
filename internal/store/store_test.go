@@ -673,10 +673,12 @@ func BenchmarkWriteAt(b *testing.B) {
 						for j := 0; j < b.N/concurrency; j++ {
 							_, writer, finisher, err := store.LateWriteNewObj(len(data))
 							if err != nil {
-								b.Fatalf("expected no error, got %v", err)
+								b.Errorf("expected no error, got %v", err)
+								return
 							}
 							if _, err := writer.Write(data); err != nil {
-								b.Fatalf("expected no error writing data, got %v", err)
+								b.Errorf("expected no error writing data, got %v", err)
+								return
 							}
 							if finisher != nil {
 								finisher()
@@ -719,10 +721,12 @@ func BenchmarkWriteAtSingleCall(b *testing.B) {
 						for j := 0; j < b.N/concurrency; j++ {
 							_, writer, finisher, err := store.LateWriteNewObj(len(data))
 							if err != nil {
-								b.Fatalf("expected no error, got %v", err)
+								b.Errorf("expected no error, got %v", err)
+								return
 							}
 							if _, err := writer.Write(data); err != nil {
-								b.Fatalf("expected no error writing data, got %v", err)
+								b.Errorf("expected no error writing data, got %v", err)
+								return
 							}
 							if finisher != nil {
 								finisher()

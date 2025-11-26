@@ -216,7 +216,7 @@ func TestPersistentTreapNodeInvalidateObjectId(t *testing.T) {
 
 	// Initially, the ObjectId should be store.ObjNotAllocated
 	if node.objectId != store.ObjNotAllocated {
-		t.Fatalf("Expected initial ObjectId to be store.ObjNotAllocated, got %d", node.ObjectId())
+		t.Fatalf("Expected initial ObjectId to be store.ObjNotAllocated, got %d", node.objectId)
 	}
 
 	// Persist the node to assign an ObjectId
@@ -236,7 +236,7 @@ func TestPersistentTreapNodeInvalidateObjectId(t *testing.T) {
 	node.SetLeft(leftNode)
 
 	if node.objectId != store.ObjNotAllocated {
-		t.Errorf("Expected ObjectId to be invalidated (set to store.ObjNotAllocated) after setting left child, got %d", node.ObjectId())
+		t.Errorf("Expected ObjectId to be invalidated (set to store.ObjNotAllocated) after setting left child, got %d", node.objectId)
 	}
 
 	// Persist the node again to assign a new ObjectId
@@ -252,11 +252,11 @@ func TestPersistentTreapNodeInvalidateObjectId(t *testing.T) {
 
 	// Add a right child and check if ObjectId is invalidated
 	rightKey := IntKey(63)
-	rightNode := NewPersistentTreapNode[IntKey](&rightKey, Priority(75), stre, treap)
+	rightNode := NewPersistentTreapNode[IntKey](&rightKey, Priority(70), stre, treap)
 	node.SetRight(rightNode)
 
 	if node.objectId != store.ObjNotAllocated {
-		t.Errorf("Expected ObjectId to be invalidated (set to store.ObjNotAllocated) after setting right child, got %d", node.ObjectId())
+		t.Errorf("Expected ObjectId to be invalidated (set to store.ObjNotAllocated) after setting right child, got %d", node.objectId)
 	}
 	node.persist()
 	if node.objectId == store.ObjNotAllocated {
@@ -266,7 +266,7 @@ func TestPersistentTreapNodeInvalidateObjectId(t *testing.T) {
 
 	rightNode.SetPriority(Priority(80))
 	if rightNode.objectId != store.ObjNotAllocated {
-		t.Errorf("Expected ObjectId to be invalidated (set to store.ObjNotAllocated) after setting right child's priority, got %d", rightNode.ObjectId())
+		t.Errorf("Expected ObjectId to be invalidated (set to store.ObjNotAllocated) after setting right child's priority, got %d", rightNode.objectId)
 	}
 	node.persist()
 
@@ -303,7 +303,7 @@ func TestPersistentTreapPersistence(t *testing.T) {
 	// Simplification for this test
 	// We will implement an object lookup mechanism later
 	var treapObjectId store.ObjectId
-	treapObjectId = treap.root.(*PersistentTreapNode[IntKey]).ObjectId()
+	treapObjectId, _ = treap.root.(*PersistentTreapNode[IntKey]).ObjectId()
 	var bob PersistentTreap[IntKey]
 	bob.keyTemplate = (*IntKey)(new(int32))
 	bob.Store = store0

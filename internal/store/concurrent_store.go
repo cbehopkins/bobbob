@@ -9,9 +9,9 @@ import (
 // safe concurrent access to different objects.
 // TBD: Add the cunning plan to reuse the io.writer by a queue that the closer writes to with the current io.writer
 type concurrentStore struct {
-	baseStore
-	lock    sync.RWMutex
-	lockMap map[ObjectId]*sync.RWMutex
+	baseStore *baseStore
+	lock      sync.RWMutex
+	lockMap   map[ObjectId]*sync.RWMutex
 }
 
 // NewConcurrentStore creates a new concurrentStore at the given file path.
@@ -22,9 +22,9 @@ func NewConcurrentStore(filePath string) (*concurrentStore, error) {
 		return nil, err
 	}
 	return &concurrentStore{
-		*baseStore,
-		sync.RWMutex{},
-		make(map[ObjectId]*sync.RWMutex),
+		baseStore: baseStore,
+		lock:      sync.RWMutex{},
+		lockMap:   make(map[ObjectId]*sync.RWMutex),
 	}, nil
 }
 
@@ -73,4 +73,19 @@ func (s *concurrentStore) LateReadObj(offset ObjectId) (io.Reader, Finisher, err
 		return finisher()
 	}
 	return reader, newFinisher, nil
+}
+
+// NewObj allocates a new object of the given size and returns its ID.
+func (s *concurrentStore) NewObj(size int) (ObjectId, error) {
+	return s.baseStore.NewObj(size)
+}
+
+// DeleteObj removes the object with the given ID.
+func (s *concurrentStore) DeleteObj(objId ObjectId) error {
+	return s.baseStore.DeleteObj(objId)
+}
+
+// Close closes the store and releases all resources.
+func (s *concurrentStore) Close() error {
+	return s.baseStore.Close()
 }

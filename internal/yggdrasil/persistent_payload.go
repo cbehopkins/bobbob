@@ -413,19 +413,18 @@ func (n *PersistentPayloadTreapNode[K, P]) sizeInBytes() int {
 
 // ObjectId returns the object ID of the node, allocating one if necessary.
 // Messy Implementation - this is a repeat of the one for PersistentTreapNode
-func (n *PersistentPayloadTreapNode[K, P]) ObjectId() store.ObjectId {
+func (n *PersistentPayloadTreapNode[K, P]) ObjectId() (store.ObjectId, error) {
 	if n == nil {
-		return store.ObjNotAllocated
+		return store.ObjNotAllocated, nil
 	}
 	if n.objectId < 0 {
 		objId, err := n.Store.NewObj(n.sizeInBytes())
 		if err != nil {
-			// FIXME Refactor method signature to return an error
-			panic(err) // This should never happen
+			return store.ObjNotAllocated, err
 		}
 		n.objectId = objId
 	}
-	return n.objectId
+	return n.objectId, nil
 }
 
 // Marshal should Return some byte slice representing the payload treap
