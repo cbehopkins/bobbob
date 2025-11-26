@@ -1,11 +1,10 @@
 package chain
 
 import (
-	"os"
-	"path/filepath"
 	"testing"
 
 	"bobbob/internal/store"
+	"bobbob/internal/testutil"
 )
 
 func TestChainAndLink(t *testing.T) {
@@ -161,25 +160,9 @@ func TestInsertElement(t *testing.T) {
 	}
 }
 
-func setupTestStore(t *testing.T) (string, store.Storer) {
-	dir, err := os.MkdirTemp("", "store_test")
-	if err != nil {
-		t.Fatalf("expected no error, got %v", err)
-	}
-
-	filePath := filepath.Join(dir, "testfile.bin")
-	store, err := store.NewBasicStore(filePath)
-	if err != nil {
-		t.Fatalf("expected no error, got %v", err)
-	}
-
-	return dir, store
-}
-
 func TestChainMarshalUnmarshalOneInt(t *testing.T) {
-	dir, store := setupTestStore(t)
-	defer os.RemoveAll(dir)
-	defer store.Close()
+	_, store, cleanup := testutil.SetupTestStore(t)
+	defer cleanup()
 
 	// Create a Chain
 	createLink := func() *Link {
@@ -256,9 +239,8 @@ func TestChainGrowth(t *testing.T) {
 
 func TestLinkSort(t *testing.T) {
 	// Create a mock mockStore
-	dir, mockStore := setupTestStore(t)
-	defer os.RemoveAll(dir)
-	defer mockStore.Close()
+	_, mockStore, cleanup := testutil.SetupTestStore(t)
+	defer cleanup()
 
 	// Create a chain with a simple less function for integers
 	chain := NewChain(func() *Link {

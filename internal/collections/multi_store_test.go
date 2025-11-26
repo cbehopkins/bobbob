@@ -2,11 +2,11 @@ package collections
 
 import (
 	"fmt"
-	"io"
 	"path/filepath"
 	"testing"
 
 	"bobbob/internal/store"
+	"bobbob/internal/testutil"
 	"bobbob/internal/yggdrasil"
 )
 
@@ -225,51 +225,14 @@ func TestMultiStoreLateWriteAndRead(t *testing.T) {
 
 	// Test data
 	testData := []byte("Hello, World! This is test data for Late I/O operations.")
-	size := len(testData)
 
-	// Write using LateWriteNewObj
-	objId, writer, finisher, err := ms.LateWriteNewObj(size)
-	if err != nil {
-		t.Fatalf("LateWriteNewObj failed: %v", err)
-	}
+	// Write using helper
+	objId := testutil.WriteObject(t, ms, testData)
 	t.Logf("Allocated object ID: %d (valid: %v)", objId, store.IsValidObjectId(objId))
-	if finisher != nil {
-		defer finisher()
-	}
 
-	n, err := writer.Write(testData)
-	if err != nil {
-		t.Fatalf("Write failed: %v", err)
-	}
-	if n != size {
-		t.Errorf("Expected to write %d bytes, wrote %d", size, n)
-	}
-	t.Logf("Wrote %d bytes to object %d", n, objId)
-
-	// Read back using LateReadObj
-	reader, finisher2, err := ms.LateReadObj(objId)
-	if err != nil {
-		t.Fatalf("LateReadObj failed: %v", err)
-	}
-	if finisher2 != nil {
-		defer finisher2()
-	}
-
-	readData := make([]byte, size)
-	n, err = reader.Read(readData)
-	if err != nil && err != io.EOF {
-		t.Fatalf("Read failed: %v", err)
-	}
-	if n != size {
-		t.Errorf("Expected to read %d bytes, read %d", size, n)
-	}
-
-	// Verify data matches
-	if string(readData) != string(testData) {
-		t.Errorf("Data mismatch. Expected %q, got %q", testData, readData)
-	} else {
-		t.Logf("SUCCESS: Read data matches written data")
-	}
+	// Verify using helper
+	testutil.VerifyObject(t, ms, objId, testData)
+	t.Logf("SUCCESS: Read data matches written data")
 }
 
 // TestMultiStoreWriteToObj tests writing to an existing object
@@ -285,58 +248,18 @@ func TestMultiStoreWriteToObj(t *testing.T) {
 
 	// Create an initial object with some data
 	initialData := []byte("Initial data content")
-	size := len(initialData)
 
-	objId, writer, finisher, err := ms.LateWriteNewObj(size)
-	if err != nil {
-		t.Fatalf("LateWriteNewObj failed: %v", err)
-	}
-	if finisher != nil {
-		defer finisher()
-	}
-
-	_, err = writer.Write(initialData)
-	if err != nil {
-		t.Fatalf("Initial write failed: %v", err)
-	}
+	objId := testutil.WriteObject(t, ms, initialData)
 	t.Logf("Created object %d with initial data", objId)
 
-	// Now overwrite using WriteToObj
+	// Now overwrite using helper
 	updatedData := []byte("Updated data content") // Exactly same length
-	writer2, finisher2, err := ms.WriteToObj(objId)
-	if err != nil {
-		t.Fatalf("WriteToObj failed: %v", err)
-	}
-	if finisher2 != nil {
-		defer finisher2()
-	}
-
-	_, err = writer2.Write(updatedData)
-	if err != nil {
-		t.Fatalf("Update write failed: %v", err)
-	}
+	testutil.UpdateObject(t, ms, objId, updatedData)
 	t.Logf("Updated object %d with new data", objId)
 
-	// Read back to verify
-	reader, finisher3, err := ms.LateReadObj(objId)
-	if err != nil {
-		t.Fatalf("LateReadObj failed: %v", err)
-	}
-	if finisher3 != nil {
-		defer finisher3()
-	}
-
-	readData := make([]byte, size)
-	n, err := reader.Read(readData)
-	if err != nil && err != io.EOF {
-		t.Fatalf("Read failed: %v", err)
-	}
-
-	if string(readData) != string(updatedData) {
-		t.Errorf("Data mismatch after update. Expected %q, got %q", updatedData, readData[:n])
-	} else {
-		t.Logf("SUCCESS: Object data was successfully updated")
-	}
+	// Verify using helper
+	testutil.VerifyObject(t, ms, objId, updatedData)
+	t.Logf("SUCCESS: Object data was successfully updated")
 }
 
 // TestMultiStoreMultipleObjects tests writing and reading multiple objects
@@ -360,44 +283,13 @@ func TestMultiStoreMultipleObjects(t *testing.T) {
 	for i := 0; i < numObjects; i++ {
 		data := []byte(fmt.Sprintf("Object %d: This is test data for object number %d", i, i))
 		objects[i].data = data
-
-		objId, writer, finisher, err := ms.LateWriteNewObj(len(data))
-		if err != nil {
-			t.Fatalf("Failed to write object %d: %v", i, err)
-		}
-		if finisher != nil {
-			defer finisher()
-		}
-
-		_, err = writer.Write(data)
-		if err != nil {
-			t.Fatalf("Failed to write data for object %d: %v", i, err)
-		}
-
-		objects[i].id = objId
-		t.Logf("Created object %d with ID %d", i, objId)
+		objects[i].id = testutil.WriteObject(t, ms, data)
+		t.Logf("Created object %d with ID %d", i, objects[i].id)
 	}
 
-	// Read back all objects and verify
+	// Verify all objects
 	for i := 0; i < numObjects; i++ {
-		reader, finisher, err := ms.LateReadObj(objects[i].id)
-		if err != nil {
-			t.Fatalf("Failed to read object %d: %v", i, err)
-		}
-		if finisher != nil {
-			defer finisher()
-		}
-
-		readData := make([]byte, len(objects[i].data))
-		n, err := reader.Read(readData)
-		if err != nil && err != io.EOF {
-			t.Fatalf("Failed to read data for object %d: %v", i, err)
-		}
-
-		if string(readData[:n]) != string(objects[i].data) {
-			t.Errorf("Object %d data mismatch. Expected %q, got %q",
-				i, objects[i].data, readData[:n])
-		}
+		testutil.VerifyObject(t, ms, objects[i].id, objects[i].data)
 	}
 
 	t.Logf("SUCCESS: All %d objects verified correctly", numObjects)
