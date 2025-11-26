@@ -11,7 +11,7 @@ import (
 type multiStore struct {
 	filePath   string
 	file       *os.File
-	objectMap  *yggdrasil.PersistentTreap[yggdrasil.PersistentObjectId]
+	objectMap  *store.ObjectMap
 	allocators []store.Allocator
 }
 
@@ -28,23 +28,18 @@ func NewMultiStore(filePath string) (*multiStore, error) {
 	// FIXME blocksizes should be a set
 	blockSizes := yggdrasil.PersistentTreapObjectSizes()
 	omniAllocator := store.NewOmniBlockAllocator(blockSizes, blockCount, rootAllocator)
-	// The object map is a map from object ID to object info
-	cmpFunc := func(a, b yggdrasil.PersistentObjectId) bool {
-		return a == b
-	}
-	template := yggdrasil.PersistentObjectId(store.ObjNotAllocated)
-	store := &multiStore{
+
+	ms := &multiStore{
 		filePath:   filePath,
 		file:       file,
+		objectMap:  store.NewObjectMap(),
 		allocators: []store.Allocator{rootAllocator, omniAllocator},
 	}
-	bob := yggdrasil.NewPersistentTreap[yggdrasil.PersistentObjectId](cmpFunc, &template, store)
-	store.objectMap = bob
-	return store, nil
+	return ms, nil
 }
 
 func (s *multiStore) Close() error {
-	// FIXME Marshal the allocators to the file
+	// FIXME Marshal the allocators and objectMap to the file
 
 	if s.file != nil {
 		err := s.file.Close()
@@ -57,36 +52,87 @@ func (s *multiStore) Close() error {
 }
 
 func (s *multiStore) DeleteObj(objId store.ObjectId) error {
-	// FIXME delete the object from the object map
-	// and free the space in the allocator
+	// Retrieve and delete the object info from the object map
+	objectInfo, found := s.objectMap.GetAndDelete(objId, func(info store.ObjectInfo) {
+		// Free the space in the allocator using the stored info
+		s.allocators[1].Free(info.Offset, info.Size)
+	})
+
+	if !found {
+		return nil // Object not found, nothing to delete
+	}
+
+	// The callback already freed the space
+	_ = objectInfo
 	return nil
 }
 
 func (s *multiStore) NewObj(size int) (store.ObjectId, error) {
-	// FIXME allocate the object from the allocator
-	// and add it to the object map
-	objId, _, err := s.allocators[1].Allocate(size)
+	// Allocate the object from the allocator
+	objId, fileOffset, err := s.allocators[1].Allocate(size)
 	if err != nil {
 		return store.ObjNotAllocated, err
 	}
-	var bob yggdrasil.PersistentObjectId
-	bob = yggdrasil.PersistentObjectId(objId)
-	s.objectMap.Insert(&bob, 0) // FIXME
-	return store.ObjNotAllocated, nil
+
+	// Store the object info in the object map
+	objectInfo := store.ObjectInfo{
+		Offset: fileOffset,
+		Size:   size,
+	}
+	s.objectMap.Set(objId, objectInfo)
+
+	return objId, nil
 }
 
 func (s *multiStore) LateReadObj(id store.ObjectId) (io.Reader, store.Finisher, error) {
-	// FIXME read the object from the allocator
-	return nil, nil, nil
+	obj, found := s.objectMap.Get(id)
+	if !found {
+		return nil, nil, io.ErrUnexpectedEOF
+	}
+
+	// Create a section reader for this object
+	reader := io.NewSectionReader(s.file, int64(obj.Offset), int64(obj.Size))
+
+	// Return a no-op finisher since we don't need cleanup for reads
+	finisher := func() error { return nil }
+
+	return reader, finisher, nil
 }
 
 func (s *multiStore) LateWriteNewObj(size int) (store.ObjectId, io.Writer, store.Finisher, error) {
-	// FIXME allocate the object from the allocator
-	// and add it to the object map
-	return store.ObjNotAllocated, nil, nil, nil
+	// Allocate the object from the allocator
+	objId, fileOffset, err := s.allocators[1].Allocate(size)
+	if err != nil {
+		return store.ObjNotAllocated, nil, nil, err
+	}
+
+	// Store the object info in the object map
+	objectInfo := store.ObjectInfo{
+		Offset: fileOffset,
+		Size:   size,
+	}
+	s.objectMap.Set(objId, objectInfo)
+
+	// Create a section writer that writes to the correct offset in the file
+	writer := store.NewSectionWriter(s.file, int64(fileOffset), int64(size))
+
+	// Return a no-op finisher
+	finisher := func() error { return nil }
+
+	return objId, writer, finisher, nil
 }
 
 func (s *multiStore) WriteToObj(objectId store.ObjectId) (io.Writer, store.Finisher, error) {
-	// FIXME write to the object in the allocator
-	return nil, nil, nil
+	obj, found := s.objectMap.Get(objectId)
+	if !found {
+		return nil, nil, io.ErrUnexpectedEOF
+	}
+
+	// Create a section writer for the existing object
+	writer := store.NewSectionWriter(s.file, int64(obj.Offset), int64(obj.Size))
+
+	// Return a no-op finisher
+	finisher := func() error { return nil }
+
+	return writer, finisher, nil
 }
