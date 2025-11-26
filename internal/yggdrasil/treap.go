@@ -205,29 +205,37 @@ func (t *Treap[T]) search(node TreapNodeInterface[T], key T) TreapNodeInterface[
 	}
 }
 
-// Insert inserts a new node with the given key and priority into the treap.
-func (t *Treap[T]) Insert(key Key[T], priority Priority) {
+// Insert inserts a new node with the given value and priority into the treap.
+// The type T must implement the Key[T] interface (e.g., IntKey, StringKey).
+func (t *Treap[T]) Insert(value T, priority Priority) {
+	// Since T implements Key[T], we can use the value directly as the key
+	key := any(value).(Key[T])
 	newNode := NewTreapNode(key, priority)
 	t.root = t.insert(t.root, newNode)
 }
 
-// Delete removes the node with the given key from the treap.
-func (t *Treap[T]) Delete(key Key[T]) {
+// Delete removes the node with the given value from the treap.
+func (t *Treap[T]) Delete(value T) {
+	// Since T implements Key[T], convert to get the comparable value
+	key := any(value).(Key[T])
 	t.root = t.delete(t.root, key.Value())
 }
 
-// Search searches for the node with the given key in the treap.
-func (t *Treap[T]) Search(key Key[T]) TreapNodeInterface[T] {
+// Search searches for the node with the given value in the treap.
+func (t *Treap[T]) Search(value T) TreapNodeInterface[T] {
+	// Since T implements Key[T], convert to get the comparable value
+	key := any(value).(Key[T])
 	return t.search(t.root, key.Value())
 }
 
-// UpdatePriority updates the priority of the node with the given key.
-func (t *Treap[T]) UpdatePriority(key Key[T], newPriority Priority) {
-	node := t.Search(key)
+// UpdatePriority updates the priority of the node with the given value.
+// It does this by deleting the old node and inserting a new one with the new priority.
+func (t *Treap[T]) UpdatePriority(value T, newPriority Priority) {
+	node := t.Search(value)
 	if node != nil && !node.IsNil() {
 		node.SetPriority(newPriority)
-		t.Delete(key)
-		t.Insert(key, newPriority)
+		t.Delete(value)
+		t.Insert(value, newPriority)
 	}
 }
 

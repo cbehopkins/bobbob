@@ -22,6 +22,5 @@ var _ Storer = (*concurrentStore)(nil)
 // Verify BasicAllocator implements Allocator
 var _ Allocator = (*BasicAllocator)(nil)
 
-// TODO: Fix blockAllocator to properly implement Allocator interface
-// blockAllocator.Allocate() doesn't take a size parameter but Allocator.Allocate(int) does
-// var _ Allocator = (*blockAllocator)(nil)
+// Verify blockAllocator implements Allocator
+var _ Allocator = (*blockAllocator)(nil)

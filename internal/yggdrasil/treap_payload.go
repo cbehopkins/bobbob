@@ -71,8 +71,11 @@ func NewPayloadTreap[K any, P any](lessFunc func(a, b K) bool) *PayloadTreap[K, 
 	}
 }
 
-// Insert inserts a new node with the given key, priority, and payload into the treap.
-func (t *PayloadTreap[K, P]) Insert(key Key[K], priority Priority, payload P) {
+// Insert inserts a new node with the given value, priority, and payload into the treap.
+// The type K must implement the Key[K] interface (e.g., IntKey, StringKey).
+func (t *PayloadTreap[K, P]) Insert(value K, priority Priority, payload P) {
+	// Since K implements Key[K], convert to use as key
+	key := any(value).(Key[K])
 	newNode := NewPayloadTreapNode(key, priority, payload)
 	t.Treap.root = t.Treap.insert(t.Treap.root, newNode)
 }

@@ -14,20 +14,15 @@ func Example() {
 	// Create a treap with integer keys
 	treap := NewTreap[IntKey](IntLess)
 
-	// Create keys
-	key10 := IntKey(10)
-	key5 := IntKey(5)
-	key15 := IntKey(15)
-
 	// Insert some key-priority pairs
-	treap.Insert(&key10, 50)
-	treap.Insert(&key5, 30)
-	treap.Insert(&key15, 40)
+	treap.Insert(IntKey(10), 50)
+	treap.Insert(IntKey(5), 30)
+	treap.Insert(IntKey(15), 40)
 
 	// Search for a key
-	node := treap.Search(&key10)
+	node := treap.Search(IntKey(10))
 	if node != nil && !node.IsNil() {
-		fmt.Printf("Found key: %d\n", *node.GetKey().(*IntKey))
+		fmt.Printf("Found key: %d\n", node.GetKey().(IntKey))
 	}
 	// Output: Found key: 10
 }
@@ -36,16 +31,15 @@ func Example() {
 func ExampleTreap_Walk() {
 	treap := NewTreap[IntKey](IntLess)
 
-	// Create and insert keys
-	keys := []IntKey{30, 10, 20, 40}
-	for i, k := range keys {
-		key := k
-		treap.Insert(&key, Priority(i+1))
-	}
+	// Insert keys with priorities
+	treap.Insert(IntKey(30), 1)
+	treap.Insert(IntKey(10), 2)
+	treap.Insert(IntKey(20), 3)
+	treap.Insert(IntKey(40), 4)
 
 	// Walk through in sorted order
 	treap.Walk(func(node TreapNodeInterface[IntKey]) {
-		fmt.Printf("%d ", *node.GetKey().(*IntKey))
+		fmt.Printf("%d ", node.GetKey().(IntKey))
 	})
 	fmt.Println()
 	// Output: 10 20 30 40
@@ -56,18 +50,13 @@ func ExamplePayloadTreap() {
 	// Create a payload treap mapping strings to integers
 	treap := NewPayloadTreap[StringKey, int](StringLess)
 
-	// Create keys
-	ageKey := StringKey("age")
-	scoreKey := StringKey("score")
-	levelKey := StringKey("level")
-
 	// Insert key-value pairs
-	treap.Insert(&ageKey, 100, 25)
-	treap.Insert(&scoreKey, 200, 95)
-	treap.Insert(&levelKey, 150, 7)
+	treap.Insert(StringKey("age"), 100, 25)
+	treap.Insert(StringKey("score"), 200, 95)
+	treap.Insert(StringKey("level"), 150, 7)
 
 	// Search and retrieve payload
-	node := treap.Search(&scoreKey)
+	node := treap.Search(StringKey("score"))
 	if node != nil && !node.IsNil() {
 		payloadNode := node.(*PayloadTreapNode[StringKey, int])
 		fmt.Printf("score = %d\n", payloadNode.GetPayload())
@@ -104,10 +93,8 @@ func ExamplePersistentPayloadTreap() {
 	// Create a persistent treap
 	treap := NewPersistentPayloadTreap[IntKey, SimplePayload](IntLess, (*IntKey)(new(int32)), s)
 
-	// Create keys
-	key100 := IntKey(100)
-	key200 := IntKey(200)
-	key300 := IntKey(300)
+	// Create keys for persistent interface
+	key100, key200, key300 := IntKey(100), IntKey(200), IntKey(300)
 
 	// Insert key-value pairs
 	treap.Insert(&key100, 1, SimplePayload(42))
@@ -186,18 +173,17 @@ func ExampleTypeMap() {
 func ExampleTreap_Delete() {
 	treap := NewTreap[IntKey](IntLess)
 
-	// Create and insert keys
-	key10, key20, key30 := IntKey(10), IntKey(20), IntKey(30)
-	treap.Insert(&key10, 1)
-	treap.Insert(&key20, 2)
-	treap.Insert(&key30, 3)
+	// Insert keys
+	treap.Insert(IntKey(10), 1)
+	treap.Insert(IntKey(20), 2)
+	treap.Insert(IntKey(30), 3)
 
 	// Delete a node
-	treap.Delete(&key20)
+	treap.Delete(IntKey(20))
 
 	// Walk to verify deletion
 	treap.Walk(func(node TreapNodeInterface[IntKey]) {
-		fmt.Printf("%d ", *node.GetKey().(*IntKey))
+		fmt.Printf("%d ", node.GetKey().(IntKey))
 	})
 	fmt.Println()
 	// Output: 10 30
@@ -235,17 +221,16 @@ func ExampleTreap_UpdatePriority() {
 	treap := NewTreap[IntKey](IntLess)
 
 	// Insert with initial priority
-	key100 := IntKey(100)
-	treap.Insert(&key100, 50)
+	treap.Insert(IntKey(100), 50)
 
 	// Update priority (causes rebalancing)
-	treap.UpdatePriority(&key100, 250)
+	treap.UpdatePriority(IntKey(100), 250)
 
 	// Node is still accessible with new priority
-	node := treap.Search(&key100)
+	node := treap.Search(IntKey(100))
 	if node != nil && !node.IsNil() {
 		fmt.Printf("Key %d has new priority %d\n",
-			*node.GetKey().(*IntKey),
+			node.GetKey().(IntKey),
 			node.GetPriority())
 	}
 	// Output: Key 100 has new priority 250

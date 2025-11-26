@@ -33,11 +33,14 @@ func NewBlockAllocator(blockSize, blockCount int, startingFileOffset FileOffset,
 	}
 }
 
-//	func (a *blockAllocator) Close() error {
-//		// No resources to close
-//		return nil
-//	}
-func (a *blockAllocator) Allocate() (ObjectId, FileOffset, error) {
+// Allocate allocates a block of the specified size.
+// The size must match the blockSize configured for this allocator.
+// Returns an error if the size doesn't match or if all blocks are allocated.
+func (a *blockAllocator) Allocate(size int) (ObjectId, FileOffset, error) {
+	if size != a.blockSize {
+		return 0, 0, errors.New("size must match block size")
+	}
+
 	// TBD we currently use a list of booleans
 	// This is far from the most efficient structure
 	// And we could make use of a bitset, but KISS
@@ -115,10 +118,15 @@ func NewMultiBlockAllocator(blockSize, blockCount int, parent Allocator) *multiB
 }
 
 func (m *multiBlockAllocator) Allocate(size int) (ObjectId, FileOffset, error) {
+	// Verify the requested size matches our block size
+	if size != m.blockSize {
+		return 0, 0, errors.New("size must match block size")
+	}
+
 	for _, allocator := range m.allocators {
 		// TBD add a bitfield/map/whatever to track which allocators are full
 		// Then we can save quering them
-		objectId, fileOffset, err := allocator.Allocate()
+		objectId, fileOffset, err := allocator.Allocate(m.blockSize)
 		if err == nil {
 			return objectId, fileOffset, nil
 		}
@@ -147,7 +155,7 @@ func (m *multiBlockAllocator) Allocate(size int) (ObjectId, FileOffset, error) {
 	m.allocators = append(m.allocators, newAllocator)
 	m.startOffsets = append(m.startOffsets, parentFileOffset)
 
-	return newAllocator.Allocate()
+	return newAllocator.Allocate(m.blockSize)
 }
 
 func (m *multiBlockAllocator) Free(fileOffset FileOffset, size int) error {
@@ -284,7 +292,7 @@ func (o *omniBlockAllocator) Allocate(size int) (ObjectId, FileOffset, error) {
 	var fileOffset FileOffset
 	var err error
 	if ok {
-		objectId, fileOffset, err = allocator.Allocate()
+		objectId, fileOffset, err = allocator.Allocate(size)
 	} else {
 		// Defer to the parent allocator if size is not found
 		objectId, fileOffset, err = o.parent.Allocate(size)
@@ -323,28 +331,3 @@ func (o *omniBlockAllocator) Free(fileOffset FileOffset, size int) error {
 
 	return err
 }
-
-// func (o *omniBlockAllocator) Close() error {
-// 	for _, allocator := range o.blockMap {
-// 		if err := allocator.Close(); err != nil {
-// 			return err
-// 		}
-// 	}
-// 	return nil
-// }
-
-// func (o *omniBlockAllocator) DeleteObj(objectId ObjectId) error {
-// 	// Implement the logic to delete an object by its ObjectId
-// 	// This may involve freeing the associated blocks in the block allocator
-// 	return nil
-// }
-// func (o *omniBlockAllocator) LateReadObj(id ObjectId) (io.Reader, Finisher, error) {
-// 	// Implement the logic to read an object by its ObjectId
-// 	// This may involve retrieving the associated blocks in the block allocator
-// 	return nil, nil, nil
-// }
-// func (o *omniBlockAllocator) LateWriteNewObj(size int) (ObjectId, io.Writer, Finisher, error) {
-// 	// Implement the logic to write a new object by its size
-// 	// This may involve allocating blocks in the block allocator
-// 	return 0, nil, nil, nil
-// }
