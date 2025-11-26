@@ -195,19 +195,23 @@ func (t *Treap[T]) delete(node TreapNodeInterface[T], key T) TreapNodeInterface[
 
 // searchComplex searches for the node with the given key in the treap.
 // It accepts an optional callback that is called when a node is accessed during the search.
-func (t *Treap[T]) searchComplex(node TreapNodeInterface[T], key T, callback func(TreapNodeInterface[T])) TreapNodeInterface[T] {
+// The callback can return an error to abort the search.
+func (t *Treap[T]) searchComplex(node TreapNodeInterface[T], key T, callback func(TreapNodeInterface[T]) error) (TreapNodeInterface[T], error) {
 	if node == nil || node.IsNil() {
-		return node
+		return node, nil
 	}
 
 	// Call the callback if provided
 	if callback != nil {
-		callback(node)
+		err := callback(node)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	currentKey := node.GetKey()
 	if currentKey.Equals(key) {
-		return node
+		return node, nil
 	}
 
 	if t.Less(key, currentKey.Value()) {
@@ -220,10 +224,9 @@ func (t *Treap[T]) searchComplex(node TreapNodeInterface[T], key T, callback fun
 // search searches for the node with the given key in the treap.
 // It calls searchComplex with a nil callback.
 func (t *Treap[T]) search(node TreapNodeInterface[T], key T) TreapNodeInterface[T] {
-	return t.searchComplex(node, key, nil)
-}
-
-// InsertComplex inserts a new node with the given value and priority into the treap.
+	result, _ := t.searchComplex(node, key, nil)
+	return result
+} // InsertComplex inserts a new node with the given value and priority into the treap.
 // The type T must implement the Key[T] interface (e.g., IntKey, StringKey).
 // Use this method when you need to specify a custom priority value.
 func (t *Treap[T]) InsertComplex(value T, priority Priority) {
@@ -251,7 +254,8 @@ func (t *Treap[T]) Delete(value T) {
 // It accepts a callback that is called when a node is accessed during the search.
 // The callback receives the node that was accessed, allowing for custom operations
 // such as updating access times for LRU caching.
-func (t *Treap[T]) SearchComplex(value T, callback func(TreapNodeInterface[T])) TreapNodeInterface[T] {
+// The callback can return an error to abort the search.
+func (t *Treap[T]) SearchComplex(value T, callback func(TreapNodeInterface[T]) error) (TreapNodeInterface[T], error) {
 	// Since T implements Key[T], convert to get the comparable value
 	key := any(value).(Key[T])
 	return t.searchComplex(t.root, key.Value(), callback)
@@ -260,7 +264,8 @@ func (t *Treap[T]) SearchComplex(value T, callback func(TreapNodeInterface[T])) 
 // Search searches for the node with the given value in the treap.
 // It calls SearchComplex with a nil callback.
 func (t *Treap[T]) Search(value T) TreapNodeInterface[T] {
-	return t.SearchComplex(value, nil)
+	result, _ := t.SearchComplex(value, nil)
+	return result
 }
 
 // UpdatePriority updates the priority of the node with the given value.

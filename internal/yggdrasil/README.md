@@ -317,7 +317,8 @@ For persistent treaps working with large datasets:
 1. **Lazy loading**: Nodes loaded from disk only when accessed
 2. **Explicit persistence**: Call `Persist()` when you want to save
 3. **Memory release**: Call `Flush()` to save and free memory
-4. **Navigation**: Child nodes auto-load on access
+4. **Time-based flushing**: Call `FlushOlderThan()` to evict nodes not accessed recently
+5. **Navigation**: Child nodes auto-load on access
 
 **Example workflow:**
 ```go
@@ -333,6 +334,19 @@ node.(PersistentTreapNodeInterface[int]).Flush()
 // Reload later
 node, _ := NewFromObjectId[int](savedObjectId, treap, store)
 ```
+
+**Time-based memory management:**
+
+The `FlushOlderThan()` method allows you to automatically manage memory by flushing nodes that haven't been accessed recently. This is particularly useful for cache-like scenarios where you want to keep frequently accessed data in memory while evicting older data to disk:
+
+```go
+// Flush nodes not accessed in the last hour
+cutoffTime := time.Now().Unix() - 3600
+flushedCount, err := treap.FlushOlderThan(cutoffTime)
+// Nodes are still accessible - they'll be reloaded from disk as needed
+```
+
+See `ExamplePersistentPayloadTreap_flushOlderThan` in `examples_test.go` for a complete demonstration of using `FlushOlderThan()` to manage memory in a persistent treap.
 
 ## Design Patterns
 

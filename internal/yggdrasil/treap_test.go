@@ -1,6 +1,7 @@
 package yggdrasil
 
 import (
+	"errors"
 	"testing"
 )
 
@@ -44,14 +45,18 @@ func TestTreap(t *testing.T) {
 
 	// Test SearchComplex with callback
 	var accessedNodes []IntKey
-	callback := func(node TreapNodeInterface[IntKey]) {
+	callback := func(node TreapNodeInterface[IntKey]) error {
 		if node != nil && !node.IsNil() {
 			accessedNodes = append(accessedNodes, node.GetKey().(IntKey))
 		}
+		return nil
 	}
 
 	searchKey := IntKey(15)
-	foundNode := treap.SearchComplex(searchKey, callback)
+	foundNode, err := treap.SearchComplex(searchKey, callback)
+	if err != nil {
+		t.Errorf("Unexpected error from SearchComplex: %v", err)
+	}
 	if foundNode == nil {
 		t.Errorf("Expected to find key %d in the treap using SearchComplex", searchKey)
 	}
@@ -68,6 +73,45 @@ func TestTreap(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("Expected callback to be called with key %d, but it was not in the accessed nodes: %v", searchKey, accessedNodes)
+	}
+}
+
+func TestTreapSearchComplexWithError(t *testing.T) {
+	treap := NewTreap[IntKey](IntLess)
+
+	keys := []IntKey{10, 20, 15, 5, 30}
+	for _, key := range keys {
+		treap.Insert(key)
+	}
+
+	// Test that callback error aborts the search
+	var accessedCount int
+	expectedError := errors.New("custom error from callback")
+	callback := func(node TreapNodeInterface[IntKey]) error {
+		accessedCount++
+		// Always return error to test error handling
+		return expectedError
+	}
+
+	searchKey := IntKey(5) // Search for a key that exists
+	foundNode, err := treap.SearchComplex(searchKey, callback)
+
+	// Should get the error we returned
+	if err == nil {
+		t.Errorf("Expected error from callback, but got nil")
+	}
+	if err != expectedError {
+		t.Errorf("Expected error %v, but got %v", expectedError, err)
+	}
+
+	// Should not have found the node due to error
+	if foundNode != nil {
+		t.Errorf("Expected nil node when callback returns error, but got node with key %v", foundNode.GetKey())
+	}
+
+	// Should have accessed at least 1 node before error (the root)
+	if accessedCount < 1 {
+		t.Errorf("Expected at least 1 node access, but got %d", accessedCount)
 	}
 }
 

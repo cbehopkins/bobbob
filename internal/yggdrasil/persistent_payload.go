@@ -132,7 +132,7 @@ type PersistentPayloadTreapInterface[T any, P any] interface {
 	Insert(key PersistentKey[T], payload P)
 	InsertComplex(key PersistentKey[T], priority Priority, payload P)
 	Search(key PersistentKey[T]) PersistentPayloadNodeInterface[T, P]
-	SearchComplex(key PersistentKey[T], callback func(TreapNodeInterface[T])) PersistentPayloadNodeInterface[T, P]
+	SearchComplex(key PersistentKey[T], callback func(TreapNodeInterface[T]) error) (PersistentPayloadNodeInterface[T, P], error)
 	UpdatePriority(key PersistentKey[T], newPriority Priority)
 	UpdatePayload(key PersistentKey[T], newPayload P)
 	Persist() error
@@ -222,37 +222,41 @@ func (t *PersistentPayloadTreap[K, P]) Load(objId store.ObjectId) error {
 // The callback receives the node that was accessed, allowing for custom operations
 // such as updating access times for LRU caching or flushing stale nodes.
 // This method automatically updates the lastAccessTime on each accessed node.
-func (t *PersistentPayloadTreap[K, P]) SearchComplex(key PersistentKey[K], callback func(TreapNodeInterface[K])) PersistentPayloadNodeInterface[K, P] {
+// The callback can return an error to abort the search.
+func (t *PersistentPayloadTreap[K, P]) SearchComplex(key PersistentKey[K], callback func(TreapNodeInterface[K]) error) (PersistentPayloadNodeInterface[K, P], error) {
 	// Create a wrapper callback that updates the access time
-	wrappedCallback := func(node TreapNodeInterface[K]) {
+	wrappedCallback := func(node TreapNodeInterface[K]) error {
 		// Update the access time if this is a persistent node
 		if pNode, ok := node.(*PersistentPayloadTreapNode[K, P]); ok {
 			pNode.TouchAccessTime()
 		}
 		// Call the user's callback if provided
 		if callback != nil {
-			callback(node)
+			return callback(node)
 		}
+		return nil
 	}
 
-	node := t.searchComplex(t.root, key.Value(), wrappedCallback)
+	node, err := t.searchComplex(t.root, key.Value(), wrappedCallback)
+	if err != nil {
+		return nil, err
+	}
 	if node == nil {
-		return nil
+		return nil, nil
 	}
 	n, ok := node.(*PersistentPayloadTreapNode[K, P])
 	if !ok {
 		panic("Invalid type assertion in SearchComplex")
 	}
-	return n
+	return n, nil
 }
 
 // Search searches for the node with the given key in the persistent treap.
 // It calls SearchComplex with a nil callback.
 func (t *PersistentPayloadTreap[K, P]) Search(key PersistentKey[K]) PersistentPayloadNodeInterface[K, P] {
-	return t.SearchComplex(key, nil)
-}
-
-// UpdatePayload updates the payload of the node with the given key.
+	result, _ := t.SearchComplex(key, nil)
+	return result
+} // UpdatePayload updates the payload of the node with the given key.
 func (t *PersistentPayloadTreap[K, P]) UpdatePayload(key PersistentKey[K], newPayload P) {
 	node := t.Search(key)
 	if node != nil && !node.IsNil() {

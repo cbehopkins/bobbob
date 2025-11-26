@@ -1,6 +1,7 @@
 package yggdrasil
 
 import (
+	"errors"
 	"path/filepath"
 	"testing"
 
@@ -78,15 +79,19 @@ func TestPersistentTreapBasics(t *testing.T) {
 
 	// Test SearchComplex with callback
 	var accessedNodes []IntKey
-	callback := func(node TreapNodeInterface[IntKey]) {
+	callback := func(node TreapNodeInterface[IntKey]) error {
 		if node != nil && !node.IsNil() {
 			key := node.GetKey().(*IntKey)
 			accessedNodes = append(accessedNodes, *key)
 		}
+		return nil
 	}
 
 	searchKey := keys[1] // key with value 20
-	foundNode := treap.SearchComplex(searchKey, callback)
+	foundNode, err := treap.SearchComplex(searchKey, callback)
+	if err != nil {
+		t.Errorf("Unexpected error from SearchComplex: %v", err)
+	}
 	if foundNode == nil {
 		t.Errorf("Expected to find key %d in the treap using SearchComplex", *searchKey)
 	}
@@ -103,6 +108,61 @@ func TestPersistentTreapBasics(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("Expected callback to be called with key %d, but it was not in the accessed nodes: %v", *searchKey, accessedNodes)
+	}
+}
+
+func TestPersistentTreapSearchComplexWithError(t *testing.T) {
+	store := setupTestStore(t)
+	defer store.Close()
+
+	var keyTemplate *IntKey = (*IntKey)(new(int32))
+	treap := NewPersistentTreap[IntKey](IntLess, keyTemplate, store)
+
+	keys := []*IntKey{
+		(*IntKey)(new(int32)),
+		(*IntKey)(new(int32)),
+		(*IntKey)(new(int32)),
+		(*IntKey)(new(int32)),
+		(*IntKey)(new(int32)),
+	}
+	*keys[0] = 50
+	*keys[1] = 30
+	*keys[2] = 70
+	*keys[3] = 20
+	*keys[4] = 40
+
+	for _, key := range keys {
+		treap.Insert(key)
+	}
+
+	// Test that callback error aborts the search
+	var accessedCount int
+	expectedError := errors.New("custom error from callback")
+	callback := func(node TreapNodeInterface[IntKey]) error {
+		accessedCount++
+		// Always return error to test error handling
+		return expectedError
+	}
+
+	searchKey := keys[3] // Search for 20, which requires traversal
+	foundNode, err := treap.SearchComplex(searchKey, callback)
+
+	// Should get the error we returned
+	if err == nil {
+		t.Errorf("Expected error from callback, but got nil")
+	}
+	if err != expectedError {
+		t.Errorf("Expected error %v, but got %v", expectedError, err)
+	}
+
+	// Should not have found the node due to error
+	if foundNode != nil {
+		t.Errorf("Expected nil node when callback returns error, but got node with key %v", foundNode.GetKey())
+	}
+
+	// Should have accessed at least 1 node before error (the root)
+	if accessedCount < 1 {
+		t.Errorf("Expected at least 1 node access, but got %d", accessedCount)
 	}
 }
 

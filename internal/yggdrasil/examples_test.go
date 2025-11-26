@@ -2,6 +2,7 @@ package yggdrasil
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -43,6 +44,54 @@ func ExampleTreap_Walk() {
 	})
 	fmt.Println()
 	// Output: 10 20 30 40
+}
+
+// ExampleTreap_SearchComplex demonstrates using SearchComplex with a callback
+// that can return an error to abort the search. This is useful for implementing
+// access control, rate limiting, or conditional searches.
+func ExampleTreap_SearchComplex() {
+	treap := NewTreap[IntKey](IntLess)
+
+	// Insert some keys
+	treap.InsertComplex(IntKey(10), 1)
+	treap.InsertComplex(IntKey(20), 2)
+	treap.InsertComplex(IntKey(30), 3)
+	treap.InsertComplex(IntKey(40), 4)
+	treap.InsertComplex(IntKey(50), 5)
+
+	// Example 1: Track which nodes are accessed during search
+	var accessedNodes []int
+	callback := func(node TreapNodeInterface[IntKey]) error {
+		key := int(node.GetKey().(IntKey))
+		accessedNodes = append(accessedNodes, key)
+		return nil
+	}
+
+	node, err := treap.SearchComplex(IntKey(30), callback)
+	if err == nil && node != nil {
+		fmt.Printf("Found: %d\n", node.GetKey().(IntKey))
+		fmt.Printf("Accessed nodes: %v\n", accessedNodes)
+	}
+
+	// Example 2: Abort search based on a condition
+	accessCount := 0
+	limitCallback := func(node TreapNodeInterface[IntKey]) error {
+		accessCount++
+		if accessCount >= 3 {
+			return errors.New("access limit exceeded")
+		}
+		return nil
+	}
+
+	node, err = treap.SearchComplex(IntKey(10), limitCallback)
+	if err != nil {
+		fmt.Printf("Search aborted: %v\n", err)
+	}
+
+	// Output:
+	// Found: 30
+	// Accessed nodes: [50 40 30]
+	// Search aborted: access limit exceeded
 }
 
 // ExamplePayloadTreap demonstrates using a treap with data payloads.
@@ -214,6 +263,61 @@ func ExamplePersistentTreap() {
 	})
 	fmt.Println()
 	// Output: 3 5 7
+}
+
+// ExamplePersistentTreap_SearchComplex demonstrates using SearchComplex with a persistent treap
+// to track which nodes are accessed during a search operation.
+func ExamplePersistentTreap_SearchComplex() {
+	tmpFile := filepath.Join(os.TempDir(), "example_search_complex.bin")
+	defer os.Remove(tmpFile)
+
+	s, _ := store.NewBasicStore(tmpFile)
+	defer s.Close()
+
+	treap := NewPersistentTreap[IntKey](IntLess, (*IntKey)(new(int32)), s)
+
+	// Insert some keys
+	for _, val := range []int32{10, 20, 30, 40, 50} {
+		key := IntKey(val)
+		treap.InsertComplex(&key, Priority(val))
+	}
+	treap.Persist()
+
+	// Track which nodes are accessed during search
+	fmt.Println("Tracking accessed nodes:")
+	accessedKeys := []IntKey{}
+	searchKey := IntKey(40)
+	node, err := treap.SearchComplex(&searchKey, func(n TreapNodeInterface[IntKey]) error {
+		accessedKeys = append(accessedKeys, *n.GetKey().(*IntKey))
+		return nil
+	})
+	if err == nil && node != nil {
+		fmt.Printf("Found: %d\n", searchKey)
+		fmt.Printf("Accessed nodes: %v\n", accessedKeys)
+	}
+
+	// Example with error: abort search after accessing too many nodes
+	fmt.Println("\nAborting search:")
+	accessCount := 0
+	searchKey2 := IntKey(10)
+	_, err = treap.SearchComplex(&searchKey2, func(n TreapNodeInterface[IntKey]) error {
+		accessCount++
+		if accessCount > 1 {
+			return errors.New("access limit exceeded")
+		}
+		return nil
+	})
+	if err != nil {
+		fmt.Printf("Search aborted: %v\n", err)
+	}
+
+	// Output:
+	// Tracking accessed nodes:
+	// Found: 40
+	// Accessed nodes: [50 40]
+	//
+	// Aborting search:
+	// Search aborted: access limit exceeded
 }
 
 // ExampleTreap_UpdatePriority demonstrates changing node priorities.
@@ -425,6 +529,75 @@ func ExampleJsonPayload() {
 	}
 
 	// Output: Product: Wireless Mouse, Price: $29.99, Stock: 50
+}
+
+// ExamplePersistentPayloadTreap_flushOlderThan demonstrates using FlushOlderThan
+// to manage memory by flushing nodes from memory while keeping them on disk.
+// This is useful for large treaps where you want to reduce memory usage by
+// flushing nodes that can be reloaded from disk when needed.
+func ExamplePersistentPayloadTreap_flushOlderThan() {
+	tmpFile := filepath.Join(os.TempDir(), "cache_data.bin")
+	defer os.Remove(tmpFile)
+
+	s, _ := store.NewBasicStore(tmpFile)
+	defer s.Close()
+
+	// Create a persistent treap for caching data
+	treap := NewPersistentPayloadTreap[StringKey, JsonPayload[Product]](
+		StringLess,
+		(*StringKey)(new(string)),
+		s,
+	)
+
+	// Add cache entries
+	item1 := StringKey("item1")
+	item2 := StringKey("item2")
+	item3 := StringKey("item3")
+
+	// Note using insertComplex to specify priorities to get the expected tree structure
+	treap.InsertComplex(&item1, 100, JsonPayload[Product]{
+		Value: Product{Name: "Widget A", Price: 9.99, Stock: 5},
+	})
+
+	treap.InsertComplex(&item2, 200, JsonPayload[Product]{
+		Value: Product{Name: "Widget B", Price: 19.99, Stock: 10},
+	})
+
+	treap.InsertComplex(&item3, 300, JsonPayload[Product]{
+		Value: Product{Name: "Widget C", Price: 29.99, Stock: 15},
+	})
+
+	// Check how many nodes are in memory initially
+	beforeNodes := treap.GetInMemoryNodes()
+	fmt.Printf("Nodes in memory before flush: %d\n", len(beforeNodes))
+
+	// Flush all nodes from memory (using a future timestamp)
+	// This persists them to disk and removes them from RAM
+	futureTime := int64(9999999999) // Far future timestamp
+	flushedCount, err := treap.FlushOlderThan(futureTime)
+	if err != nil {
+		fmt.Printf("Error flushing: %v\n", err)
+		return
+	}
+
+	fmt.Printf("Flushed %d node(s) from memory\n", flushedCount)
+
+	// Check memory usage after flush
+	afterNodes := treap.GetInMemoryNodes()
+	fmt.Printf("Nodes in memory after flush: %d\n", len(afterNodes))
+
+	// Items are still accessible (automatically loaded from disk)
+	node := treap.Search(&item1)
+	if node != nil && !node.IsNil() {
+		product := node.GetPayload().Value
+		fmt.Printf("Item still accessible: %s\n", product.Name)
+	}
+
+	// Output:
+	// Nodes in memory before flush: 3
+	// Flushed 3 node(s) from memory
+	// Nodes in memory after flush: 1
+	// Item still accessible: Widget A
 }
 
 // ExampleJsonPayload_loadAndUpdate demonstrates loading a persisted treap

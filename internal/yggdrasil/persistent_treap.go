@@ -505,17 +505,19 @@ func (t *PersistentTreap[T]) Delete(key PersistentKey[T]) {
 // The callback receives the node that was accessed, allowing for custom operations
 // such as updating access times for LRU caching or flushing stale nodes.
 // This method automatically updates the lastAccessTime on each accessed node.
-func (t *PersistentTreap[T]) SearchComplex(key PersistentKey[T], callback func(TreapNodeInterface[T])) TreapNodeInterface[T] {
+// The callback can return an error to abort the search.
+func (t *PersistentTreap[T]) SearchComplex(key PersistentKey[T], callback func(TreapNodeInterface[T]) error) (TreapNodeInterface[T], error) {
 	// Create a wrapper callback that updates the access time
-	wrappedCallback := func(node TreapNodeInterface[T]) {
+	wrappedCallback := func(node TreapNodeInterface[T]) error {
 		// Update the access time if this is a persistent node
 		if pNode, ok := node.(*PersistentTreapNode[T]); ok {
 			pNode.TouchAccessTime()
 		}
 		// Call the user's callback if provided
 		if callback != nil {
-			callback(node)
+			return callback(node)
 		}
+		return nil
 	}
 	return t.searchComplex(t.root, key.Value(), wrappedCallback)
 }
@@ -523,7 +525,8 @@ func (t *PersistentTreap[T]) SearchComplex(key PersistentKey[T], callback func(T
 // Search searches for the node with the given key in the persistent treap.
 // It calls SearchComplex with a nil callback.
 func (t *PersistentTreap[T]) Search(key PersistentKey[T]) TreapNodeInterface[T] {
-	return t.SearchComplex(key, nil)
+	result, _ := t.SearchComplex(key, nil)
+	return result
 }
 
 // UpdatePriority updates the priority of the node with the given key.
