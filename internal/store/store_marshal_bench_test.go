@@ -1,12 +1,8 @@
-// This file contains benchmarks to evaluate the FIXME comments in store_marshal.go
-// regarding the writeObjects function.
-//
-// The FIXME asks: "Can we detect the objects are consecutive and write them in one go?"
-// and "do we even need to - write a benchmark!"
+// This file contains benchmarks to evaluate different approaches for writing multiple objects.
 //
 // Three benchmarks compare different approaches:
 //
-//  1. BenchmarkWriteObjects - Current implementation
+//  1. BenchmarkWriteObjects - Sequential writes
 //     Writes each object individually without any optimization.
 //     This is the baseline performance.
 //
@@ -14,11 +10,9 @@
 //     Detects consecutive objects and groups them, but still writes individually.
 //     This measures the overhead of the detection logic.
 //
-//  3. BenchmarkWriteObjectsBatched - With detection and grouping
-//     Detects consecutive objects and attempts to optimize writing them.
-//     Note: Currently this doesn't provide true batched writes to the file system
-//     because that would require changes to the Storer interface. It still writes
-//     each object individually but shows what the performance would be with the
+//  3. BenchmarkWriteObjectsBatched - Batched writes
+//     Detects consecutive objects and uses WriteBatchedObjs for optimization.
+//     This demonstrates the performance benefit of batched writes.
 //     detection overhead.
 //
 // To run these benchmarks:

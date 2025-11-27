@@ -151,8 +151,6 @@ func TestVaultMultipleCollections(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to close vault: %v", err)
 	}
-
-	// TODO: In a future iteration, we'll test reloading the vault
 }
 
 // TestVaultKeyOnlyCollection demonstrates creating a collection

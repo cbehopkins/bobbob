@@ -129,6 +129,12 @@ func (s *baseStore) updateInitialOffset(fileOffset FileOffset) error {
 // If it doesn't exist yet, it allocates it with the specified size.
 // This provides a stable, known location for storing top-level metadata.
 func (s *baseStore) PrimeObject(size int) (ObjectId, error) {
+	// Sanity check: prevent unreasonably large prime objects
+	const maxPrimeObjectSize = 1024 * 1024 // 1MB should be plenty for metadata
+	if size < 0 || size > maxPrimeObjectSize {
+		return ObjNotAllocated, fmt.Errorf("invalid prime object size %d (must be between 0 and %d)", size, maxPrimeObjectSize)
+	}
+
 	if err := s.checkFileInitialized(); err != nil {
 		return ObjNotAllocated, err
 	}

@@ -1,3 +1,56 @@
+// Package yggdrasil provides persistent treap (tree + heap) data structures
+// with support for multiple collections, type safety, and efficient serialization.
+//
+// # Core Components
+//
+// Treap: A randomized binary search tree that uses heap properties for balancing.
+// Each node has a key (for BST ordering) and a random priority (for heap property).
+//
+// PersistentTreap: A treap that stores nodes in a persistent store (file-backed).
+// Supports efficient storage and retrieval of tree structures.
+//
+// PersistentPayloadTreap: A treap where each node can store an associated payload.
+// Useful for key-value stores where values can be complex types.
+//
+// Vault: A multi-collection manager that coordinates multiple treaps in a single
+// store file, with type registration and metadata management.
+//
+// # Type System
+//
+// TypeMap: Maps Go types to compact short codes for efficient serialization.
+// Ensures type safety when loading data across sessions.
+//
+// Key Types: IntKey, StringKey, ShortUIntKey - wrapper types that implement
+// PersistentKey interface for storage in treaps.
+//
+// # Usage Example
+//
+//	type UserData struct {
+//	    Username string
+//	    Email    string
+//	}
+//
+//	// Create a vault with a store
+//	stre, _ := store.NewBasicStore("data.db")
+//	vault := yggdrasil.NewVault(stre)
+//
+//	// Register types
+//	vault.RegisterType((*yggdrasil.StringKey)(new(string)))
+//	vault.RegisterType(yggdrasil.JsonPayload[UserData]{})
+//
+//	// Create a collection
+//	users, _ := yggdrasil.GetOrCreateCollection[yggdrasil.StringKey, yggdrasil.JsonPayload[UserData]](
+//	    vault, "users", yggdrasil.StringLess, (*yggdrasil.StringKey)(new(string)),
+//	)
+//
+//	// Insert data
+//	key := yggdrasil.StringKey("alice")
+//	users.Insert(&key, yggdrasil.JsonPayload[UserData]{
+//	    Value: UserData{Username: "alice", Email: "alice@example.com"},
+//	})
+//
+//	// Save and close
+//	vault.Close()
 package yggdrasil
 
 import (

@@ -339,7 +339,7 @@ func TestPersistentTreapPersistence(t *testing.T) {
 
 	// Create a new treap with the loaded store
 	treap = NewPersistentTreap[IntKey](IntLess, (*IntKey)(new(int32)), store1)
-	// FIXME at some point I need to figure out how to persist the root ObjectId of the treap
+
 	err = treap.Load(treapObjectId)
 	if err != nil {
 		t.Fatalf("Failed to load treap: %v", err)

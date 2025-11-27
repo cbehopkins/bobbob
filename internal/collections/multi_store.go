@@ -1,3 +1,28 @@
+// Package collections provides specialized store implementations optimized
+// for specific use cases.
+//
+// # MultiStore
+//
+// MultiStore is a store implementation that uses multiple allocators to optimize
+// storage for different object sizes. It's particularly optimized for persistent
+// treap nodes which have predictable size patterns.
+//
+// Features:
+//   - Root allocator for large/variable-size objects
+//   - Block allocators optimized for fixed-size treap nodes
+//   - Automatic size-based allocation routing
+//   - Reduced fragmentation for treap-heavy workloads
+//
+// Usage:
+//
+//	ms, err := collections.NewMultiStore("data.db")
+//	if err != nil {
+//	    return err
+//	}
+//	defer ms.Close()
+//
+//	// Use ms as a regular store.Storer
+//	objId, err := ms.NewObj(1024)
 package collections
 
 import (
@@ -375,10 +400,16 @@ func (s *multiStore) DeleteObj(objId store.ObjectId) error {
 }
 
 // PrimeObject returns a dedicated ObjectId for application metadata.
-// For multiStore, this is the first allocated object (after the 8-byte header at ObjectId 0).
+// For multiStore, this is the first object after the 8-byte header at ObjectId 0.
 // If it doesn't exist yet, it allocates it with the specified size.
 // This provides a stable, known location for storing top-level metadata.
 func (s *multiStore) PrimeObject(size int) (store.ObjectId, error) {
+	// Sanity check: prevent unreasonably large prime objects
+	const maxPrimeObjectSize = 1024 * 1024 // 1MB should be plenty for metadata
+	if size < 0 || size > maxPrimeObjectSize {
+		return store.ObjNotAllocated, errors.New("invalid prime object size")
+	}
+
 	// For multiStore, the prime object is the first object after the header
 	const headerSize = 8
 	const primeObjectId = store.ObjectId(headerSize)

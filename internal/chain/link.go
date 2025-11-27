@@ -1,3 +1,44 @@
+// Package chain provides a persistent linked list implementation with support
+// for storing ordered sequences of items in a file-backed store.
+//
+// # Link
+//
+// A Link represents a node in a persistent linked list. Each link stores:
+//   - Value: The data stored in this node
+//   - Next: ObjectId pointing to the next link (or ObjNotAllocated if tail)
+//   - Prev: ObjectId pointing to the previous link (or ObjNotAllocated if head)
+//
+// Links support efficient insertion, deletion, and traversal operations while
+// maintaining persistence across sessions.
+//
+// # Features
+//
+//   - Bidirectional traversal (doubly-linked)
+//   - Persistent storage in file-backed store
+//   - Type-safe with Go generics
+//   - Efficient append/prepend operations
+//   - Support for reversing link chains
+//
+// # Usage Example
+//
+//	type Item struct {
+//	    Name  string
+//	    Value int
+//	}
+//
+//	stre, _ := store.NewBasicStore("chain.db")
+//	defer stre.Close()
+//
+//	// Create a new link
+//	link := chain.NewLink[Item]()
+//	link.SetValue(Item{Name: "first", Value: 1})
+//
+//	// Write to store
+//	objId, _ := link.Write(stre)
+//
+//	// Read back
+//	loadedLink := chain.NewLink[Item]()
+//	loadedLink.Read(stre, objId)
 package chain
 
 import (
