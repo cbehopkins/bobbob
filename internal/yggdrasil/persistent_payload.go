@@ -411,22 +411,6 @@ func (n *PersistentPayloadTreapNode[K, P]) sizeInBytes() int {
 	return keySize + prioritySize + leftSize + rightSize + selfSize + payloadSize
 }
 
-// ObjectId returns the object ID of the node, allocating one if necessary.
-// Messy Implementation - this is a repeat of the one for PersistentTreapNode
-func (n *PersistentPayloadTreapNode[K, P]) ObjectId() (store.ObjectId, error) {
-	if n == nil {
-		return store.ObjNotAllocated, nil
-	}
-	if n.objectId < 0 {
-		objId, err := n.Store.NewObj(n.sizeInBytes())
-		if err != nil {
-			return store.ObjNotAllocated, err
-		}
-		n.objectId = objId
-	}
-	return n.objectId, nil
-}
-
 // Marshal should Return some byte slice representing the payload treap
 func (t *PersistentPayloadTreap[K, P]) Marshal() ([]byte, error) {
 	root := t.root.(*PersistentPayloadTreapNode[K, P])
