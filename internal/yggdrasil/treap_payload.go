@@ -1,5 +1,7 @@
 package yggdrasil
 
+import "fmt"
+
 // PayloadTreapNode represents a node in the PayloadTreap.
 type PayloadTreapNode[K any, P any] struct {
 	TreapNode[K]
@@ -19,13 +21,31 @@ func (n *PayloadTreapNode[K, P]) GetRight() TreapNodeInterface[K] {
 }
 
 // SetLeft sets the left child of the node.
-func (n *PayloadTreapNode[K, P]) SetLeft(left TreapNodeInterface[K]) {
-	n.left = left.(*PayloadTreapNode[K, P])
+func (n *PayloadTreapNode[K, P]) SetLeft(left TreapNodeInterface[K]) error {
+	if left == nil {
+		n.left = nil
+		return nil
+	}
+	tmp, ok := left.(*PayloadTreapNode[K, P])
+	if !ok {
+		return fmt.Errorf("left child is not a PayloadTreapNode")
+	}
+	n.left = tmp
+	return nil
 }
 
 // SetRight sets the right child of the node.
-func (n *PayloadTreapNode[K, P]) SetRight(right TreapNodeInterface[K]) {
-	n.right = right.(*PayloadTreapNode[K, P])
+func (n *PayloadTreapNode[K, P]) SetRight(right TreapNodeInterface[K]) error {
+	if right == nil {
+		n.right = nil
+		return nil
+	}
+	tmp, ok := right.(*PayloadTreapNode[K, P])
+	if !ok {
+		return fmt.Errorf("right child is not a PayloadTreapNode")
+	}
+	n.right = tmp
+	return nil
 }
 
 // IsNil checks if the node is nil.

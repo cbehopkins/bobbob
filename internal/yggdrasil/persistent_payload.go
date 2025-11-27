@@ -35,23 +35,27 @@ func (n *PersistentPayloadTreapNode[K, P]) SetPayload(payload P) {
 }
 
 // SetLeft sets the left child of the node.
-func (n *PersistentPayloadTreapNode[K, P]) SetLeft(left TreapNodeInterface[K]) {
+func (n *PersistentPayloadTreapNode[K, P]) SetLeft(left TreapNodeInterface[K]) error {
 	if left == nil {
-		n.PersistentTreapNode.SetLeft(nil)
-		return
+		return n.PersistentTreapNode.SetLeft(nil)
 	}
-	tmp := left.(*PersistentPayloadTreapNode[K, P])
-	n.PersistentTreapNode.SetLeft(tmp)
+	tmp, ok := left.(*PersistentPayloadTreapNode[K, P])
+	if !ok {
+		return fmt.Errorf("left child is not a PersistentPayloadTreapNode")
+	}
+	return n.PersistentTreapNode.SetLeft(tmp)
 }
 
 // SetRight sets the right child of the node.
-func (n *PersistentPayloadTreapNode[K, P]) SetRight(right TreapNodeInterface[K]) {
+func (n *PersistentPayloadTreapNode[K, P]) SetRight(right TreapNodeInterface[K]) error {
 	if right == nil {
-		n.PersistentTreapNode.SetRight(nil)
-		return
+		return n.PersistentTreapNode.SetRight(nil)
 	}
-	tmp := right.(*PersistentPayloadTreapNode[K, P])
-	n.PersistentTreapNode.SetRight(tmp)
+	tmp, ok := right.(*PersistentPayloadTreapNode[K, P])
+	if !ok {
+		return fmt.Errorf("right child is not a PersistentPayloadTreapNode")
+	}
+	return n.PersistentTreapNode.SetRight(tmp)
 }
 
 // GetLeft returns the left child of the node.
@@ -84,12 +88,12 @@ func (n *PersistentPayloadTreapNode[K, P]) GetRight() TreapNodeInterface[K] {
 func (n *PersistentPayloadTreapNode[K, P]) Marshal() ([]byte, error) {
 	baseData, err := n.PersistentTreapNode.Marshal()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to marshal base treap node: %w", err)
 	}
 
 	payloadData, err := n.payload.Marshal()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to marshal payload: %w", err)
 	}
 
 	return append(baseData, payloadData...), nil
@@ -100,7 +104,7 @@ func (n *PersistentPayloadTreapNode[K, P]) unmarshal(data []byte, key Persistent
 	// Unmarshal the base PersistentTreapNode
 	err := n.PersistentTreapNode.unmarshal(data, key)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to unmarshal base treap node: %w", err)
 	}
 
 	// Calculate the offset for the payload data
@@ -114,11 +118,11 @@ func (n *PersistentPayloadTreapNode[K, P]) unmarshal(data []byte, key Persistent
 	// Unmarshal the payload
 	val, err := n.payload.Unmarshal(data[payloadOffset:])
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to unmarshal payload data: %w", err)
 	}
 	payload, ok := val.(P)
 	if !ok {
-		return fmt.Errorf("failed to unmarshal payload")
+		return fmt.Errorf("unmarshalled payload is not of expected type P")
 	}
 	n.payload = payload
 	return nil
@@ -211,7 +215,7 @@ func NewPayloadFromObjectId[T any, P PersistentPayload[P]](objId store.ObjectId,
 	}
 	err := store.ReadGeneric(stre, tmp, objId)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to read payload node from store (objectId=%d): %w", objId, err)
 	}
 	return tmp, nil
 }
@@ -251,7 +255,7 @@ func (t *PersistentPayloadTreap[K, P]) SearchComplex(key PersistentKey[K], callb
 	}
 	n, ok := node.(*PersistentPayloadTreapNode[K, P])
 	if !ok {
-		panic("Invalid type assertion in SearchComplex")
+		return nil, fmt.Errorf("node is not a PersistentPayloadTreapNode")
 	}
 	return n, nil
 }
@@ -265,15 +269,20 @@ func (t *PersistentPayloadTreap[K, P]) Search(key PersistentKey[K]) PersistentPa
 func (t *PersistentPayloadTreap[K, P]) UpdatePayload(key PersistentKey[K], newPayload P) {
 	node := t.Search(key)
 	if node != nil && !node.IsNil() {
-		payloadNode := node.(*PersistentPayloadTreapNode[K, P])
-		payloadNode.SetPayload(newPayload)
-		payloadNode.Persist()
+		payloadNode, ok := node.(*PersistentPayloadTreapNode[K, P])
+		if ok {
+			payloadNode.SetPayload(newPayload)
+			payloadNode.Persist()
+		}
 	}
 }
 
 func (t *PersistentPayloadTreap[K, P]) Persist() error {
 	if t.root != nil {
-		rootNode := t.root.(*PersistentPayloadTreapNode[K, P])
+		rootNode, ok := t.root.(*PersistentPayloadTreapNode[K, P])
+		if !ok {
+			return fmt.Errorf("root is not a PersistentPayloadTreapNode")
+		}
 		return rootNode.Persist()
 	}
 	return nil
@@ -382,24 +391,30 @@ func (k *PersistentPayloadTreapNode[K, P]) UnmarshalFromObjectId(id store.Object
 func (n *PersistentPayloadTreapNode[K, P]) Persist() error {
 	// Persist children first so their object IDs are available when marshaling the parent
 	if n.GetLeft() != nil {
-		leftNode := n.GetLeft().(*PersistentPayloadTreapNode[K, P])
+		leftNode, ok := n.GetLeft().(*PersistentPayloadTreapNode[K, P])
+		if !ok {
+			return fmt.Errorf("left child is not a PersistentPayloadTreapNode")
+		}
 		err := leftNode.Persist()
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to persist left child: %w", err)
 		}
 	}
 	if n.GetRight() != nil {
-		rightNode := n.GetRight().(*PersistentPayloadTreapNode[K, P])
+		rightNode, ok := n.GetRight().(*PersistentPayloadTreapNode[K, P])
+		if !ok {
+			return fmt.Errorf("right child is not a PersistentPayloadTreapNode")
+		}
 		err := rightNode.Persist()
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to persist right child: %w", err)
 		}
 	}
 
 	// Now marshal and persist this node
 	objId, err := n.MarshalToObjectId(n.Store)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to marshal payload node to object ID: %w", err)
 	}
 	n.objectId = objId
 	return nil
@@ -418,7 +433,10 @@ func (n *PersistentPayloadTreapNode[K, P]) sizeInBytes() int {
 
 // Marshal should Return some byte slice representing the payload treap
 func (t *PersistentPayloadTreap[K, P]) Marshal() ([]byte, error) {
-	root := t.root.(*PersistentPayloadTreapNode[K, P])
+	root, ok := t.root.(*PersistentPayloadTreapNode[K, P])
+	if !ok {
+		return nil, fmt.Errorf("root is not a PersistentPayloadTreapNode")
+	}
 	return root.objectId.Marshal()
 }
 

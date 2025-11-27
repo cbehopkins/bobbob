@@ -44,8 +44,8 @@ type TreapNodeInterface[T any] interface {
 	SetPriority(Priority)
 	GetLeft() TreapNodeInterface[T]
 	GetRight() TreapNodeInterface[T]
-	SetLeft(TreapNodeInterface[T])
-	SetRight(TreapNodeInterface[T])
+	SetLeft(TreapNodeInterface[T]) error
+	SetRight(TreapNodeInterface[T]) error
 	IsNil() bool
 }
 
@@ -84,13 +84,15 @@ func (n *TreapNode[T]) GetRight() TreapNodeInterface[T] {
 }
 
 // SetLeft sets the left child of the node.
-func (n *TreapNode[T]) SetLeft(left TreapNodeInterface[T]) {
+func (n *TreapNode[T]) SetLeft(left TreapNodeInterface[T]) error {
 	n.left = left
+	return nil
 }
 
 // SetRight sets the right child of the node.
-func (n *TreapNode[T]) SetRight(right TreapNodeInterface[T]) {
+func (n *TreapNode[T]) SetRight(right TreapNodeInterface[T]) error {
 	n.right = right
+	return nil
 }
 
 // IsNil checks if the node is nil.
@@ -125,16 +127,16 @@ func NewTreap[T any](lessFunc func(a, b T) bool) *Treap[T] {
 // rotateRight performs a right rotation on the given node.
 func (t *Treap[T]) rotateRight(node TreapNodeInterface[T]) TreapNodeInterface[T] {
 	newRoot := node.GetLeft()
-	node.SetLeft(newRoot.GetRight())
-	newRoot.SetRight(node)
+	_ = node.SetLeft(newRoot.GetRight())
+	_ = newRoot.SetRight(node)
 	return newRoot
 }
 
 // rotateLeft performs a left rotation on the given node.
 func (t *Treap[T]) rotateLeft(node TreapNodeInterface[T]) TreapNodeInterface[T] {
 	newRoot := node.GetRight()
-	node.SetRight(newRoot.GetLeft())
-	newRoot.SetLeft(node)
+	_ = node.SetRight(newRoot.GetLeft())
+	_ = newRoot.SetLeft(node)
 	return newRoot
 }
 
@@ -145,12 +147,12 @@ func (t *Treap[T]) insert(node TreapNodeInterface[T], newNode TreapNodeInterface
 	}
 
 	if t.Less(newNode.GetKey().Value(), node.GetKey().Value()) {
-		node.SetLeft(t.insert(node.GetLeft(), newNode))
+		_ = node.SetLeft(t.insert(node.GetLeft(), newNode))
 		if node.GetLeft() != nil && node.GetLeft().GetPriority() > node.GetPriority() {
 			node = t.rotateRight(node)
 		}
 	} else {
-		node.SetRight(t.insert(node.GetRight(), newNode))
+		_ = node.SetRight(t.insert(node.GetRight(), newNode))
 		if node.GetRight() != nil && node.GetRight().GetPriority() > node.GetPriority() {
 			node = t.rotateLeft(node)
 		}
@@ -166,9 +168,9 @@ func (t *Treap[T]) delete(node TreapNodeInterface[T], key T) TreapNodeInterface[
 	}
 
 	if t.Less(key, node.GetKey().Value()) {
-		node.SetLeft(t.delete(node.GetLeft(), key))
+		_ = node.SetLeft(t.delete(node.GetLeft(), key))
 	} else if t.Less(node.GetKey().Value(), key) {
-		node.SetRight(t.delete(node.GetRight(), key))
+		_ = node.SetRight(t.delete(node.GetRight(), key))
 	} else {
 		left := node.GetLeft()
 		right := node.GetRight()
@@ -183,10 +185,10 @@ func (t *Treap[T]) delete(node TreapNodeInterface[T], key T) TreapNodeInterface[
 		rightPriority := right.GetPriority()
 		if leftPriority > rightPriority {
 			node = t.rotateRight(node)
-			node.SetRight(t.delete(node.GetRight(), key))
+			_ = node.SetRight(t.delete(node.GetRight(), key))
 		} else {
 			node = t.rotateLeft(node)
-			node.SetLeft(t.delete(node.GetLeft(), key))
+			_ = node.SetLeft(t.delete(node.GetLeft(), key))
 		}
 	}
 

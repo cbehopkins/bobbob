@@ -3,6 +3,7 @@ package store
 import (
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"sync"
@@ -59,27 +60,27 @@ func NewBasicStore(filePath string) (*baseStore, error) {
 func LoadBaseStore(filePath string) (*baseStore, error) {
 	file, err := os.OpenFile(filePath, os.O_RDWR, 0o666)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to open store file %q: %w", filePath, err)
 	}
 
 	// Read the initial offset
 	var initialOffset int64
 	err = binary.Read(file, binary.LittleEndian, &initialOffset)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to read initial offset from %q: %w", filePath, err)
 	}
 
 	// Seek to the initial offset
 	_, err = file.Seek(initialOffset, io.SeekStart)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to seek to offset %d in %q: %w", initialOffset, filePath, err)
 	}
 
 	// Deserialize the ObjectMap directly from the file
 	objectMap := NewObjectMap()
 	err = objectMap.Deserialize(file)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to deserialize object map from %q: %w", filePath, err)
 	}
 	allocator := &BasicAllocator{
 		end: initialOffset,
@@ -95,7 +96,7 @@ func LoadBaseStore(filePath string) (*baseStore, error) {
 	// FIXME this should be done in its own go routine
 	err = allocator.RefreshFreeList(store)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to refresh free list for %q: %w", filePath, err)
 	}
 	return store, nil
 }
@@ -270,18 +271,18 @@ func (s *baseStore) Close() error {
 
 	data, err := s.objectMap.Marshal()
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to marshal object map: %w", err)
 	}
 	// We need a special method here to allocate LAST item in the file
 	// This is because we need to write the object map to the end of the file
 	_, fileOffset, err := s.allocator.Allocate(len(data))
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to allocate space for object map: %w", err)
 	}
 
 	n, err := s.file.WriteAt(data, int64(fileOffset))
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to write object map at offset %d: %w", fileOffset, err)
 	}
 	if n != len(data) {
 		return errors.New("did not write all the data")
@@ -289,12 +290,12 @@ func (s *baseStore) Close() error {
 
 	// Update the first object in the store with the offset of the serialized ObjectMap
 	if err := s.updateInitialOffset(FileOffset(fileOffset)); err != nil {
-		return err
+		return fmt.Errorf("failed to update initial offset to %d: %w", fileOffset, err)
 	}
 
 	err = s.file.Sync()
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to sync file to disk: %w", err)
 	}
 	return s.file.Close()
 }

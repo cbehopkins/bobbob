@@ -233,7 +233,10 @@ func TestPersistentTreapNodeInvalidateObjectId(t *testing.T) {
 	// Add a left child and check if ObjectId is invalidated
 	leftKey := IntKey(21)
 	leftNode := NewPersistentTreapNode[IntKey](&leftKey, Priority(50), stre, treap)
-	node.SetLeft(leftNode)
+	err = node.SetLeft(leftNode)
+	if err != nil {
+		t.Fatalf("Failed to set left child: %v", err)
+	}
 
 	if node.objectId != store.ObjNotAllocated {
 		t.Errorf("Expected ObjectId to be invalidated (set to store.ObjNotAllocated) after setting left child, got %d", node.objectId)
@@ -253,7 +256,10 @@ func TestPersistentTreapNodeInvalidateObjectId(t *testing.T) {
 	// Add a right child and check if ObjectId is invalidated
 	rightKey := IntKey(63)
 	rightNode := NewPersistentTreapNode[IntKey](&rightKey, Priority(70), stre, treap)
-	node.SetRight(rightNode)
+	err = node.SetRight(rightNode)
+	if err != nil {
+		t.Fatalf("Failed to set right child: %v", err)
+	}
 
 	if node.objectId != store.ObjNotAllocated {
 		t.Errorf("Expected ObjectId to be invalidated (set to store.ObjNotAllocated) after setting right child, got %d", node.objectId)
@@ -362,10 +368,16 @@ func TestPersistentTreapNodeMarshalUnmarshalWithChildren(t *testing.T) {
 	left := NewPersistentTreapNode[IntKey](&leftKey, 5, store0, parent)
 	right := NewPersistentTreapNode[IntKey](&rightKey, 15, store0, parent)
 
-	root.SetLeft(left)
-	root.SetRight(right)
+	err := root.SetLeft(left)
+	if err != nil {
+		t.Fatalf("Failed to set left child: %v", err)
+	}
+	err = root.SetRight(right)
+	if err != nil {
+		t.Fatalf("Failed to set right child: %v", err)
+	}
 
-	err := root.Persist()
+	err = root.Persist()
 	if err != nil {
 		t.Fatalf("Failed to persist root: %v", err)
 	}
