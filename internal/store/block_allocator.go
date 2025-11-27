@@ -331,3 +331,116 @@ func (o *omniBlockAllocator) Free(fileOffset FileOffset, size int) error {
 
 	return err
 }
+
+// Marshal serializes the omniBlockAllocator's state.
+// Format: [blockCount:4][numSizes:4][size1:4][size2:4]...[allocator1 data][allocator2 data]...
+func (o *omniBlockAllocator) Marshal() ([]byte, error) {
+	data := make([]byte, 0)
+
+	// Serialize blockCount
+	data = append(data,
+		byte(o.blockCount>>24), byte(o.blockCount>>16),
+		byte(o.blockCount>>8), byte(o.blockCount))
+
+	// Serialize the number of block sizes
+	numSizes := len(o.blockMap)
+	data = append(data,
+		byte(numSizes>>24), byte(numSizes>>16),
+		byte(numSizes>>8), byte(numSizes))
+
+	// Serialize block sizes in deterministic order (we'll use sorted order)
+	sizes := make([]int, 0, numSizes)
+	for size := range o.blockMap {
+		sizes = append(sizes, size)
+	}
+	// Simple insertion sort for small slices
+	for i := 1; i < len(sizes); i++ {
+		key := sizes[i]
+		j := i - 1
+		for j >= 0 && sizes[j] > key {
+			sizes[j+1] = sizes[j]
+			j--
+		}
+		sizes[j+1] = key
+	}
+
+	// Serialize sizes
+	for _, size := range sizes {
+		data = append(data,
+			byte(size>>24), byte(size>>16),
+			byte(size>>8), byte(size))
+	}
+
+	// Serialize each allocator's data
+	for _, size := range sizes {
+		allocator := o.blockMap[size]
+		allocatorData, err := allocator.Marshal()
+		if err != nil {
+			return nil, err
+		}
+		data = append(data, allocatorData...)
+	}
+
+	return data, nil
+}
+
+// Unmarshal deserializes the omniBlockAllocator's state.
+func (o *omniBlockAllocator) Unmarshal(data []byte) error {
+	if len(data) < 8 {
+		return errors.New("invalid data length")
+	}
+
+	offset := 0
+
+	// Deserialize blockCount
+	o.blockCount = int(data[offset])<<24 | int(data[offset+1])<<16 |
+		int(data[offset+2])<<8 | int(data[offset+3])
+	offset += 4
+
+	// Deserialize number of sizes
+	numSizes := int(data[offset])<<24 | int(data[offset+1])<<16 |
+		int(data[offset+2])<<8 | int(data[offset+3])
+	offset += 4
+
+	// Verify we have enough data for sizes
+	if len(data) < offset+numSizes*4 {
+		return errors.New("invalid data length for sizes")
+	}
+
+	// Deserialize sizes
+	sizes := make([]int, numSizes)
+	for i := 0; i < numSizes; i++ {
+		size := int(data[offset])<<24 | int(data[offset+1])<<16 |
+			int(data[offset+2])<<8 | int(data[offset+3])
+		sizes[i] = size
+		offset += 4
+	}
+
+	// Initialize blockMap
+	o.blockMap = make(map[int]*blockAllocator)
+
+	// Deserialize each allocator
+	for i, size := range sizes {
+		allocator := &blockAllocator{
+			blockSize:          size,
+			blockCount:         o.blockCount,
+			allocatedList:      make([]bool, o.blockCount),
+			startingFileOffset: 0,
+			startingObjectId:   ObjectId(i),
+		}
+
+		allocatorDataSize := (o.blockCount + 7) / 8
+		if len(data) < offset+allocatorDataSize {
+			return errors.New("invalid data length for allocator")
+		}
+
+		if err := allocator.Unmarshal(data[offset : offset+allocatorDataSize]); err != nil {
+			return err
+		}
+
+		o.blockMap[size] = allocator
+		offset += allocatorDataSize
+	}
+
+	return nil
+}

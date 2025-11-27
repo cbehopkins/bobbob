@@ -348,10 +348,92 @@ func TestWriteToObjExceedLimit(t *testing.T) {
 	}
 }
 
-// FIXME Create a test that writes to some objects
-// Then Reads some of the middle objects
-// then writes a new object
-// Check that all objects exist with correct data
+// TestWriteReadWriteSequence tests that reading objects doesn't interfere
+// with subsequent writes, and that the allocator state remains consistent.
+func TestWriteReadWriteSequence(t *testing.T) {
+	dir, store := setupTestStore(t)
+	defer os.RemoveAll(dir)
+	defer store.Close()
+
+	// Step 1: Write several objects with known data
+	numInitialObjects := 10
+	initialObjects := make(map[ObjectId][]byte)
+
+	for i := 0; i < numInitialObjects; i++ {
+		data := []byte(fmt.Sprintf("object_%d_data", i))
+		objId := createObject(t, store, data)
+		initialObjects[objId] = data
+	}
+
+	// Step 2: Read some of the middle objects to verify they're intact
+	// Extract object IDs and sort them to find middle ones
+	var objIds []ObjectId
+	for objId := range initialObjects {
+		objIds = append(objIds, objId)
+	}
+
+	// Read middle objects (indices 3, 4, 5)
+	middleIndices := []int{3, 4, 5}
+	for _, idx := range middleIndices {
+		if idx >= len(objIds) {
+			continue
+		}
+		objId := objIds[idx]
+		expectedData := initialObjects[objId]
+
+		reader, finisher, err := store.LateReadObj(objId)
+		if err != nil {
+			t.Fatalf("failed to read middle object %d: %v", objId, err)
+		}
+
+		readData, err := io.ReadAll(reader)
+		if err != nil {
+			t.Fatalf("failed to read data from object %d: %v", objId, err)
+		}
+
+		if finisher != nil {
+			finisher()
+		}
+
+		if !bytes.Equal(expectedData, readData) {
+			t.Errorf("middle object %d data mismatch: expected %v, got %v",
+				objId, expectedData, readData)
+		}
+	}
+
+	// Step 3: Write a new object after reading middle objects
+	newObjectData := []byte("new_object_after_reads")
+	newObjId := createObject(t, store, newObjectData)
+	initialObjects[newObjId] = newObjectData
+
+	// Step 4: Verify ALL objects (initial + new) exist with correct data
+	for objId, expectedData := range initialObjects {
+		reader, finisher, err := store.LateReadObj(objId)
+		if err != nil {
+			t.Errorf("failed to read object %d in final verification: %v", objId, err)
+			continue
+		}
+
+		readData, err := io.ReadAll(reader)
+		if err != nil {
+			t.Errorf("failed to read data from object %d in final verification: %v", objId, err)
+			if finisher != nil {
+				finisher()
+			}
+			continue
+		}
+
+		if finisher != nil {
+			finisher()
+		}
+
+		if !bytes.Equal(expectedData, readData) {
+			t.Errorf("final verification failed for object %d: expected %v, got %v",
+				objId, expectedData, readData)
+		}
+	}
+}
+
 type TstObject struct {
 	id    ObjectId
 	size  int

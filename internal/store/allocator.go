@@ -2,6 +2,7 @@ package store
 
 import (
 	"container/heap"
+	"errors"
 	"io"
 	"os"
 	"sync"
@@ -67,6 +68,12 @@ func NewBasicAllocator(file *os.File) (*BasicAllocator, error) {
 	return &BasicAllocator{end: offset, freeList: make(GapHeap, 0)}, nil
 }
 
+// NewEmptyBasicAllocator creates an uninitialized BasicAllocator.
+// This is used when loading from a serialized state.
+func NewEmptyBasicAllocator() *BasicAllocator {
+	return &BasicAllocator{freeList: make(GapHeap, 0)}
+}
+
 // RefreshFreeList to refresh the free list
 // This is an io intensive function
 func (a *BasicAllocator) RefreshFreeList(s *baseStore) error {
@@ -103,5 +110,120 @@ func (a *BasicAllocator) Free(fileOffset FileOffset, size int) error {
 	defer a.mu.Unlock()
 
 	heap.Push(&a.freeList, Gap{int64(fileOffset), int64(fileOffset) + int64(size)})
+	return nil
+}
+
+// Marshal serializes the BasicAllocator's state to a byte slice.
+// Format: [end:8 bytes][freeListCount:8 bytes][gap1.Start:8][gap1.End:8]...
+func (a *BasicAllocator) Marshal() ([]byte, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	// Calculate size: 8 bytes for end, 8 bytes for count, 16 bytes per gap
+	size := 16 + len(a.freeList)*16
+	data := make([]byte, size)
+
+	// Marshal end offset
+	offset := 0
+	data[offset] = byte(a.end >> 56)
+	data[offset+1] = byte(a.end >> 48)
+	data[offset+2] = byte(a.end >> 40)
+	data[offset+3] = byte(a.end >> 32)
+	data[offset+4] = byte(a.end >> 24)
+	data[offset+5] = byte(a.end >> 16)
+	data[offset+6] = byte(a.end >> 8)
+	data[offset+7] = byte(a.end)
+	offset += 8
+
+	// Marshal freeList count
+	freeListCount := int64(len(a.freeList))
+	data[offset] = byte(freeListCount >> 56)
+	data[offset+1] = byte(freeListCount >> 48)
+	data[offset+2] = byte(freeListCount >> 40)
+	data[offset+3] = byte(freeListCount >> 32)
+	data[offset+4] = byte(freeListCount >> 24)
+	data[offset+5] = byte(freeListCount >> 16)
+	data[offset+6] = byte(freeListCount >> 8)
+	data[offset+7] = byte(freeListCount)
+	offset += 8
+
+	// Marshal each gap
+	for _, gap := range a.freeList {
+		data[offset] = byte(gap.Start >> 56)
+		data[offset+1] = byte(gap.Start >> 48)
+		data[offset+2] = byte(gap.Start >> 40)
+		data[offset+3] = byte(gap.Start >> 32)
+		data[offset+4] = byte(gap.Start >> 24)
+		data[offset+5] = byte(gap.Start >> 16)
+		data[offset+6] = byte(gap.Start >> 8)
+		data[offset+7] = byte(gap.Start)
+		offset += 8
+
+		data[offset] = byte(gap.End >> 56)
+		data[offset+1] = byte(gap.End >> 48)
+		data[offset+2] = byte(gap.End >> 40)
+		data[offset+3] = byte(gap.End >> 32)
+		data[offset+4] = byte(gap.End >> 24)
+		data[offset+5] = byte(gap.End >> 16)
+		data[offset+6] = byte(gap.End >> 8)
+		data[offset+7] = byte(gap.End)
+		offset += 8
+	}
+
+	return data, nil
+}
+
+// Unmarshal deserializes the BasicAllocator's state from a byte slice.
+func (a *BasicAllocator) Unmarshal(data []byte) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	if len(data) < 16 {
+		return errors.New("invalid data length")
+	}
+
+	offset := 0
+
+	// Unmarshal end offset
+	a.end = int64(data[offset])<<56 | int64(data[offset+1])<<48 |
+		int64(data[offset+2])<<40 | int64(data[offset+3])<<32 |
+		int64(data[offset+4])<<24 | int64(data[offset+5])<<16 |
+		int64(data[offset+6])<<8 | int64(data[offset+7])
+	offset += 8
+
+	// Unmarshal freeList count
+	freeListCount := int(int64(data[offset])<<56 | int64(data[offset+1])<<48 |
+		int64(data[offset+2])<<40 | int64(data[offset+3])<<32 |
+		int64(data[offset+4])<<24 | int64(data[offset+5])<<16 |
+		int64(data[offset+6])<<8 | int64(data[offset+7]))
+	offset += 8
+
+	// Verify we have enough data
+	expectedLen := 16 + freeListCount*16
+	if len(data) != expectedLen {
+		return errors.New("invalid data length for freeList")
+	}
+
+	// Unmarshal gaps
+	a.freeList = make(GapHeap, freeListCount)
+	for i := 0; i < freeListCount; i++ {
+		start := int64(data[offset])<<56 | int64(data[offset+1])<<48 |
+			int64(data[offset+2])<<40 | int64(data[offset+3])<<32 |
+			int64(data[offset+4])<<24 | int64(data[offset+5])<<16 |
+			int64(data[offset+6])<<8 | int64(data[offset+7])
+		offset += 8
+
+		end := int64(data[offset])<<56 | int64(data[offset+1])<<48 |
+			int64(data[offset+2])<<40 | int64(data[offset+3])<<32 |
+			int64(data[offset+4])<<24 | int64(data[offset+5])<<16 |
+			int64(data[offset+6])<<8 | int64(data[offset+7])
+		offset += 8
+
+		a.freeList[i] = Gap{Start: start, End: end}
+	}
+
+	// Rebuild the heap
+	heap.Init(&a.freeList)
+
 	return nil
 }
