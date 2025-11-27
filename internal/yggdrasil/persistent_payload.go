@@ -143,7 +143,7 @@ type PersistentPayloadTreapInterface[T any, P any] interface {
 	Search(key PersistentKey[T]) PersistentPayloadNodeInterface[T, P]
 	SearchComplex(key PersistentKey[T], callback func(TreapNodeInterface[T]) error) (PersistentPayloadNodeInterface[T, P], error)
 	UpdatePriority(key PersistentKey[T], newPriority Priority)
-	UpdatePayload(key PersistentKey[T], newPayload P)
+	UpdatePayload(key PersistentKey[T], newPayload P) error
 	Persist() error
 	Load(objId store.ObjectId) error
 	Marshal() ([]byte, error)
@@ -266,15 +266,16 @@ func (t *PersistentPayloadTreap[K, P]) Search(key PersistentKey[K]) PersistentPa
 	result, _ := t.SearchComplex(key, nil)
 	return result
 } // UpdatePayload updates the payload of the node with the given key.
-func (t *PersistentPayloadTreap[K, P]) UpdatePayload(key PersistentKey[K], newPayload P) {
+func (t *PersistentPayloadTreap[K, P]) UpdatePayload(key PersistentKey[K], newPayload P) error {
 	node := t.Search(key)
 	if node != nil && !node.IsNil() {
 		payloadNode, ok := node.(*PersistentPayloadTreapNode[K, P])
 		if ok {
 			payloadNode.SetPayload(newPayload)
-			payloadNode.Persist()
+			return payloadNode.Persist()
 		}
 	}
+	return nil
 }
 
 func (t *PersistentPayloadTreap[K, P]) Persist() error {
@@ -453,6 +454,10 @@ func (t *PersistentPayloadTreap[K, P]) Unmarshal(data []byte) (UntypedPersistent
 	if err != nil {
 		return nil, err
 	}
-	t.root, _ = NewPayloadFromObjectId[K, P](rootId, &t.PersistentTreap, t.Store)
+	root, err := NewPayloadFromObjectId[K, P](rootId, &t.PersistentTreap, t.Store)
+	if err != nil {
+		return nil, err
+	}
+	t.root = root
 	return t, nil
 }
