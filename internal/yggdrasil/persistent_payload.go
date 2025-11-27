@@ -377,6 +377,19 @@ func (t *PersistentPayloadTreap[K, P]) FlushOlderThan(cutoffTimestamp int64) (in
 	return flushedCount, nil
 }
 
+// GetRootObjectId returns the ObjectId of the root node of the treap.
+// Returns ObjNotAllocated if the tree is empty or hasn't been persisted yet.
+func (t *PersistentPayloadTreap[K, P]) GetRootObjectId() (store.ObjectId, error) {
+	if t.root == nil {
+		return store.ObjNotAllocated, nil
+	}
+	rootNode, ok := t.root.(*PersistentPayloadTreapNode[K, P])
+	if !ok {
+		return store.ObjNotAllocated, fmt.Errorf("root is not a PersistentPayloadTreapNode")
+	}
+	return rootNode.ObjectId()
+}
+
 func (n *PersistentPayloadTreapNode[K, P]) MarshalToObjectId(stre store.Storer) (store.ObjectId, error) {
 	marshalled, err := n.Marshal()
 	if err != nil {

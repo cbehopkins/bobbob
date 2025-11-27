@@ -88,8 +88,14 @@ type BasicStorer interface {
 	NewObj(size int) (ObjectId, error)
 	// DeleteObj removes the object with the given ID.
 	DeleteObj(objId ObjectId) error
-	// Close closes the store and releases all resources.
+	// Close flushes any pending writes and closes the store.
 	Close() error
+	// PrimeObject returns the ObjectId reserved for application metadata.
+	// This is typically the first object allocated after the store's internal
+	// objects (like the objectMap). The store allocates this object on first
+	// access if it doesn't exist. Applications can use this to store their
+	// root metadata (like a collection registry or type map).
+	PrimeObject(size int) (ObjectId, error)
 }
 
 // ObjReader provides streaming read access to stored objects.

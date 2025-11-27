@@ -719,3 +719,16 @@ func (t *PersistentTreap[T]) FlushOlderThan(cutoffTimestamp int64) (int, error) 
 
 	return flushedCount, nil
 }
+
+// GetRootObjectId returns the ObjectId of the root node of the treap.
+// Returns ObjNotAllocated if the tree is empty or hasn't been persisted yet.
+func (t *PersistentTreap[T]) GetRootObjectId() (store.ObjectId, error) {
+	if t.root == nil {
+		return store.ObjNotAllocated, nil
+	}
+	rootNode, ok := t.root.(PersistentTreapNodeInterface[T])
+	if !ok {
+		return store.ObjNotAllocated, fmt.Errorf("root is not a PersistentTreapNodeInterface")
+	}
+	return rootNode.ObjectId()
+}

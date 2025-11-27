@@ -48,7 +48,10 @@ func (s *concurrentStore) LateWriteNewObj(size int) (ObjectId, io.Writer, Finish
 	objLock.Lock()
 	newFinisher := func() error {
 		defer objLock.Unlock()
-		return finisher()
+		if finisher != nil {
+			return finisher()
+		}
+		return nil
 	}
 	return objectId, writer, newFinisher, nil
 }
@@ -70,7 +73,10 @@ func (s *concurrentStore) LateReadObj(offset ObjectId) (io.Reader, Finisher, err
 	}
 	newFinisher := func() error {
 		defer objLock.RUnlock()
-		return finisher()
+		if finisher != nil {
+			return finisher()
+		}
+		return nil
 	}
 	return reader, newFinisher, nil
 }
@@ -103,6 +109,12 @@ func (s *concurrentStore) GetObjectInfo(objId ObjectId) (ObjectInfo, bool) {
 // NewObj allocates a new object of the given size and returns its ID.
 func (s *concurrentStore) NewObj(size int) (ObjectId, error) {
 	return s.baseStore.NewObj(size)
+}
+
+// PrimeObject returns ObjectId 1, which is reserved for application metadata.
+// Delegates to the underlying baseStore.
+func (s *concurrentStore) PrimeObject(size int) (ObjectId, error) {
+	return s.baseStore.PrimeObject(size)
 }
 
 // DeleteObj removes the object with the given ID.

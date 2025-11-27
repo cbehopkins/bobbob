@@ -128,6 +128,58 @@ func (s *baseStore) updateInitialOffset(fileOffset FileOffset) error {
 	return nil
 }
 
+// PrimeObject returns a dedicated ObjectId for application metadata.
+// For baseStore, this is the first allocated object (after the 8-byte header at ObjectId 0).
+// If it doesn't exist yet, it allocates it with the specified size.
+// This provides a stable, known location for storing top-level metadata.
+func (s *baseStore) PrimeObject(size int) (ObjectId, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if err := s.checkFileInitialized(); err != nil {
+		return ObjNotAllocated, err
+	}
+
+	// For baseStore, the prime object is the first object after the header (ObjectId 8)
+	const headerSize = 8
+	const primeObjectId = ObjectId(headerSize)
+
+	// Check if the prime object already exists
+	_, found := s.objectMap.Get(primeObjectId)
+	if found {
+		return primeObjectId, nil
+	}
+
+	// Allocate the prime object - this should be the very first allocation
+	objId, fileOffset, err := s.allocator.Allocate(size)
+	if err != nil {
+		return ObjNotAllocated, fmt.Errorf("failed to allocate prime object: %w", err)
+	}
+
+	// Verify we got the expected ObjectId (should be headerSize for first allocation)
+	if objId != primeObjectId {
+		return ObjNotAllocated, fmt.Errorf("expected prime object to be ObjectId %d, got %d", primeObjectId, objId)
+	}
+
+	// Add to objectMap so it persists across sessions
+	s.objectMap.Set(objId, ObjectInfo{
+		Offset: fileOffset,
+		Size:   size,
+	})
+
+	// Initialize the object with zeros
+	zeros := make([]byte, size)
+	n, err := s.file.WriteAt(zeros, int64(fileOffset))
+	if err != nil {
+		return ObjNotAllocated, fmt.Errorf("failed to initialize prime object: %w", err)
+	}
+	if n != size {
+		return ObjNotAllocated, errors.New("failed to write all bytes for prime object")
+	}
+
+	return primeObjectId, nil
+}
+
 // NewObj is a convenience wrapper around LateWriteNewObj that allocates an object
 // without returning a writer. Use this when you want to allocate an object but
 // will write to it later via WriteToObj.

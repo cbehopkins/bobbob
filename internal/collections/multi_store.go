@@ -374,6 +374,52 @@ func (s *multiStore) DeleteObj(objId store.ObjectId) error {
 	return nil
 }
 
+// PrimeObject returns a dedicated ObjectId for application metadata.
+// For multiStore, this is the first allocated object (after the 8-byte header at ObjectId 0).
+// If it doesn't exist yet, it allocates it with the specified size.
+// This provides a stable, known location for storing top-level metadata.
+func (s *multiStore) PrimeObject(size int) (store.ObjectId, error) {
+	// For multiStore, the prime object is the first object after the header
+	const headerSize = 8
+	const primeObjectId = store.ObjectId(headerSize)
+
+	// Check if the prime object already exists
+	_, found := s.objectMap.Get(primeObjectId)
+	if found {
+		return primeObjectId, nil
+	}
+
+	// Allocate the prime object - this should be the very first allocation
+	objId, fileOffset, err := s.allocators[1].Allocate(size)
+	if err != nil {
+		return store.ObjNotAllocated, err
+	}
+
+	// Verify we got the expected ObjectId (should be headerSize for first allocation)
+	if objId != primeObjectId {
+		return store.ObjNotAllocated, errors.New("expected prime object to be first allocation")
+	}
+
+	// Store the object info in the object map
+	objectInfo := store.ObjectInfo{
+		Offset: fileOffset,
+		Size:   size,
+	}
+	s.objectMap.Set(objId, objectInfo)
+
+	// Initialize the object with zeros
+	zeros := make([]byte, size)
+	n, err := s.file.WriteAt(zeros, int64(fileOffset))
+	if err != nil {
+		return store.ObjNotAllocated, err
+	}
+	if n != size {
+		return store.ObjNotAllocated, errors.New("failed to write all bytes for prime object")
+	}
+
+	return primeObjectId, nil
+}
+
 // NewObj allocates a new object of the given size.
 // It uses the block allocator to find space and records the object in the object map.
 func (s *multiStore) NewObj(size int) (store.ObjectId, error) {
