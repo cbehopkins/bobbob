@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"testing"
@@ -16,7 +17,7 @@ func TestObjectMapSerialize(t *testing.T) {
 		t.Fatalf("expected no error serializing objectMap, got %v", err)
 	}
 	deserializedMap := NewObjectMap()
-	err = deserializedMap.Deserialize(data)
+	err = deserializedMap.Deserialize(bytes.NewReader(data))
 	if err != nil {
 		t.Fatalf("expected no error deserializing objectMap, got %v", err)
 	}

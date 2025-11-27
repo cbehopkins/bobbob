@@ -134,26 +134,30 @@ func TestReadObj(t *testing.T) {
 	defer store.Close()
 
 	data := []byte("testdata")
-	offset, writer, finisher, err := store.LateWriteNewObj(len(data))
+	offset, writer, writeFinisher, err := store.LateWriteNewObj(len(data))
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
+	}
+	if writeFinisher != nil {
+		defer writeFinisher()
 	}
 
 	if _, err := writer.Write(data); err != nil {
 		t.Fatalf("expected no error writing data, got %v", err)
 	}
-	if finisher != nil {
-		finisher()
-	}
-	reader, finisher, err := store.LateReadObj(ObjectId(offset))
+
+	reader, readFinisher, err := store.LateReadObj(ObjectId(offset))
 	if err != nil {
 		t.Fatalf("expected no error reading data, got %v", err)
 	}
+	if readFinisher != nil {
+		defer readFinisher()
+	}
+
 	readData := make([]byte, len(data))
 	if _, err := io.ReadFull(reader, readData); err != nil {
 		t.Fatalf("expected no error reading data, got %v", err)
 	}
-	defer finisher()
 
 	if !bytes.Equal(data, readData) {
 		t.Fatalf("expected read data to be %v, got %v", data, readData)
@@ -171,8 +175,9 @@ func TestWriteToObj(t *testing.T) {
 		t.Fatalf("expected no error, got %v", err)
 	}
 	if finisher != nil {
-		finisher()
+		defer finisher()
 	}
+
 	if _, err := writer.Write(data); err != nil {
 		t.Fatalf("expected no error writing data, got %v", err)
 	}
@@ -214,27 +219,30 @@ func TestWriteToObjAndVerify(t *testing.T) {
 
 	// Write the first object
 	data1 := []byte("object1")
-	objId1, writer1, finisher, err := store.LateWriteNewObj(len(data1))
+	objId1, writer1, finisher1, err := store.LateWriteNewObj(len(data1))
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
+	if finisher1 != nil {
+		defer finisher1()
+	}
+
 	if _, err := writer1.Write(data1); err != nil {
 		t.Fatalf("expected no error writing data, got %v", err)
 	}
-	if finisher != nil {
-		finisher()
-	}
+
 	// Write the second object
 	data2 := []byte("object2")
-	objId2, writer2, finisher, err := store.LateWriteNewObj(len(data2))
+	objId2, writer2, finisher2, err := store.LateWriteNewObj(len(data2))
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
+	if finisher2 != nil {
+		defer finisher2()
+	}
+
 	if _, err := writer2.Write(data2); err != nil {
 		t.Fatalf("expected no error writing data, got %v", err)
-	}
-	if finisher != nil {
-		finisher()
 	}
 	// Modify the first object using WriteToObj
 	newData1 := []byte("newobj1") // Ensure new data is not larger than the old data
@@ -258,7 +266,9 @@ func TestWriteToObjAndVerify(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error reading data, got %v", err)
 	}
-	defer finisher1()
+	if finisher1 != nil {
+		defer finisher1()
+	}
 	readData1 := make([]byte, len(data1))
 	if _, err := io.ReadFull(reader1, readData1); err != nil {
 		t.Fatalf("expected no error reading data, got %v", err)
@@ -272,7 +282,9 @@ func TestWriteToObjAndVerify(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error reading data, got %v", err)
 	}
-	defer finisher2()
+	if finisher2 != nil {
+		defer finisher2()
+	}
 	readData2 := make([]byte, len(data2))
 	if _, err := io.ReadFull(reader2, readData2); err != nil {
 		t.Fatalf("expected no error reading data, got %v", err)
@@ -293,12 +305,14 @@ func TestWriteToObjExceedLimit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
+	if finisher != nil {
+		defer finisher()
+	}
+
 	if _, err := writer1.Write(data1); err != nil {
 		t.Fatalf("expected no error writing data, got %v", err)
 	}
-	if finisher != nil {
-		finisher()
-	}
+
 	// Attempt to modify the first object with data larger than the original
 	newData1 := []byte("newobject1data") // Ensure new data is larger than the old data
 	if len(newData1) <= len(data1) {
@@ -322,7 +336,9 @@ func TestWriteToObjExceedLimit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error reading data, got %v", err)
 	}
-	defer finisher1()
+	if finisher1 != nil {
+		defer finisher1()
+	}
 	readData1 := make([]byte, len(data1))
 	if _, err := io.ReadFull(reader1, readData1); err != nil {
 		t.Fatalf("expected no error reading data, got %v", err)
@@ -365,12 +381,14 @@ func TestConcurrentWriteToObj(t *testing.T) {
 		if err != nil {
 			t.Fatalf("expected no error, got %v", err)
 		}
+		if finisher != nil {
+			defer finisher()
+		}
+
 		if _, err := writer.Write(data); err != nil {
 			t.Fatalf("expected no error writing data, got %v", err)
 		}
-		if finisher != nil {
-			finisher()
-		}
+
 		testObjectDict[i] = &TstObject{id: ObjectId(objId), size: len(data), mutex: &sync.Mutex{}}
 	}
 
@@ -452,13 +470,14 @@ func TestLoadStore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
+	if finisher != nil {
+		defer finisher()
+	}
 
 	if _, err := writer.Write(data); err != nil {
 		t.Fatalf("expected no error writing data, got %v", err)
 	}
-	if finisher != nil {
-		finisher()
-	}
+
 	store.Close()
 
 	loadedStore, err := LoadBaseStore(store.filePath)
@@ -492,12 +511,14 @@ func TestDeleteObj(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
+	if finisher != nil {
+		defer finisher()
+	}
+
 	if _, err := writer.Write(data); err != nil {
 		t.Fatalf("expected no error writing data, got %v", err)
 	}
-	if finisher != nil {
-		finisher()
-	}
+
 	// Delete the object
 	if !IsValidObjectId(ObjectId(objId)) {
 		t.Fatalf("expected valid objectId, got %d", objId)
@@ -569,14 +590,12 @@ func ExampleStorer_lateWriteNewObj() {
 	// Use the Late method for fine-grained control over writing
 	data := []byte("Streaming data")
 	objId, writer, finisher, _ := s.LateWriteNewObj(len(data))
+	if finisher != nil {
+		defer finisher()
+	}
 
 	// Write the data in chunks if needed
 	writer.Write(data)
-
-	// Always call finisher when done
-	if finisher != nil {
-		finisher()
-	}
 
 	// Read it back
 	readData, _ := ReadBytesFromObj(s, objId)
@@ -676,12 +695,13 @@ func BenchmarkWriteAt(b *testing.B) {
 								b.Errorf("expected no error, got %v", err)
 								return
 							}
+							if finisher != nil {
+								defer finisher()
+							}
+
 							if _, err := writer.Write(data); err != nil {
 								b.Errorf("expected no error writing data, got %v", err)
 								return
-							}
-							if finisher != nil {
-								finisher()
 							}
 						}
 					}()
@@ -724,12 +744,13 @@ func BenchmarkWriteAtSingleCall(b *testing.B) {
 								b.Errorf("expected no error, got %v", err)
 								return
 							}
+							if finisher != nil {
+								defer finisher()
+							}
+
 							if _, err := writer.Write(data); err != nil {
 								b.Errorf("expected no error writing data, got %v", err)
 								return
-							}
-							if finisher != nil {
-								finisher()
 							}
 						}
 					}()

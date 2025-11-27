@@ -75,17 +75,9 @@ func LoadBaseStore(filePath string) (*baseStore, error) {
 		return nil, err
 	}
 
-	// Read the serialized ObjectMap
-	// FIXME this assumption on the size is deeply flawed
-	data := make([]byte, 4096) // Assuming the ObjectMap is not larger than 1024 bytes
-	n, err := file.Read(data)
-	if err != nil && err != io.EOF {
-		return nil, err
-	}
-
-	// Deserialize the ObjectMap
+	// Deserialize the ObjectMap directly from the file
 	objectMap := NewObjectMap()
-	err = objectMap.Unmarshal(data[:n])
+	err = objectMap.Deserialize(file)
 	if err != nil {
 		return nil, err
 	}

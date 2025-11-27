@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"encoding/gob"
 	"errors"
+	"io"
 	"slices"
 	"sync"
 )
@@ -147,12 +148,11 @@ func (om *ObjectMap) Serialize() ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// Deserialize decodes the ObjectMap from bytes using gob encoding.
-func (om *ObjectMap) Deserialize(data []byte) error {
+// Deserialize decodes the ObjectMap from an io.Reader using gob encoding.
+func (om *ObjectMap) Deserialize(r io.Reader) error {
 	om.mu.Lock()
 	defer om.mu.Unlock()
-	buf := bytes.NewBuffer(data)
-	decoder := gob.NewDecoder(buf)
+	decoder := gob.NewDecoder(r)
 	return decoder.Decode(&om.store)
 }
 
@@ -161,9 +161,9 @@ func (om *ObjectMap) Marshal() ([]byte, error) {
 	return om.Serialize()
 }
 
-// Unmarshal decodes the ObjectMap from bytes (alias for Deserialize).
+// Unmarshal decodes the ObjectMap from bytes by wrapping in a reader.
 func (om *ObjectMap) Unmarshal(data []byte) error {
-	return om.Deserialize(data)
+	return om.Deserialize(bytes.NewReader(data))
 }
 
 // FindGaps returns a channel that yields gaps (unused regions) in the file.
