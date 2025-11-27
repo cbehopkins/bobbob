@@ -2,6 +2,7 @@ package yggdrasil
 
 import (
 	"errors"
+	"fmt"
 	"time"
 
 	"bobbob/internal/store"
@@ -386,6 +387,13 @@ func (n *PersistentTreapNode[T]) Marshal() ([]byte, error) {
 }
 
 func (n *PersistentTreapNode[T]) unmarshal(data []byte, key PersistentKey[T]) error {
+	// Validate minimum data length (5 ObjectIds: key, priority placeholder, left, right, self)
+	// Priority is 4 bytes, ObjectIds are 8 bytes each
+	minSize := 4*8 + 4 // 4 ObjectIds + 1 Priority
+	if len(data) < minSize {
+		return fmt.Errorf("data too short for PersistentTreapNode: got %d bytes, need at least %d", len(data), minSize)
+	}
+
 	offset := 0
 
 	keyAsObjectId := store.ObjectId(0)

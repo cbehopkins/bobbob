@@ -106,6 +106,11 @@ func (n *PersistentPayloadTreapNode[K, P]) unmarshal(data []byte, key Persistent
 	// Calculate the offset for the payload data
 	payloadOffset := n.PersistentTreapNode.sizeInBytes()
 
+	// Validate we have enough data for the payload
+	if len(data) < payloadOffset {
+		return fmt.Errorf("data too short for PersistentPayloadTreapNode: got %d bytes, need at least %d for payload offset", len(data), payloadOffset)
+	}
+
 	// Unmarshal the payload
 	val, err := n.payload.Unmarshal(data[payloadOffset:])
 	if err != nil {
