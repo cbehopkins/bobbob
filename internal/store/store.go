@@ -208,6 +208,9 @@ func WriteBytesToObj(s Storer, data []byte, objectId ObjectId) error {
 // all bytes from an object into memory.
 // For large objects or streaming scenarios, use LateReadObj directly.
 func ReadBytesFromObj(s Storer, objId ObjectId) ([]byte, error) {
+	if !IsValidObjectId(objId) {
+		return nil, errors.New("invalid object ID")
+	}
 	objReader, finisher, err := s.LateReadObj(objId)
 	if err != nil {
 		return nil, err

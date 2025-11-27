@@ -41,6 +41,12 @@ func (vm *VaultMetadata) Unmarshal(data []byte) error {
 	return nil
 }
 
+// CollectionInterface defines the methods required for collections stored in a vault.
+type CollectionInterface interface {
+	Persist() error
+	GetRootObjectId() (store.ObjectId, error)
+}
+
 // Vault is the top-level abstraction for working with multiple collections
 // (treaps) in a single persistent store. It manages:
 // - A single persistent store file
@@ -65,7 +71,8 @@ type Vault struct {
 
 	// ActiveCollections caches loaded collections
 	// Maps collection name to the actual treap instance
-	activeCollections map[string]interface{}
+	// All cached collections must implement GetRootObjectId() and Persist()
+	activeCollections map[string]CollectionInterface
 }
 
 // NewVault creates a new vault with the given store.
@@ -80,7 +87,7 @@ func NewVault(stre store.Storer) *Vault {
 		Store:              stre,
 		TypeMap:            NewTypeMap(),
 		CollectionRegistry: NewCollectionRegistry(),
-		activeCollections:  make(map[string]interface{}),
+		activeCollections:  make(map[string]CollectionInterface),
 	}
 }
 
@@ -93,7 +100,7 @@ func LoadVault(stre store.Storer) (*Vault, error) {
 		Store:              stre,
 		TypeMap:            NewTypeMap(),
 		CollectionRegistry: NewCollectionRegistry(),
-		activeCollections:  make(map[string]interface{}),
+		activeCollections:  make(map[string]CollectionInterface),
 	}
 
 	// Get the prime object (ObjectId 1) where vault metadata is stored
@@ -176,6 +183,24 @@ func GetOrCreateCollection[K any, P PersistentPayload[P]](
 	// Check if the collection exists in the registry
 	collInfo, exists := v.CollectionRegistry.GetCollection(collectionName)
 	if exists {
+		// Validate type codes match what we expect
+		var zeroP P
+		expectedKeyShortCode, err := v.TypeMap.getShortCode(keyTemplate)
+		if err != nil {
+			return nil, fmt.Errorf("key type not registered: %w", err)
+		}
+		expectedPayloadShortCode, err := v.TypeMap.getShortCode(zeroP)
+		if err != nil {
+			return nil, fmt.Errorf("payload type not registered: %w", err)
+		}
+
+		if collInfo.KeyTypeShortCode != expectedKeyShortCode {
+			return nil, fmt.Errorf("collection %s has key type mismatch: stored=%d, expected=%d", collectionName, collInfo.KeyTypeShortCode, expectedKeyShortCode)
+		}
+		if collInfo.PayloadTypeShortCode != expectedPayloadShortCode {
+			return nil, fmt.Errorf("collection %s has payload type mismatch: stored=%d, expected=%d", collectionName, collInfo.PayloadTypeShortCode, expectedPayloadShortCode)
+		}
+
 		// Load the existing collection from the store
 		treap := NewPersistentPayloadTreap[K, P](lessFunc, keyTemplate, v.Store)
 		if store.IsValidObjectId(collInfo.RootObjectId) {
@@ -241,6 +266,19 @@ func GetOrCreateKeyOnlyCollection[K any](
 	// Check if the collection exists in the registry
 	collInfo, exists := v.CollectionRegistry.GetCollection(collectionName)
 	if exists {
+		// Validate type codes match what we expect
+		expectedKeyShortCode, err := v.TypeMap.getShortCode(keyTemplate)
+		if err != nil {
+			return nil, fmt.Errorf("key type not registered: %w", err)
+		}
+
+		if collInfo.KeyTypeShortCode != expectedKeyShortCode {
+			return nil, fmt.Errorf("collection %s has key type mismatch: stored=%d, expected=%d", collectionName, collInfo.KeyTypeShortCode, expectedKeyShortCode)
+		}
+		if collInfo.PayloadTypeShortCode != 0 {
+			return nil, fmt.Errorf("collection %s is not a key-only collection (has payload type %d)", collectionName, collInfo.PayloadTypeShortCode)
+		}
+
 		// Load the existing collection from the store
 		treap := NewPersistentTreap[K](lessFunc, keyTemplate, v.Store)
 		if store.IsValidObjectId(collInfo.RootObjectId) {
@@ -288,25 +326,14 @@ func (v *Vault) PersistCollection(collectionName string) error {
 		return fmt.Errorf("collection %s not loaded", collectionName)
 	}
 
-	// Try to get the root ObjectId depending on the collection type
-	var rootObjectId store.ObjectId = store.ObjNotAllocated
-	var err error
-
-	// Try as PersistentPayloadTreap first
-	if treap, ok := cached.(interface {
-		Persist() error
-		GetRootObjectId() (store.ObjectId, error)
-	}); ok {
-		err = treap.Persist()
-		if err != nil {
-			return fmt.Errorf("failed to persist collection %s: %w", collectionName, err)
-		}
-		rootObjectId, err = treap.GetRootObjectId()
-		if err != nil {
-			return fmt.Errorf("failed to get root object ID for collection %s: %w", collectionName, err)
-		}
-	} else {
-		return fmt.Errorf("collection %s has unknown type", collectionName)
+	// Persist the collection and get its root ObjectId
+	err := cached.Persist()
+	if err != nil {
+		return fmt.Errorf("failed to persist collection %s: %w", collectionName, err)
+	}
+	rootObjectId, err := cached.GetRootObjectId()
+	if err != nil {
+		return fmt.Errorf("failed to get root object ID for collection %s: %w", collectionName, err)
 	}
 
 	// Update the registry
@@ -315,13 +342,20 @@ func (v *Vault) PersistCollection(collectionName string) error {
 
 // Close persists all active collections and closes the underlying store.
 // You should call this when you're done with the vault.
+// If any collections fail to persist, it continues and returns all errors.
 func (v *Vault) Close() error {
-	// Persist all active collections
+	// Persist all active collections - accumulate errors instead of failing fast
+	var persistErrors []error
 	for name := range v.activeCollections {
 		err := v.PersistCollection(name)
 		if err != nil {
-			return fmt.Errorf("failed to persist collection %s: %w", name, err)
+			persistErrors = append(persistErrors, fmt.Errorf("failed to persist collection %s: %w", name, err))
 		}
+	}
+
+	// If we had persist errors, return them now before trying to save metadata
+	if len(persistErrors) > 0 {
+		return fmt.Errorf("failed to persist %d collections: %v", len(persistErrors), persistErrors)
 	}
 
 	// Save TypeMap to a new object

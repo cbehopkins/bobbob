@@ -6,13 +6,11 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"sync"
 )
 
 var errStoreNotInitialized = errors.New("store is not initialized")
 
 type baseStore struct {
-	mu        sync.RWMutex // Protects file operations and store state
 	filePath  string
 	file      *os.File
 	objectMap *ObjectMap
@@ -102,7 +100,6 @@ func LoadBaseStore(filePath string) (*baseStore, error) {
 
 // Helper function to check if the file is initialized
 func (s *baseStore) checkFileInitialized() error {
-	// Caller should hold lock
 	if s.file == nil {
 		return errStoreNotInitialized
 	}
@@ -113,7 +110,6 @@ func (s *baseStore) checkFileInitialized() error {
 }
 
 // Helper function to update the initial offset in the file
-// Caller must hold the write lock
 func (s *baseStore) updateInitialOffset(fileOffset FileOffset) error {
 	objOffset := int64(fileOffset)
 	offsetBytes := make([]byte, 8)
@@ -133,9 +129,6 @@ func (s *baseStore) updateInitialOffset(fileOffset FileOffset) error {
 // If it doesn't exist yet, it allocates it with the specified size.
 // This provides a stable, known location for storing top-level metadata.
 func (s *baseStore) PrimeObject(size int) (ObjectId, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	if err := s.checkFileInitialized(); err != nil {
 		return ObjNotAllocated, err
 	}
@@ -198,9 +191,6 @@ func (s *baseStore) NewObj(size int) (ObjectId, error) {
 // and returns a writer for immediate use. This is the primitive operation;
 // NewObj is a convenience wrapper around this method.
 func (s *baseStore) LateWriteNewObj(size int) (ObjectId, io.Writer, Finisher, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	if err := s.checkFileInitialized(); err != nil {
 		return ObjNotAllocated, nil, nil, err
 	}
@@ -220,16 +210,10 @@ func (s *baseStore) LateWriteNewObj(size int) (ObjectId, io.Writer, Finisher, er
 // WriteToObj is a Late method that returns a writer for an existing object.
 // This should be done with extreme caution and avoided where possible.
 // Prefer creating a new object, writing to it, then deleting the old one.
-// Only one writer should be allowed to write to an object at a time.
-// If multiple writers try to write, then they (FIXME will be one implemented) queued.
 func (s *baseStore) WriteToObj(objectId ObjectId) (io.Writer, Finisher, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
 	if err := s.checkFileInitialized(); err != nil {
 		return nil, nil, err
 	}
-	// Grabbing a full lock because (unless errors) we are modifying
 	obj, found := s.objectMap.Get(objectId)
 	if !found {
 		return nil, nil, errors.New("object not found")
@@ -242,9 +226,6 @@ func (s *baseStore) WriteToObj(objectId ObjectId) (io.Writer, Finisher, error) {
 // This is a performance optimization that writes multiple consecutive objects
 // in a single WriteAt call, reducing system call overhead.
 func (s *baseStore) WriteBatchedObjs(objIds []ObjectId, data []byte, sizes []int) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	if err := s.checkFileInitialized(); err != nil {
 		return err
 	}
@@ -298,8 +279,6 @@ func (s *baseStore) WriteBatchedObjs(objIds []ObjectId, data []byte, sizes []int
 // GetObjectInfo returns the ObjectInfo for a given ObjectId.
 // This is used internally for optimization decisions like batched writes.
 func (s *baseStore) GetObjectInfo(objId ObjectId) (ObjectInfo, bool) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
 	return s.objectMap.Get(objId)
 }
 
@@ -323,9 +302,6 @@ func (s *baseStore) LateReadObj(objId ObjectId) (io.Reader, Finisher, error) {
 }
 
 func (s *baseStore) lateReadObj(objId ObjectId) (io.Reader, Finisher, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
 	if err := s.checkFileInitialized(); err != nil {
 		return nil, nil, err
 	}
@@ -340,14 +316,11 @@ func (s *baseStore) lateReadObj(objId ObjectId) (io.Reader, Finisher, error) {
 }
 
 func (s *baseStore) DeleteObj(objId ObjectId) error {
-	// FIXME Complex types have one object that points to others
+	// FIXME: Complex types have one object that points to others.
 	// We need a method that lists all the objects that are part of a complex object
-	// And then we recursively delete them
-	// However we canly do that on the Unmarshalled type - so we do not have that information here
-	// Therefore complex Objects need to implement a delete method
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
+	// and then recursively delete them. However, we can only do that on the
+	// unmarshalled type - so we do not have that information here.
+	// Therefore, complex objects need to implement a delete method.
 	if err := s.checkFileInitialized(); err != nil {
 		return err
 	}
@@ -364,9 +337,6 @@ func (s *baseStore) DeleteObj(objId ObjectId) error {
 
 // Sync flushes the file to disk
 func (s *baseStore) Sync() error {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
 	if err := s.checkFileInitialized(); err != nil {
 		return err
 	}
@@ -375,9 +345,6 @@ func (s *baseStore) Sync() error {
 
 // Close closes the store and writes the ObjectMap to disk
 func (s *baseStore) Close() error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	if err := s.checkFileInitialized(); err != nil {
 		return err
 	}

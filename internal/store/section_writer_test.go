@@ -381,7 +381,7 @@ func TestSectionWriterMixedWriteAndWriteAt(t *testing.T) {
 
 func TestSectionWriterBoundaries(t *testing.T) {
 	writer := newMockWriterAt(100)
-	
+
 	tests := []struct {
 		name   string
 		offset int64

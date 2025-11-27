@@ -151,6 +151,18 @@ func (tm *TypeMap) Unmarshal(data []byte) error {
 	return tm.merge(other)
 }
 
+// merge integrates types from another TypeMap into this one.
+// This is used when loading a TypeMap from disk after local types have been registered.
+//
+// Behavior:
+//   - Types in both maps: overwrites local short code with the persisted one
+//   - Types only in 'other': adds them to preserve persisted type registrations
+//   - Types only in 'this': keeps them with their current short codes
+//   - Validates type IDs match (detects incompatible type definitions)
+//   - Updates NextShortCode to prevent collisions
+//
+// This design ensures persisted short codes remain stable across sessions,
+// even if types are registered in a different order.
 func (tm *TypeMap) merge(other TypeMap) error {
 	// merge a child TypeMap into this one
 	// useful when loading in a typemap after we have locally registered types
@@ -173,10 +185,24 @@ func (tm *TypeMap) merge(other TypeMap) error {
 				return fmt.Errorf("type ID mismatch for type %s", typeName)
 			}
 			// Overwrite the short code with the one from the other map
+			// Remove old short code mapping only if it's still pointing to this type
+			if existingTypeName, ok := tm.ShortMap[existingTuple.ShortCode]; ok && existingTypeName == typeName {
+				delete(tm.ShortMap, existingTuple.ShortCode)
+			}
 			existingTuple.ShortCode = otherTuple.ShortCode
 			tm.Types[typeName] = existingTuple
 			tm.ShortMap[otherTuple.ShortCode] = typeName
+		} else {
+			// Type exists in loaded map but not in current map - add it
+			// This preserves types that were registered in the previous session
+			tm.Types[typeName] = otherTuple
+			tm.ShortMap[otherTuple.ShortCode] = typeName
 		}
+	}
+	// Update NextShortCode to be at least as high as the other map's
+	// to prevent short code collisions
+	if other.NextShortCode > tm.NextShortCode {
+		tm.NextShortCode = other.NextShortCode
 	}
 	return nil
 }

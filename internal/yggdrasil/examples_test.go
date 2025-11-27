@@ -23,7 +23,7 @@ func Example() {
 	// Search for a key
 	node := treap.Search(IntKey(10))
 	if node != nil && !node.IsNil() {
-		fmt.Printf("Found key: %d\n", node.GetKey().(IntKey))
+		fmt.Printf("Found key: %d\n", node.GetKey().Value())
 	}
 	// Output: Found key: 10
 }
@@ -40,7 +40,7 @@ func ExampleTreap_Walk() {
 
 	// Walk through in sorted order
 	treap.Walk(func(node TreapNodeInterface[IntKey]) {
-		fmt.Printf("%d ", node.GetKey().(IntKey))
+		fmt.Printf("%d ", node.GetKey().Value())
 	})
 	fmt.Println()
 	// Output: 10 20 30 40

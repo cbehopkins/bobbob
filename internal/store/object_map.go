@@ -136,6 +136,7 @@ func (om *ObjectMap) GetAndDelete(id ObjectId, callback func(ObjectInfo)) (Objec
 }
 
 // Serialize encodes the ObjectMap to bytes using gob encoding.
+// FIXME this is not symetrical with Deserialize - it should return a reader??
 func (om *ObjectMap) Serialize() ([]byte, error) {
 	om.mu.RLock()
 	defer om.mu.RUnlock()

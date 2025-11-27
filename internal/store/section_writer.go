@@ -58,3 +58,13 @@ func (sw *SectionWriter) WriteAt(p []byte, off int64) (int, error) {
 	n, err := sw.writer.WriteAt(p, sw.offset+off)
 	return n, err
 }
+
+// BytesWritten returns the number of bytes written to this section so far.
+func (sw *SectionWriter) BytesWritten() int64 {
+	return sw.pos
+}
+
+// Limit returns the maximum number of bytes that can be written to this section.
+func (sw *SectionWriter) Limit() int64 {
+	return sw.limit
+}

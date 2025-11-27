@@ -59,8 +59,19 @@ func (s *concurrentStore) LateWriteNewObj(size int) (ObjectId, io.Writer, Finish
 func (s *concurrentStore) WriteToObj(objectId ObjectId) (io.Writer, Finisher, error) {
 	objLock := s.lookupObjectMutex(objectId)
 	objLock.Lock()
-	defer objLock.Unlock()
-	return s.baseStore.WriteToObj(objectId)
+	writer, finisher, err := s.baseStore.WriteToObj(objectId)
+	if err != nil {
+		objLock.Unlock()
+		return nil, nil, err
+	}
+	newFinisher := func() error {
+		defer objLock.Unlock()
+		if finisher != nil {
+			return finisher()
+		}
+		return nil
+	}
+	return writer, newFinisher, nil
 }
 
 func (s *concurrentStore) LateReadObj(offset ObjectId) (io.Reader, Finisher, error) {
@@ -83,12 +94,29 @@ func (s *concurrentStore) LateReadObj(offset ObjectId) (io.Reader, Finisher, err
 
 // WriteBatchedObjs writes data to multiple consecutive objects in a single operation.
 // Locks all objects in the range for the duration of the write.
+// Objects are locked in sorted order to prevent deadlocks.
 func (s *concurrentStore) WriteBatchedObjs(objIds []ObjectId, data []byte, sizes []int) error {
-	// Lock all objects in the range
+	// Create a sorted copy of objIds to prevent deadlock
+	// We lock in ObjectId order, not the order they were passed in
+	sortedIndices := make([]int, len(objIds))
+	for i := range sortedIndices {
+		sortedIndices[i] = i
+	}
+	// Sort indices by their corresponding ObjectId values
+	for i := 0; i < len(sortedIndices); i++ {
+		for j := i + 1; j < len(sortedIndices); j++ {
+			if objIds[sortedIndices[i]] > objIds[sortedIndices[j]] {
+				sortedIndices[i], sortedIndices[j] = sortedIndices[j], sortedIndices[i]
+			}
+		}
+	}
+
+	// Lock all objects in sorted order
 	locks := make([]*sync.RWMutex, len(objIds))
-	for i, objId := range objIds {
-		locks[i] = s.lookupObjectMutex(objId)
-		locks[i].Lock()
+	for _, idx := range sortedIndices {
+		objId := objIds[idx]
+		locks[idx] = s.lookupObjectMutex(objId)
+		locks[idx].Lock()
 	}
 
 	// Ensure all locks are released
@@ -118,8 +146,16 @@ func (s *concurrentStore) PrimeObject(size int) (ObjectId, error) {
 }
 
 // DeleteObj removes the object with the given ID.
+// Also removes the object's mutex from the lock map to prevent memory leaks.
 func (s *concurrentStore) DeleteObj(objId ObjectId) error {
-	return s.baseStore.DeleteObj(objId)
+	err := s.baseStore.DeleteObj(objId)
+	if err == nil {
+		// Clean up the lock map to prevent memory leak
+		s.lock.Lock()
+		delete(s.lockMap, objId)
+		s.lock.Unlock()
+	}
+	return err
 }
 
 // Close closes the store and releases all resources.
