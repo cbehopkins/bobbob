@@ -349,7 +349,7 @@ func TestWriteToObjExceedLimit(t *testing.T) {
 }
 
 // FIXME Create a test that writes to some objects
-// Then Reads ome of the middle objects
+// Then Reads some of the middle objects
 // then writes a new object
 // Check that all objects exist with correct data
 type TstObject struct {

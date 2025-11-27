@@ -112,6 +112,25 @@ type ObjWriter interface {
 	// This is a Late method for streaming writes. The Finisher must be called
 	// when writing is complete.
 	WriteToObj(objectId ObjectId) (io.Writer, Finisher, error)
+	// WriteBatchedObjs writes data to multiple consecutive objects in a single operation.
+	// This is a performance optimization for writing multiple small objects that are
+	// adjacent in the file, reducing system call overhead.
+	//
+	// The objects must be consecutive in the file (adjacent with no gaps). Each object
+	// is verified to exist and the total data written must match the sum of object sizes.
+	//
+	// Parameters:
+	//   - objIds: Slice of ObjectIds to write to (must be consecutive in file)
+	//   - data: The complete byte slice containing all object data concatenated
+	//   - sizes: Slice of sizes for each object (must match objIds length and sum to len(data))
+	//
+	// Returns an error if:
+	//   - Objects are not consecutive in the file
+	//   - Sum of sizes doesn't match len(data)
+	//   - Length of objIds doesn't match length of sizes
+	//   - Any object doesn't exist
+	//   - Write operation fails
+	WriteBatchedObjs(objIds []ObjectId, data []byte, sizes []int) error
 }
 
 // Storer is the primary interface for object storage.

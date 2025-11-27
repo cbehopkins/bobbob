@@ -75,6 +75,31 @@ func (s *concurrentStore) LateReadObj(offset ObjectId) (io.Reader, Finisher, err
 	return reader, newFinisher, nil
 }
 
+// WriteBatchedObjs writes data to multiple consecutive objects in a single operation.
+// Locks all objects in the range for the duration of the write.
+func (s *concurrentStore) WriteBatchedObjs(objIds []ObjectId, data []byte, sizes []int) error {
+	// Lock all objects in the range
+	locks := make([]*sync.RWMutex, len(objIds))
+	for i, objId := range objIds {
+		locks[i] = s.lookupObjectMutex(objId)
+		locks[i].Lock()
+	}
+
+	// Ensure all locks are released
+	defer func() {
+		for _, lock := range locks {
+			lock.Unlock()
+		}
+	}()
+
+	return s.baseStore.WriteBatchedObjs(objIds, data, sizes)
+}
+
+// GetObjectInfo returns the ObjectInfo for a given ObjectId.
+func (s *concurrentStore) GetObjectInfo(objId ObjectId) (ObjectInfo, bool) {
+	return s.baseStore.GetObjectInfo(objId)
+}
+
 // NewObj allocates a new object of the given size and returns its ID.
 func (s *concurrentStore) NewObj(size int) (ObjectId, error) {
 	return s.baseStore.NewObj(size)

@@ -271,7 +271,7 @@ func (n *PersistentTreapNode[T]) flushChild(child *TreapNodeInterface[T], childO
 	}
 	// Simply clear the pointer to the child
 	// We still have the object ID if we want to re-load it
-	// FIXME - one day we will use a sync.Pool to avoid allocations
+	// In the future, use a sync.Pool to avoid allocations
 	*child = nil
 	return nil
 }

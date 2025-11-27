@@ -93,7 +93,6 @@ func LoadBaseStore(filePath string) (*baseStore, error) {
 		allocator: allocator,
 	}
 
-	// FIXME this should be done in its own go routine
 	err = allocator.RefreshFreeList(store)
 	if err != nil {
 		return nil, fmt.Errorf("failed to refresh free list for %q: %w", filePath, err)
@@ -185,6 +184,71 @@ func (s *baseStore) WriteToObj(objectId ObjectId) (io.Writer, Finisher, error) {
 	}
 	writer := NewSectionWriter(s.file, int64(obj.Offset), int64(obj.Size))
 	return writer, s.createCloser(objectId), nil
+}
+
+// WriteBatchedObjs implements batched writing for consecutive objects.
+// This is a performance optimization that writes multiple consecutive objects
+// in a single WriteAt call, reducing system call overhead.
+func (s *baseStore) WriteBatchedObjs(objIds []ObjectId, data []byte, sizes []int) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if err := s.checkFileInitialized(); err != nil {
+		return err
+	}
+
+	if len(objIds) != len(sizes) {
+		return fmt.Errorf("objIds length %d does not match sizes length %d", len(objIds), len(sizes))
+	}
+
+	if len(objIds) == 0 {
+		return nil
+	}
+
+	// Verify all objects exist and are consecutive
+	var firstOffset FileOffset
+	expectedOffset := FileOffset(0)
+
+	for i, objId := range objIds {
+		obj, found := s.objectMap.Get(objId)
+		if !found {
+			return fmt.Errorf("object %d not found", objId)
+		}
+
+		if i == 0 {
+			firstOffset = obj.Offset
+			// Use the ALLOCATED size, not the written size
+			expectedOffset = obj.Offset + FileOffset(obj.Size)
+		} else {
+			if obj.Offset != expectedOffset {
+				return fmt.Errorf("objects are not consecutive: gap at object %d (expected offset %d, got %d)",
+					objId, expectedOffset, obj.Offset)
+			}
+			// Use the ALLOCATED size, not the written size
+			expectedOffset = obj.Offset + FileOffset(obj.Size)
+		}
+	}
+
+	// Write all data in one operation
+	// Note: We don't validate that sizes[i] matches obj.Size because the caller
+	// might write less than the allocated size (similar to WriteBytesToObj)
+	n, err := s.file.WriteAt(data, int64(firstOffset))
+	if err != nil {
+		return fmt.Errorf("failed to write batched objects: %w", err)
+	}
+	if n != len(data) {
+		return fmt.Errorf("incomplete batched write: wrote %d of %d bytes", n, len(data))
+	}
+
+	return nil
+}
+
+// GetObjectInfo returns the ObjectInfo for a given ObjectId.
+// This is used internally for optimization decisions like batched writes.
+func (s *baseStore) GetObjectInfo(objId ObjectId) (ObjectInfo, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.objectMap.Get(objId)
 }
 
 func (s *baseStore) createCloser(objectId ObjectId) func() error {

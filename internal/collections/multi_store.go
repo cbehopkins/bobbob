@@ -148,3 +148,54 @@ func (s *multiStore) WriteToObj(objectId store.ObjectId) (io.Writer, store.Finis
 
 	return writer, finisher, nil
 }
+
+// WriteBatchedObjs writes data to multiple consecutive objects in a single operation.
+// This is a performance optimization for writing multiple small objects that are
+// adjacent in the file, reducing system call overhead.
+func (s *multiStore) WriteBatchedObjs(objIds []store.ObjectId, data []byte, sizes []int) error {
+	if len(objIds) != len(sizes) {
+		return io.ErrUnexpectedEOF
+	}
+
+	if len(objIds) == 0 {
+		return nil
+	}
+
+	// Verify all objects exist and are consecutive
+	var firstOffset store.FileOffset
+	expectedOffset := store.FileOffset(0)
+
+	for i, objId := range objIds {
+		obj, found := s.objectMap.Get(objId)
+		if !found {
+			return io.ErrUnexpectedEOF
+		}
+
+		if i == 0 {
+			firstOffset = obj.Offset
+			expectedOffset = obj.Offset + store.FileOffset(obj.Size)
+		} else {
+			if obj.Offset != expectedOffset {
+				return io.ErrUnexpectedEOF // Objects not consecutive
+			}
+			expectedOffset = obj.Offset + store.FileOffset(obj.Size)
+		}
+	}
+
+	// Write all data in one operation
+	n, err := s.file.WriteAt(data, int64(firstOffset))
+	if err != nil {
+		return err
+	}
+	if n != len(data) {
+		return io.ErrShortWrite
+	}
+
+	return nil
+}
+
+// GetObjectInfo returns the ObjectInfo for a given ObjectId.
+// This is used internally for optimization decisions like batched writes.
+func (s *multiStore) GetObjectInfo(objId store.ObjectId) (store.ObjectInfo, bool) {
+	return s.objectMap.Get(objId)
+}
