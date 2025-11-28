@@ -290,21 +290,16 @@ func ExampleVault() {
 
 	// ===== Session 1: Create vault and add data =====
 	{
-		// Create a new store and open a vault (initializes if new)
-		s, _ := store.NewBasicStore(tmpFile)
-		vault, _ := collections.LoadVault(s)
-
-		// Register all types we'll use (must be in same order every session!)
-		vault.RegisterType((*types.StringKey)(new(string)))
-		vault.RegisterType(types.JsonPayload[UserProfile]{})
-
-		// Get or create a "users" collection
-		users, _ := collections.GetOrCreateCollection[types.StringKey, types.JsonPayload[UserProfile]](
-			vault,
-			"users",
-			types.StringLess,
-			(*types.StringKey)(new(string)),
+		session, colls, _ := collections.OpenVault(
+			tmpFile,
+			collections.PayloadCollectionSpec[types.StringKey, types.JsonPayload[UserProfile]]{
+				Name:            "users",
+				LessFunc:        types.StringLess,
+				KeyTemplate:     (*types.StringKey)(new(string)),
+				PayloadTemplate: types.JsonPayload[UserProfile]{},
+			},
 		)
+		users := colls[0].(*treap.PersistentPayloadTreap[types.StringKey, types.JsonPayload[UserProfile]])
 
 		// Add some users
 		aliceKey := types.StringKey("alice")
@@ -317,27 +312,22 @@ func ExampleVault() {
 			Value: UserProfile{Username: "bob", Email: "bob@example.com", Credits: 50},
 		})
 
-		// Close vault (persists everything to disk)
-		vault.Close()
+		// Close session (persists everything to disk)
+		session.Close()
 	}
 
 	// ===== Session 2: Reload vault and access data =====
 	{
-		// Load the existing store and vault
-		s, _ := store.LoadBaseStore(tmpFile)
-		vault, _ := collections.LoadVault(s)
-
-		// Re-register types in the SAME ORDER
-		vault.RegisterType((*types.StringKey)(new(string)))
-		vault.RegisterType(types.JsonPayload[UserProfile]{})
-
-		// Get the existing "users" collection
-		users, _ := collections.GetOrCreateCollection[types.StringKey, types.JsonPayload[UserProfile]](
-			vault,
-			"users",
-			types.StringLess,
-			(*types.StringKey)(new(string)),
+		session, colls, _ := collections.OpenVault(
+			tmpFile,
+			collections.PayloadCollectionSpec[types.StringKey, types.JsonPayload[UserProfile]]{
+				Name:            "users",
+				LessFunc:        types.StringLess,
+				KeyTemplate:     (*types.StringKey)(new(string)),
+				PayloadTemplate: types.JsonPayload[UserProfile]{},
+			},
 		)
+		users := colls[0].(*treap.PersistentPayloadTreap[types.StringKey, types.JsonPayload[UserProfile]])
 
 		// Search for alice
 		aliceKey := types.StringKey("alice")
@@ -353,30 +343,27 @@ func ExampleVault() {
 			Value: UserProfile{Username: "charlie", Email: "charlie@example.com", Credits: 75},
 		})
 
-		vault.Close()
+		session.Close()
 	}
 
 	// ===== Session 3: Verify all data persisted =====
 	{
-		s, _ := store.LoadBaseStore(tmpFile)
-		vault, _ := collections.LoadVault(s)
-
-		// Re-register types
-		vault.RegisterType((*types.StringKey)(new(string)))
-		vault.RegisterType(types.JsonPayload[UserProfile]{})
-
-		users, _ := collections.GetOrCreateCollection[types.StringKey, types.JsonPayload[UserProfile]](
-			vault,
-			"users",
-			types.StringLess,
-			(*types.StringKey)(new(string)),
+		session, colls, _ := collections.OpenVault(
+			tmpFile,
+			collections.PayloadCollectionSpec[types.StringKey, types.JsonPayload[UserProfile]]{
+				Name:            "users",
+				LessFunc:        types.StringLess,
+				KeyTemplate:     (*types.StringKey)(new(string)),
+				PayloadTemplate: types.JsonPayload[UserProfile]{},
+			},
 		)
+		users := colls[0].(*treap.PersistentPayloadTreap[types.StringKey, types.JsonPayload[UserProfile]])
 
 		// Count total users
 		count, _ := users.Count()
 		fmt.Printf("Total users: %d\n", count)
 
-		vault.Close()
+		session.Close()
 	}
 
 	// Output:

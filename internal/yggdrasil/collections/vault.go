@@ -385,7 +385,127 @@ func (v *Vault) Close() error {
 
 	// Close the store
 	return v.Store.Close()
-} // ListCollections returns the names of all collections in the vault.
+}
+
+// ListCollections returns the names of all collections in the vault.
 func (v *Vault) ListCollections() []string {
 	return v.CollectionRegistry.ListCollections()
+}
+
+// VaultSession manages a vault with pre-configured collections.
+// Call Close() when done to persist all changes.
+type VaultSession struct {
+	Vault *Vault
+	Store store.Storer
+}
+
+// Close persists all changes and closes the vault.
+func (vs *VaultSession) Close() error {
+	return vs.Vault.Close()
+}
+
+// CollectionSpec defines the configuration for a collection to be opened.
+// This interface allows type-safe collection specifications.
+type CollectionSpec interface {
+	// getName returns the collection name
+	getName() string
+	// getTypes returns the key and payload types in order [keyType, payloadType]
+	getTypes() []any
+	// openCollection creates or loads the collection in the given vault
+	openCollection(v *Vault) (any, error)
+}
+
+// PayloadCollectionSpec specifies a collection with both keys and payloads.
+type PayloadCollectionSpec[K any, P treap.PersistentPayload[P]] struct {
+	Name        string
+	LessFunc    func(a, b K) bool
+	KeyTemplate treap.PersistentKey[K]
+	// PayloadTemplate is used only for type extraction, not stored
+	PayloadTemplate P
+}
+
+func (s PayloadCollectionSpec[K, P]) getName() string {
+	return s.Name
+}
+
+func (s PayloadCollectionSpec[K, P]) getTypes() []any {
+	return []any{s.KeyTemplate, s.PayloadTemplate}
+}
+
+func (s PayloadCollectionSpec[K, P]) openCollection(v *Vault) (any, error) {
+	return GetOrCreateCollection[K, P](v, s.Name, s.LessFunc, s.KeyTemplate)
+}
+
+// OpenVault is a unified convenience function that:
+// 1. Creates or loads a store from the given filename
+// 2. Loads the vault
+// 3. Automatically extracts and registers types from collection specs (deterministically)
+// 4. Opens all specified collections
+// 5. Returns the session and collections
+//
+// Type registration is deterministic: types are extracted from collections in the order
+// provided, with key types before payload types for each collection.
+//
+// Example:
+//
+//	session, collections, err := OpenVault(
+//	    "mydata.db",
+//	    PayloadCollectionSpec[types.StringKey, types.JsonPayload[UserProfile]]{
+//	        Name: "users",
+//	        LessFunc: types.StringLess,
+//	        KeyTemplate: (*types.StringKey)(new(string)),
+//	        PayloadTemplate: types.JsonPayload[UserProfile]{},
+//	    },
+//	)
+//	if err != nil { ... }
+//	defer session.Close()
+//
+//	users := collections[0].(*treap.PersistentPayloadTreap[types.StringKey, types.JsonPayload[UserProfile]])
+func OpenVault(filename string, specs ...CollectionSpec) (*VaultSession, []any, error) {
+	// Try to load existing store, or create new one
+	var s store.Storer
+	var err error
+	s, err = store.LoadBaseStore(filename)
+	if err != nil {
+		// File doesn't exist or can't be loaded, create new store
+		s, err = store.NewBasicStore(filename)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to create store: %w", err)
+		}
+	}
+
+	// Load vault (works for both new and existing)
+	vault, err := LoadVault(s)
+	if err != nil {
+		s.Close()
+		return nil, nil, fmt.Errorf("failed to load vault: %w", err)
+	}
+
+	// Extract and register types in deterministic order
+	// For each collection spec, register key type then payload type
+	for _, spec := range specs {
+		types := spec.getTypes()
+		for _, t := range types {
+			vault.RegisterType(t)
+		}
+	}
+
+	// Create session
+	session := &VaultSession{
+		Vault: vault,
+		Store: s,
+	}
+
+	// Open all collections
+	collections := make([]any, len(specs))
+	for i, spec := range specs {
+		coll, err := spec.openCollection(vault)
+		if err != nil {
+			session.Close()
+			return nil, nil, fmt.Errorf("failed to open collection %s: %w", spec.getName(), err)
+		}
+		collections[i] = coll
+	}
+
+	return session, collections, nil
 }
