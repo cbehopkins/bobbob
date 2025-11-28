@@ -1,9 +1,24 @@
-package yggdrasil
+package collections
 
 import (
 	"fmt"
+	"path/filepath"
 	"testing"
+
+	"bobbob/internal/store"
+	"bobbob/internal/yggdrasil/treap"
+	"bobbob/internal/yggdrasil/types"
 )
+
+func setupTestStore(t *testing.T) store.Storer {
+	tempDir := t.TempDir()
+	tempFile := filepath.Join(tempDir, "test_store.bin")
+	s, err := store.NewBasicStore(tempFile)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	return s
+}
 
 type dummyPayload struct {
 	val int
@@ -21,7 +36,7 @@ func (dp dummyPayload) Marshal() ([]byte, error) {
 	return []byte{byte(dp.val >> 24), byte(dp.val >> 16), byte(dp.val >> 8), byte(dp.val)}, nil
 }
 
-func (dp dummyPayload) Unmarshal(data []byte) (UntypedPersistentPayload, error) {
+func (dp dummyPayload) Unmarshal(data []byte) (treap.UntypedPersistentPayload, error) {
 	if len(data) < 4 {
 		return nil, fmt.Errorf("data too short to unmarshal dummyPayload")
 	}
@@ -37,26 +52,26 @@ func TestPayloadRepo_Get_IntKey(t *testing.T) {
 	// Create a store using setupTestStore
 	tmpStore := setupTestStore(t)
 	defer tmpStore.Close()
-	tm := NewTypeMap()
-	// Add IntKey type to the TypeMap
+	tm := types.NewTypeMap()
+	// Add types.IntKey type to the TypeMap
 	repo := NewPayloadRepo(tm, tmpStore)
 
-	key := IntKey(123)
-	dummyPayloadConstructor := func() (PersistentPayloadTreapInterface[IntKey, dummyPayload], error) {
-		var ttmp *PersistentPayloadTreap[IntKey, dummyPayload]
-		ttmp = NewPersistentPayloadTreap[IntKey, dummyPayload](IntLess, (*IntKey)(new(int32)), tmpStore)
+	key := types.IntKey(123)
+	dummyPayloadConstructor := func() (treap.PersistentPayloadTreapInterface[types.IntKey, dummyPayload], error) {
+		var ttmp *treap.PersistentPayloadTreap[types.IntKey, dummyPayload]
+		ttmp = treap.NewPersistentPayloadTreap[types.IntKey, dummyPayload](types.IntLess, (*types.IntKey)(new(int32)), tmpStore)
 		return ttmp, nil
 	}
 
 	// First Get should create a new payload
-	treap1, err := PayloadRepoGet[IntKey, dummyPayload](repo, key, dummyPayloadConstructor)
+	treap1, err := PayloadRepoGet[types.IntKey, dummyPayload](repo, key, dummyPayloadConstructor)
 	if err != nil {
 		t.Fatalf("Get failed: %v", err)
 	}
 	if treap1 == nil {
 		t.Fatalf("Expected non-nil payload from Get")
 	}
-	treap1.InsertComplex(&key, Priority(0), dummyPayload{val: 42})
+	treap1.InsertComplex(&key, treap.Priority(0), dummyPayload{val: 42})
 	result1 := treap1.Search(&key)
 	if result1 == nil {
 		t.Errorf("Expected to find the key in the payload1, but it was not found")
@@ -68,7 +83,7 @@ func TestPayloadRepo_Get_IntKey(t *testing.T) {
 	}
 
 	// Second Get should return the same payload (pointer equality)
-	treap2, err := PayloadRepoGet[IntKey, dummyPayload](repo, key, dummyPayloadConstructor)
+	treap2, err := PayloadRepoGet[types.IntKey, dummyPayload](repo, key, dummyPayloadConstructor)
 	if err != nil {
 		t.Fatalf("Second Get failed: %v", err)
 	}

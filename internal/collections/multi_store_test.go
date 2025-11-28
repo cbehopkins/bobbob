@@ -7,7 +7,7 @@ import (
 
 	"bobbob/internal/store"
 	"bobbob/internal/testutil"
-	"bobbob/internal/yggdrasil"
+	"bobbob/internal/yggdrasil/treap"
 )
 
 func TestMultiStoreDeleteObjFreesAllocation(t *testing.T) {
@@ -23,7 +23,7 @@ func TestMultiStoreDeleteObjFreesAllocation(t *testing.T) {
 
 	// Determine the block size used by the allocator
 	// PersistentTreapObjectSizes returns the sizes used
-	blockSizes := yggdrasil.PersistentTreapObjectSizes()
+	blockSizes := treap.PersistentTreapObjectSizes()
 	if len(blockSizes) == 0 {
 		t.Fatal("No block sizes configured")
 	}
@@ -84,7 +84,7 @@ func TestMultiStoreAllocateAndDelete(t *testing.T) {
 	}
 	defer ms.Close()
 
-	blockSizes := yggdrasil.PersistentTreapObjectSizes()
+	blockSizes := treap.PersistentTreapObjectSizes()
 	if len(blockSizes) == 0 {
 		t.Fatal("No block sizes configured")
 	}
@@ -148,7 +148,7 @@ func TestMultiStoreDeleteAddsToFreeList(t *testing.T) {
 	}
 	defer ms.Close()
 
-	blockSizes := yggdrasil.PersistentTreapObjectSizes()
+	blockSizes := treap.PersistentTreapObjectSizes()
 	testSize := blockSizes[len(blockSizes)-1] // Use a fixed block size
 
 	// Allocate first object

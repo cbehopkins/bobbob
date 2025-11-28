@@ -1,4 +1,4 @@
-package yggdrasil
+package treap
 
 import (
 	"fmt"
@@ -951,3 +951,4 @@ func TestPersistentPayloadTreapFlushNoneOlderThan(t *testing.T) {
 		t.Errorf("Expected %d nodes still in memory, got %d", len(keys), len(inMemoryNodes))
 	}
 }
+

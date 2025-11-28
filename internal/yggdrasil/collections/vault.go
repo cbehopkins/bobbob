@@ -1,21 +1,23 @@
-package yggdrasil
+package collections
 
 import (
 	"encoding/binary"
 	"fmt"
 
 	"bobbob/internal/store"
+	"bobbob/internal/yggdrasil/treap"
+	"bobbob/internal/yggdrasil/types"
 )
 
 // Reserved ObjectIds for vault metadata
 // VaultMetadataObjectId is typically the first object allocated (ObjectId 1)
 // since ObjectId 0 is used by the store's internal objectMap
 const (
-	// VaultMetadataObjectId stores references to TypeMap and CollectionRegistry
+	// VaultMetadataObjectId stores references to types.TypeMap and CollectionRegistry
 	VaultMetadataObjectId store.ObjectId = 1
 )
 
-// VaultMetadata contains the ObjectIds of the TypeMap and CollectionRegistry.
+// VaultMetadata contains the ObjectIds of the types.TypeMap and CollectionRegistry.
 // This is stored at a known location (VaultMetadataObjectId) so we can
 // find the other metadata when loading.
 type VaultMetadata struct {
@@ -50,7 +52,7 @@ type CollectionInterface interface {
 // Vault is the top-level abstraction for working with multiple collections
 // (treaps) in a single persistent store. It manages:
 // - A single persistent store file
-// - A TypeMap for efficient type serialization
+// - A types.TypeMap for efficient type serialization
 // - A CollectionRegistry for tracking all collections
 //
 // Usage pattern:
@@ -64,7 +66,7 @@ type Vault struct {
 	Store store.Storer
 
 	// TypeMap manages type-to-short-code mappings
-	TypeMap *TypeMap
+	TypeMap *types.TypeMap
 
 	// CollectionRegistry tracks all collections in this vault
 	CollectionRegistry *CollectionRegistry
@@ -75,30 +77,16 @@ type Vault struct {
 	activeCollections map[string]CollectionInterface
 }
 
-// NewVault creates a new vault with the given store.
-// The store should be newly created (not loaded from disk).
-func NewVault(stre store.Storer) *Vault {
-	// Allocate the prime object (ObjectId 1) first to ensure it's available
-	// for storing vault metadata when Close() is called.
-	// This must be done before any other objects are allocated.
-	_, _ = stre.PrimeObject(16)
-
-	return &Vault{
-		Store:              stre,
-		TypeMap:            NewTypeMap(),
-		CollectionRegistry: NewCollectionRegistry(),
-		activeCollections:  make(map[string]CollectionInterface),
-	}
-}
+// Note: NewVault has been removed. Use LoadVault for both new and existing vaults.
 
 // LoadVault loads an existing vault from a store.
-// It reads the TypeMap and CollectionRegistry from the store's reserved objects.
+// It reads the types.TypeMap and CollectionRegistry from the store's reserved objects.
 // After loading, you should register your types in the same order as when the vault was created.
-// The loaded TypeMap will be merged with your registered types.
+// The loaded types.TypeMap will be merged with your registered types.
 func LoadVault(stre store.Storer) (*Vault, error) {
 	vault := &Vault{
 		Store:              stre,
-		TypeMap:            NewTypeMap(),
+		TypeMap:            types.NewTypeMap(),
 		CollectionRegistry: NewCollectionRegistry(),
 		activeCollections:  make(map[string]CollectionInterface),
 	}
@@ -121,13 +109,13 @@ func LoadVault(stre store.Storer) (*Vault, error) {
 		return vault, nil // Ignore errors, treat as new vault
 	}
 
-	// Load TypeMap
+	// Load types.TypeMap
 	if store.IsValidObjectId(metadata.TypeMapObjectId) {
 		typeMapData, err := store.ReadBytesFromObj(stre, metadata.TypeMapObjectId)
 		if err == nil {
-			loadedTypeMap := NewTypeMap()
+			loadedTypeMap := types.NewTypeMap()
 			if err := loadedTypeMap.Unmarshal(typeMapData); err == nil {
-				// Use the loaded TypeMap
+				// Use the loaded types.TypeMap
 				vault.TypeMap = loadedTypeMap
 			}
 		}
@@ -166,15 +154,15 @@ func (v *Vault) RegisterType(t any) {
 //	v.RegisterType(StringKey(""))
 //	v.RegisterType(UserData{})
 //	users := GetOrCreateCollection[string, JsonPayload[UserData]](v, "users", StringLess, (*StringKey)(new(string)))
-func GetOrCreateCollection[K any, P PersistentPayload[P]](
+func GetOrCreateCollection[K any, P treap.PersistentPayload[P]](
 	v *Vault,
 	collectionName string,
 	lessFunc func(a, b K) bool,
-	keyTemplate PersistentKey[K],
-) (*PersistentPayloadTreap[K, P], error) {
+	keyTemplate treap.PersistentKey[K],
+) (*treap.PersistentPayloadTreap[K, P], error) {
 	// Check if we already have this collection loaded
 	if cached, exists := v.activeCollections[collectionName]; exists {
-		if treap, ok := cached.(*PersistentPayloadTreap[K, P]); ok {
+		if treap, ok := cached.(*treap.PersistentPayloadTreap[K, P]); ok {
 			return treap, nil
 		}
 		return nil, fmt.Errorf("collection %s exists but has wrong type", collectionName)
@@ -185,11 +173,11 @@ func GetOrCreateCollection[K any, P PersistentPayload[P]](
 	if exists {
 		// Validate type codes match what we expect
 		var zeroP P
-		expectedKeyShortCode, err := v.TypeMap.getShortCode(keyTemplate)
+		expectedKeyShortCode, err := v.TypeMap.GetShortCode(keyTemplate)
 		if err != nil {
 			return nil, fmt.Errorf("key type not registered: %w", err)
 		}
-		expectedPayloadShortCode, err := v.TypeMap.getShortCode(zeroP)
+		expectedPayloadShortCode, err := v.TypeMap.GetShortCode(zeroP)
 		if err != nil {
 			return nil, fmt.Errorf("payload type not registered: %w", err)
 		}
@@ -202,7 +190,7 @@ func GetOrCreateCollection[K any, P PersistentPayload[P]](
 		}
 
 		// Load the existing collection from the store
-		treap := NewPersistentPayloadTreap[K, P](lessFunc, keyTemplate, v.Store)
+		treap := treap.NewPersistentPayloadTreap[K, P](lessFunc, keyTemplate, v.Store)
 		if store.IsValidObjectId(collInfo.RootObjectId) {
 			err := treap.Load(collInfo.RootObjectId)
 			if err != nil {
@@ -215,18 +203,18 @@ func GetOrCreateCollection[K any, P PersistentPayload[P]](
 	}
 
 	// Create a new collection
-	treap := NewPersistentPayloadTreap[K, P](lessFunc, keyTemplate, v.Store)
+	treap := treap.NewPersistentPayloadTreap[K, P](lessFunc, keyTemplate, v.Store)
 
 	// Get the type short codes
 	var zeroP P
 
 	// Use the template to get the short code (not the generic K)
-	keyShortCode, err := v.TypeMap.getShortCode(keyTemplate)
+	keyShortCode, err := v.TypeMap.GetShortCode(keyTemplate)
 	if err != nil {
 		return nil, fmt.Errorf("key type not registered: %w", err)
 	}
 
-	payloadShortCode, err := v.TypeMap.getShortCode(zeroP)
+	payloadShortCode, err := v.TypeMap.GetShortCode(zeroP)
 	if err != nil {
 		return nil, fmt.Errorf("payload type not registered: %w", err)
 	}
@@ -253,11 +241,11 @@ func GetOrCreateKeyOnlyCollection[K any](
 	v *Vault,
 	collectionName string,
 	lessFunc func(a, b K) bool,
-	keyTemplate PersistentKey[K],
-) (*PersistentTreap[K], error) {
+	keyTemplate treap.PersistentKey[K],
+) (*treap.PersistentTreap[K], error) {
 	// Check if we already have this collection loaded
 	if cached, exists := v.activeCollections[collectionName]; exists {
-		if treap, ok := cached.(*PersistentTreap[K]); ok {
+		if treap, ok := cached.(*treap.PersistentTreap[K]); ok {
 			return treap, nil
 		}
 		return nil, fmt.Errorf("collection %s exists but has wrong type", collectionName)
@@ -267,7 +255,7 @@ func GetOrCreateKeyOnlyCollection[K any](
 	collInfo, exists := v.CollectionRegistry.GetCollection(collectionName)
 	if exists {
 		// Validate type codes match what we expect
-		expectedKeyShortCode, err := v.TypeMap.getShortCode(keyTemplate)
+		expectedKeyShortCode, err := v.TypeMap.GetShortCode(keyTemplate)
 		if err != nil {
 			return nil, fmt.Errorf("key type not registered: %w", err)
 		}
@@ -280,7 +268,7 @@ func GetOrCreateKeyOnlyCollection[K any](
 		}
 
 		// Load the existing collection from the store
-		treap := NewPersistentTreap[K](lessFunc, keyTemplate, v.Store)
+		treap := treap.NewPersistentTreap[K](lessFunc, keyTemplate, v.Store)
 		if store.IsValidObjectId(collInfo.RootObjectId) {
 			err := treap.Load(collInfo.RootObjectId)
 			if err != nil {
@@ -293,10 +281,10 @@ func GetOrCreateKeyOnlyCollection[K any](
 	}
 
 	// Create a new collection
-	treap := NewPersistentTreap[K](lessFunc, keyTemplate, v.Store)
+	treap := treap.NewPersistentTreap[K](lessFunc, keyTemplate, v.Store)
 
 	// Get the type short code for the key (use the template, not the generic K)
-	keyShortCode, err := v.TypeMap.getShortCode(keyTemplate)
+	keyShortCode, err := v.TypeMap.GetShortCode(keyTemplate)
 	if err != nil {
 		return nil, fmt.Errorf("key type not registered: %w", err)
 	}
@@ -358,7 +346,7 @@ func (v *Vault) Close() error {
 		return fmt.Errorf("failed to persist %d collections: %v", len(persistErrors), persistErrors)
 	}
 
-	// Save TypeMap to a new object
+	// Save types.TypeMap to a new object
 	typeMapData, err := v.TypeMap.Marshal()
 	if err != nil {
 		return fmt.Errorf("failed to marshal TypeMap: %w", err)
@@ -384,7 +372,7 @@ func (v *Vault) Close() error {
 		return fmt.Errorf("failed to get prime object: %w", err)
 	}
 
-	// Create and save metadata pointing to TypeMap and CollectionRegistry
+	// Create and save metadata pointing to types.TypeMap and CollectionRegistry
 	metadata := VaultMetadata{
 		TypeMapObjectId:            typeMapObjId,
 		CollectionRegistryObjectId: registryObjId,

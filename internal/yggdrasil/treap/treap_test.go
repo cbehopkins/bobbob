@@ -1,4 +1,4 @@
-package yggdrasil
+package treap
 
 import (
 	"errors"
@@ -278,3 +278,4 @@ func TestPointerKeyEquality(t *testing.T) {
 		t.Errorf("Expected to find key %d, but found key %d instead", key1, node.GetKey().(IntKey))
 	}
 }
+

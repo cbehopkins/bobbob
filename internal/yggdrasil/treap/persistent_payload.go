@@ -1,4 +1,4 @@
-package yggdrasil
+package treap
 
 import (
 	"errors"
@@ -7,15 +7,7 @@ import (
 	"bobbob/internal/store"
 )
 
-type UntypedPersistentPayload interface {
-	PersistentPayload[UntypedPersistentPayload]
-	Unmarshal([]byte) (UntypedPersistentPayload, error)
-}
-type PersistentPayload[T any] interface {
-	Marshal() ([]byte, error)
-	Unmarshal([]byte) (UntypedPersistentPayload, error)
-	SizeInBytes() int
-}
+// UntypedPersistentPayload and PersistentPayload interfaces have been moved to interfaces.go
 
 // PersistentPayloadTreapNode represents a node in the persistent payload treap.
 type PersistentPayloadTreapNode[K any, P PersistentPayload[P]] struct {
@@ -137,22 +129,7 @@ func (n *PersistentPayloadTreapNode[K, P]) SetObjectId(id store.ObjectId) {
 	n.objectId = id
 }
 
-type PersistentPayloadTreapInterface[T any, P any] interface {
-	Insert(key PersistentKey[T], payload P)
-	InsertComplex(key PersistentKey[T], priority Priority, payload P)
-	Search(key PersistentKey[T]) PersistentPayloadNodeInterface[T, P]
-	SearchComplex(key PersistentKey[T], callback func(TreapNodeInterface[T]) error) (PersistentPayloadNodeInterface[T, P], error)
-	UpdatePriority(key PersistentKey[T], newPriority Priority)
-	UpdatePayload(key PersistentKey[T], newPayload P) error
-	Persist() error
-	Load(objId store.ObjectId) error
-	Marshal() ([]byte, error)
-}
-type PersistentPayloadNodeInterface[T any, P any] interface {
-	PersistentTreapNodeInterface[T]
-	GetPayload() P
-	SetPayload(P)
-}
+// PersistentPayloadTreapInterface and PersistentPayloadNodeInterface have been moved to interfaces.go
 
 // PersistentPayloadTreap represents a persistent treap with payloads.
 type PersistentPayloadTreap[K any, P PersistentPayload[P]] struct {

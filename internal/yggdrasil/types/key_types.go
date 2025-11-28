@@ -1,4 +1,4 @@
-package yggdrasil
+package types
 
 import (
 	"encoding/binary"
@@ -6,31 +6,8 @@ import (
 	"errors"
 
 	"bobbob/internal/store"
+	"bobbob/internal/yggdrasil/treap"
 )
-
-// Key represents a key in a treap data structure.
-// It provides methods to determine size, equality, and value retrieval.
-type Key[T any] interface {
-	// SizeInBytes returns the size in bytes required to store the key.
-	// This should be constant for all objects of the same type.
-	SizeInBytes() int
-	// Equals reports whether this key equals another.
-	Equals(T) bool
-	// Value returns the underlying value of the key.
-	Value() T
-}
-
-// PersistentKey extends Key with persistence capabilities.
-// It can be marshaled to and unmarshaled from a store.
-type PersistentKey[T any] interface {
-	Key[T]
-	// New creates a new instance of this key type.
-	New() PersistentKey[T]
-	// MarshalToObjectId stores the key in the store and returns its ObjectId.
-	MarshalToObjectId(store.Storer) (store.ObjectId, error)
-	// UnmarshalFromObjectId loads the key from the given ObjectId in the store.
-	UnmarshalFromObjectId(store.ObjectId, store.Storer) error
-}
 
 // IntKey is a 32-bit integer key for use in treap data structures.
 // It implements both Key and PersistentKey interfaces.
@@ -52,7 +29,7 @@ func IntLess(a, b IntKey) bool {
 }
 
 // New creates a new IntKey instance initialized to -1.
-func (k IntKey) New() PersistentKey[IntKey] {
+func (k IntKey) New() treap.PersistentKey[IntKey] {
 	v := IntKey(-1)
 	return &v
 }
@@ -107,7 +84,7 @@ func (k ShortUIntKey) Value() ShortUIntKey {
 }
 
 // New creates a new ShortUIntKey instance initialized to 0.
-func (k ShortUIntKey) New() PersistentKey[ShortUIntKey] {
+func (k ShortUIntKey) New() treap.PersistentKey[ShortUIntKey] {
 	v := ShortUIntKey(0)
 	return &v
 }
@@ -181,7 +158,7 @@ func (k StringKey) Equals(other StringKey) bool {
 }
 
 // New creates a new empty StringKey instance.
-func (k StringKey) New() PersistentKey[StringKey] {
+func (k StringKey) New() treap.PersistentKey[StringKey] {
 	v := StringKey("")
 	return &v
 }

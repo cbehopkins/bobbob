@@ -1,4 +1,4 @@
-package yggdrasil
+package types
 
 import (
 	"reflect"
@@ -41,7 +41,7 @@ func TestTypeMap_SerializationAndLookup(t *testing.T) {
 	tm2.AddType(dummyTypeB{})
 
 	// Lookup by name
-	tuple, ok := tm2.GetTypeByName("yggdrasil.dummyTypeC")
+	tuple, ok := tm2.GetTypeByName("types.dummyTypeC")
 	if !ok {
 		t.Fatalf("Type yggdrasil.dummyTypeC not found after unmarshal")
 	}
@@ -51,7 +51,7 @@ func TestTypeMap_SerializationAndLookup(t *testing.T) {
 
 	// Lookup by short code
 	// Find short code for dummyTypeB
-	tupleB, ok := tm2.GetTypeByName("yggdrasil.dummyTypeB")
+	tupleB, ok := tm2.GetTypeByName("types.dummyTypeB")
 	if !ok {
 		t.Fatalf("Type yggdrasil.dummyTypeB not found after unmarshal")
 	}
@@ -91,7 +91,7 @@ func TestTypeMap_SerializationAndLookup_alt_order(t *testing.T) {
 	}
 
 	// Lookup by name
-	tuple, ok := tm2.GetTypeByName("yggdrasil.dummyTypeC")
+	tuple, ok := tm2.GetTypeByName("types.dummyTypeC")
 	if !ok {
 		t.Fatalf("Type yggdrasil.dummyTypeC not found after unmarshal")
 	}
@@ -101,7 +101,7 @@ func TestTypeMap_SerializationAndLookup_alt_order(t *testing.T) {
 
 	// Lookup by short code
 	// Find short code for dummyTypeB
-	tupleB, ok := tm2.GetTypeByName("yggdrasil.dummyTypeB")
+	tupleB, ok := tm2.GetTypeByName("types.dummyTypeB")
 	if !ok {
 		t.Fatalf("Type yggdrasil.dummyTypeB not found after unmarshal")
 	}

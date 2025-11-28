@@ -32,7 +32,7 @@
 //
 //	// Create a vault with a store
 //	stre, _ := store.NewBasicStore("data.db")
-//	vault := yggdrasil.NewVault(stre)
+//	vault, _ := yggdrasil.LoadVault(stre)
 //
 //	// Register types
 //	vault.RegisterType((*yggdrasil.StringKey)(new(string)))
@@ -51,7 +51,7 @@
 //
 //	// Save and close
 //	vault.Close()
-package yggdrasil
+package treap
 
 import (
 	"encoding/binary"
@@ -89,18 +89,7 @@ func randomPriority() Priority {
 	return Priority(rand.Uint32())
 }
 
-// TreapNodeInterface defines the interface for a node in the treap data structure.
-// A treap combines properties of a binary search tree (ordered by key) and a heap (ordered by priority).
-type TreapNodeInterface[T any] interface {
-	GetKey() Key[T]
-	GetPriority() Priority
-	SetPriority(Priority)
-	GetLeft() TreapNodeInterface[T]
-	GetRight() TreapNodeInterface[T]
-	SetLeft(TreapNodeInterface[T]) error
-	SetRight(TreapNodeInterface[T]) error
-	IsNil() bool
-}
+// TreapNodeInterface has been moved to interfaces.go
 
 // TreapNode represents a node in an in-memory treap.
 // It maintains both a key (for BST ordering) and a priority (for heap ordering).

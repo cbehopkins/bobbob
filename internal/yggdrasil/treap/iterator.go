@@ -1,4 +1,4 @@
-package yggdrasil
+package treap
 
 import (
 	"fmt"

@@ -1,10 +1,9 @@
-package yggdrasil
+package vault
 
 import (
+	"bobbob/internal/store"
 	"encoding/json"
 	"fmt"
-
-	"bobbob/internal/store"
 )
 
 // CollectionId is a unique identifier for a collection within a vault.

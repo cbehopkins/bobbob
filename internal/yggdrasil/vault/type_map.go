@@ -1,4 +1,4 @@
-package yggdrasil
+package vault
 
 import (
 	"bytes"
@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+
+	"bobbob/internal/yggdrasil/types"
 )
 
 // Type Map is a mapping of types to a unique identifier
@@ -19,7 +21,7 @@ import (
 // When reading back, the type identifier can be used to determine
 // What type to unmarshal into
 
-type ShortCodeType = ShortUIntKey
+type ShortCodeType = types.ShortUIntKey
 
 var ShortCodeLess = func(a, b ShortCodeType) bool {
 	return a < b
@@ -62,9 +64,9 @@ func NewTypeMap() *TypeMap {
 	tmp.AddType(int16(0))
 	tmp.AddType(uint8(0))
 	tmp.AddType(uint16(0))
-	tmp.AddType(IntKey(0))
-	tmp.AddType(StringKey(""))
-	tmp.AddType(ShortUIntKey(0))
+	tmp.AddType(types.IntKey(0))
+	tmp.AddType(types.StringKey(""))
+	tmp.AddType(types.ShortUIntKey(0))
 	return tmp
 }
 
@@ -130,7 +132,7 @@ func getTypeName(t any) string {
 	return fmt.Sprintf("%T", t)
 }
 
-func (tm TypeMap) getShortCode(t any) (ShortCodeType, error) {
+func (tm TypeMap) GetShortCode(t any) (ShortCodeType, error) {
 	tuple, exists := tm.Types[getTypeName(t)]
 	if !exists {
 		return 0, fmt.Errorf("type not found")

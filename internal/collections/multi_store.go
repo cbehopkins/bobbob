@@ -31,7 +31,7 @@ import (
 	"os"
 
 	"bobbob/internal/store"
-	"bobbob/internal/yggdrasil"
+	"bobbob/internal/yggdrasil/treap"
 )
 
 // deduplicateBlockSizes removes duplicate values from a slice of block sizes.
@@ -96,7 +96,7 @@ func NewMultiStore(filePath string) (*multiStore, error) {
 	}
 
 	blockCount := 1024
-	blockSizes := deduplicateBlockSizes(yggdrasil.PersistentTreapObjectSizes())
+	blockSizes := deduplicateBlockSizes(treap.PersistentTreapObjectSizes())
 	omniAllocator := store.NewOmniBlockAllocator(blockSizes, blockCount, rootAllocator)
 
 	ms := &multiStore{
@@ -213,7 +213,7 @@ func unmarshalComponents(rootData, omniData, mapData []byte) (*store.BasicAlloca
 
 	// Create and unmarshal omniAllocator
 	blockCount := 1024
-	blockSizes := deduplicateBlockSizes(yggdrasil.PersistentTreapObjectSizes())
+	blockSizes := deduplicateBlockSizes(treap.PersistentTreapObjectSizes())
 	omniAllocator := store.NewOmniBlockAllocator(blockSizes, blockCount, rootAllocator)
 
 	omniUnmarshaler, ok := interface{}(omniAllocator).(unmarshaler)

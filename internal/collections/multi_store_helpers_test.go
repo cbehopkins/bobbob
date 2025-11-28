@@ -3,7 +3,7 @@ package collections
 import (
 	"testing"
 
-	"bobbob/internal/yggdrasil"
+	"bobbob/internal/yggdrasil/treap"
 )
 
 func TestDeduplicateBlockSizes(t *testing.T) {
@@ -67,7 +67,7 @@ func TestDeduplicateBlockSizes(t *testing.T) {
 }
 
 func TestPersistentTreapObjectSizesNoDuplicates(t *testing.T) {
-	sizes := yggdrasil.PersistentTreapObjectSizes()
+	sizes := treap.PersistentTreapObjectSizes()
 	deduplicated := deduplicateBlockSizes(sizes)
 
 	t.Logf("Original sizes: %v", sizes)

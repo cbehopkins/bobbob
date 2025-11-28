@@ -1,10 +1,11 @@
-package yggdrasil
+package collections
 
 import (
 	"path/filepath"
 	"testing"
 
 	"bobbob/internal/store"
+	"bobbob/internal/yggdrasil/types"
 )
 
 // Test data types for the example
@@ -32,40 +33,43 @@ func TestVaultMultipleCollections(t *testing.T) {
 	}
 
 	// Create a vault
-	v := NewVault(stre)
+	v, err := LoadVault(stre)
+	if err != nil {
+		t.Fatalf("Failed to load vault: %v", err)
+	}
 
 	// Register all types we'll use (in a consistent order!)
 	// This order must be the same across sessions for consistency
-	v.RegisterType((*StringKey)(new(string)))
-	v.RegisterType((*IntKey)(new(int32)))
-	v.RegisterType(JsonPayload[UserData]{})
-	v.RegisterType(JsonPayload[ProductData]{})
+	v.RegisterType((*types.StringKey)(new(string)))
+	v.RegisterType((*types.IntKey)(new(int32)))
+	v.RegisterType(types.JsonPayload[UserData]{})
+	v.RegisterType(types.JsonPayload[ProductData]{})
 
 	// Create/get the "users" collection
-	users, err := GetOrCreateCollection[StringKey, JsonPayload[UserData]](
+	users, err := GetOrCreateCollection[types.StringKey, types.JsonPayload[UserData]](
 		v,
 		"users",
-		StringLess,
-		(*StringKey)(new(string)),
+		types.StringLess,
+		(*types.StringKey)(new(string)),
 	)
 	if err != nil {
 		t.Fatalf("Failed to create users collection: %v", err)
 	}
 
 	// Create/get the "products" collection
-	products, err := GetOrCreateCollection[StringKey, JsonPayload[ProductData]](
+	products, err := GetOrCreateCollection[types.StringKey, types.JsonPayload[ProductData]](
 		v,
 		"products",
-		StringLess,
-		(*StringKey)(new(string)),
+		types.StringLess,
+		(*types.StringKey)(new(string)),
 	)
 	if err != nil {
 		t.Fatalf("Failed to create products collection: %v", err)
 	}
 
 	// Insert users
-	user1Key := StringKey("user:alice")
-	user1 := JsonPayload[UserData]{
+	user1Key := types.StringKey("user:alice")
+	user1 := types.JsonPayload[UserData]{
 		Value: UserData{
 			Username: "alice",
 			Email:    "alice@example.com",
@@ -74,8 +78,8 @@ func TestVaultMultipleCollections(t *testing.T) {
 	}
 	users.Insert(&user1Key, user1)
 
-	user2Key := StringKey("user:bob")
-	user2 := JsonPayload[UserData]{
+	user2Key := types.StringKey("user:bob")
+	user2 := types.JsonPayload[UserData]{
 		Value: UserData{
 			Username: "bob",
 			Email:    "bob@example.com",
@@ -85,8 +89,8 @@ func TestVaultMultipleCollections(t *testing.T) {
 	users.Insert(&user2Key, user2)
 
 	// Insert products
-	prod1Key := StringKey("product:widget")
-	prod1 := JsonPayload[ProductData]{
+	prod1Key := types.StringKey("product:widget")
+	prod1 := types.JsonPayload[ProductData]{
 		Value: ProductData{
 			Name:  "Widget",
 			Price: 19.99,
@@ -95,8 +99,8 @@ func TestVaultMultipleCollections(t *testing.T) {
 	}
 	products.Insert(&prod1Key, prod1)
 
-	prod2Key := StringKey("product:gadget")
-	prod2 := JsonPayload[ProductData]{
+	prod2Key := types.StringKey("product:gadget")
+	prod2 := types.JsonPayload[ProductData]{
 		Value: ProductData{
 			Name:  "Gadget",
 			Price: 29.99,
@@ -164,30 +168,33 @@ func TestVaultKeyOnlyCollection(t *testing.T) {
 		t.Fatalf("Failed to create store: %v", err)
 	}
 
-	v := NewVault(stre)
+	v, err := LoadVault(stre)
+	if err != nil {
+		t.Fatalf("Failed to load vault: %v", err)
+	}
 
 	// Register types
-	v.RegisterType((*StringKey)(new(string)))
+	v.RegisterType((*types.StringKey)(new(string)))
 
 	// Create a key-only collection (e.g., a set of active user IDs)
-	activeUsers, err := GetOrCreateKeyOnlyCollection[StringKey](
+	activeUsers, err := GetOrCreateKeyOnlyCollection[types.StringKey](
 		v,
 		"active_users",
-		StringLess,
-		(*StringKey)(new(string)),
+		types.StringLess,
+		(*types.StringKey)(new(string)),
 	)
 	if err != nil {
 		t.Fatalf("Failed to create active_users collection: %v", err)
 	}
 
 	// Insert some keys
-	userId1 := StringKey("user:123")
+	userId1 := types.StringKey("user:123")
 	activeUsers.Insert(&userId1)
 
-	userId2 := StringKey("user:456")
+	userId2 := types.StringKey("user:456")
 	activeUsers.Insert(&userId2)
 
-	userId3 := StringKey("user:789")
+	userId3 := types.StringKey("user:789")
 	activeUsers.Insert(&userId3)
 
 	// Search for keys
@@ -202,7 +209,7 @@ func TestVaultKeyOnlyCollection(t *testing.T) {
 	}
 
 	// Search for non-existent key
-	nonExistentKey := StringKey("user:999")
+	nonExistentKey := types.StringKey("user:999")
 	node := activeUsers.Search(&nonExistentKey)
 	if node != nil {
 		t.Error("Should not find user:999 in active_users")
@@ -300,42 +307,45 @@ func TestVaultPersistenceAcrossSessions(t *testing.T) {
 			t.Fatalf("Failed to create store: %v", err)
 		}
 
-		v := NewVault(stre)
+		v, err := LoadVault(stre)
+		if err != nil {
+			t.Fatalf("Failed to load vault: %v", err)
+		}
 
 		// Register types (in consistent order!)
-		v.RegisterType((*StringKey)(new(string)))
-		v.RegisterType((*IntKey)(new(int32)))
-		v.RegisterType(JsonPayload[UserData]{})
-		v.RegisterType(JsonPayload[ProductData]{})
+		v.RegisterType((*types.StringKey)(new(string)))
+		v.RegisterType((*types.IntKey)(new(int32)))
+		v.RegisterType(types.JsonPayload[UserData]{})
+		v.RegisterType(types.JsonPayload[ProductData]{})
 
 		// Create collections
-		users, err := GetOrCreateCollection[StringKey, JsonPayload[UserData]](
-			v, "users", StringLess, (*StringKey)(new(string)),
+		users, err := GetOrCreateCollection[types.StringKey, types.JsonPayload[UserData]](
+			v, "users", types.StringLess, (*types.StringKey)(new(string)),
 		)
 		if err != nil {
 			t.Fatalf("Failed to create users collection: %v", err)
 		}
 
-		products, err := GetOrCreateCollection[StringKey, JsonPayload[ProductData]](
-			v, "products", StringLess, (*StringKey)(new(string)),
+		products, err := GetOrCreateCollection[types.StringKey, types.JsonPayload[ProductData]](
+			v, "products", types.StringLess, (*types.StringKey)(new(string)),
 		)
 		if err != nil {
 			t.Fatalf("Failed to create products collection: %v", err)
 		}
 
 		// Insert data
-		aliceKey := StringKey("user:alice")
-		users.Insert(&aliceKey, JsonPayload[UserData]{
+		aliceKey := types.StringKey("user:alice")
+		users.Insert(&aliceKey, types.JsonPayload[UserData]{
 			Value: UserData{Username: "alice", Email: "alice@example.com", Age: 30},
 		})
 
-		bobKey := StringKey("user:bob")
-		users.Insert(&bobKey, JsonPayload[UserData]{
+		bobKey := types.StringKey("user:bob")
+		users.Insert(&bobKey, types.JsonPayload[UserData]{
 			Value: UserData{Username: "bob", Email: "bob@example.com", Age: 25},
 		})
 
-		widgetKey := StringKey("product:widget")
-		products.Insert(&widgetKey, JsonPayload[ProductData]{
+		widgetKey := types.StringKey("product:widget")
+		products.Insert(&widgetKey, types.JsonPayload[ProductData]{
 			Value: ProductData{Name: "Widget", Price: 19.99, Stock: 100},
 		})
 
@@ -360,10 +370,10 @@ func TestVaultPersistenceAcrossSessions(t *testing.T) {
 		}
 
 		// Re-register types in THE SAME ORDER
-		v.RegisterType((*StringKey)(new(string)))
-		v.RegisterType((*IntKey)(new(int32)))
-		v.RegisterType(JsonPayload[UserData]{})
-		v.RegisterType(JsonPayload[ProductData]{})
+		v.RegisterType((*types.StringKey)(new(string)))
+		v.RegisterType((*types.IntKey)(new(int32)))
+		v.RegisterType(types.JsonPayload[UserData]{})
+		v.RegisterType(types.JsonPayload[ProductData]{})
 
 		// Verify collections are listed
 		collections := v.ListCollections()
@@ -373,15 +383,15 @@ func TestVaultPersistenceAcrossSessions(t *testing.T) {
 		}
 
 		// Load users collection
-		users, err := GetOrCreateCollection[StringKey, JsonPayload[UserData]](
-			v, "users", StringLess, (*StringKey)(new(string)),
+		users, err := GetOrCreateCollection[types.StringKey, types.JsonPayload[UserData]](
+			v, "users", types.StringLess, (*types.StringKey)(new(string)),
 		)
 		if err != nil {
 			t.Fatalf("Failed to get users collection: %v", err)
 		}
 
 		// Verify alice's data
-		aliceKey := StringKey("user:alice")
+		aliceKey := types.StringKey("user:alice")
 		aliceNode := users.Search(&aliceKey)
 		if aliceNode == nil {
 			t.Fatal("Expected to find alice, but she was not found")
@@ -394,7 +404,7 @@ func TestVaultPersistenceAcrossSessions(t *testing.T) {
 		}
 
 		// Verify bob's data
-		bobKey := StringKey("user:bob")
+		bobKey := types.StringKey("user:bob")
 		bobNode := users.Search(&bobKey)
 		if bobNode == nil {
 			t.Fatal("Expected to find bob, but he was not found")
@@ -404,15 +414,15 @@ func TestVaultPersistenceAcrossSessions(t *testing.T) {
 		}
 
 		// Load products collection
-		products, err := GetOrCreateCollection[StringKey, JsonPayload[ProductData]](
-			v, "products", StringLess, (*StringKey)(new(string)),
+		products, err := GetOrCreateCollection[types.StringKey, types.JsonPayload[ProductData]](
+			v, "products", types.StringLess, (*types.StringKey)(new(string)),
 		)
 		if err != nil {
 			t.Fatalf("Failed to get products collection: %v", err)
 		}
 
 		// Verify widget's data
-		widgetKey := StringKey("product:widget")
+		widgetKey := types.StringKey("product:widget")
 		widgetNode := products.Search(&widgetKey)
 		if widgetNode == nil {
 			t.Fatal("Expected to find widget, but it was not found")
@@ -425,13 +435,13 @@ func TestVaultPersistenceAcrossSessions(t *testing.T) {
 		}
 
 		// Add more data in session 2
-		charlieKey := StringKey("user:charlie")
-		users.Insert(&charlieKey, JsonPayload[UserData]{
+		charlieKey := types.StringKey("user:charlie")
+		users.Insert(&charlieKey, types.JsonPayload[UserData]{
 			Value: UserData{Username: "charlie", Email: "charlie@example.com", Age: 35},
 		})
 
-		gadgetKey := StringKey("product:gadget")
-		products.Insert(&gadgetKey, JsonPayload[ProductData]{
+		gadgetKey := types.StringKey("product:gadget")
+		products.Insert(&gadgetKey, types.JsonPayload[ProductData]{
 			Value: ProductData{Name: "Gadget", Price: 29.99, Stock: 50},
 		})
 
@@ -455,38 +465,38 @@ func TestVaultPersistenceAcrossSessions(t *testing.T) {
 		}
 
 		// Re-register types
-		v.RegisterType((*StringKey)(new(string)))
-		v.RegisterType((*IntKey)(new(int32)))
-		v.RegisterType(JsonPayload[UserData]{})
-		v.RegisterType(JsonPayload[ProductData]{})
+		v.RegisterType((*types.StringKey)(new(string)))
+		v.RegisterType((*types.IntKey)(new(int32)))
+		v.RegisterType(types.JsonPayload[UserData]{})
+		v.RegisterType(types.JsonPayload[ProductData]{})
 
 		// Load collections
-		users, err := GetOrCreateCollection[StringKey, JsonPayload[UserData]](
-			v, "users", StringLess, (*StringKey)(new(string)),
+		users, err := GetOrCreateCollection[types.StringKey, types.JsonPayload[UserData]](
+			v, "users", types.StringLess, (*types.StringKey)(new(string)),
 		)
 		if err != nil {
 			t.Fatalf("Failed to get users collection in session 3: %v", err)
 		}
 
-		products, err := GetOrCreateCollection[StringKey, JsonPayload[ProductData]](
-			v, "products", StringLess, (*StringKey)(new(string)),
+		products, err := GetOrCreateCollection[types.StringKey, types.JsonPayload[ProductData]](
+			v, "products", types.StringLess, (*types.StringKey)(new(string)),
 		)
 		if err != nil {
 			t.Fatalf("Failed to get products collection in session 3: %v", err)
 		}
 
 		// Verify all users (alice, bob from session 1, charlie from session 2)
-		aliceKey := StringKey("user:alice")
+		aliceKey := types.StringKey("user:alice")
 		if users.Search(&aliceKey) == nil {
 			t.Error("Expected to find alice in session 3")
 		}
 
-		bobKey := StringKey("user:bob")
+		bobKey := types.StringKey("user:bob")
 		if users.Search(&bobKey) == nil {
 			t.Error("Expected to find bob in session 3")
 		}
 
-		charlieKey := StringKey("user:charlie")
+		charlieKey := types.StringKey("user:charlie")
 		charlieNode := users.Search(&charlieKey)
 		if charlieNode == nil {
 			t.Error("Expected to find charlie in session 3")
@@ -495,12 +505,12 @@ func TestVaultPersistenceAcrossSessions(t *testing.T) {
 		}
 
 		// Verify all products
-		widgetKey := StringKey("product:widget")
+		widgetKey := types.StringKey("product:widget")
 		if products.Search(&widgetKey) == nil {
 			t.Error("Expected to find widget in session 3")
 		}
 
-		gadgetKey := StringKey("product:gadget")
+		gadgetKey := types.StringKey("product:gadget")
 		gadgetNode := products.Search(&gadgetKey)
 		if gadgetNode == nil {
 			t.Error("Expected to find gadget in session 3")

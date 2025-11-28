@@ -1,4 +1,4 @@
-package yggdrasil
+package collections
 
 import (
 	"testing"

@@ -1,7 +1,9 @@
-package yggdrasil
+package types
 
 import (
 	"encoding/json"
+
+	"bobbob/internal/yggdrasil/treap"
 )
 
 // JsonPayload is a wrapper that provides PersistentPayload interface for any type
@@ -37,7 +39,7 @@ func (j JsonPayload[T]) Marshal() ([]byte, error) {
 }
 
 // Unmarshal implements PersistentPayload using JSON decoding.
-func (j JsonPayload[T]) Unmarshal(data []byte) (UntypedPersistentPayload, error) {
+func (j JsonPayload[T]) Unmarshal(data []byte) (treap.UntypedPersistentPayload, error) {
 	var value T
 	err := json.Unmarshal(data, &value)
 	if err != nil {

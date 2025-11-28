@@ -1,4 +1,4 @@
-package yggdrasil
+package types
 
 import (
 	"bytes"
