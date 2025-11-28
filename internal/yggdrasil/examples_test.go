@@ -660,3 +660,170 @@ func ExampleJsonPayload_loadAndUpdate() {
 	}
 	// Output: Updated: Widget, New Stock: 90
 }
+
+// ExamplePersistentPayloadTreap_WalkInOrder demonstrates memory-efficient iteration
+// through all nodes in a persistent treap using the WalkInOrder method.
+// This is particularly useful for large treaps where loading all nodes into memory
+// would be prohibitive.
+func ExamplePersistentPayloadTreap_WalkInOrder() {
+	tmpFile := filepath.Join(os.TempDir(), "catalog.bin")
+	defer os.Remove(tmpFile)
+
+	s, _ := store.NewBasicStore(tmpFile)
+	defer s.Close()
+
+	// Create a catalog of products
+	treap := NewPersistentPayloadTreap[StringKey, JsonPayload[Product]](
+		StringLess,
+		(*StringKey)(new(string)),
+		s,
+	)
+
+	// Add multiple products
+	products := map[string]Product{
+		"apple":  {Name: "Apple", Price: 0.50, Stock: 100},
+		"banana": {Name: "Banana", Price: 0.30, Stock: 150},
+		"cherry": {Name: "Cherry", Price: 2.00, Stock: 50},
+		"date":   {Name: "Date", Price: 3.50, Stock: 25},
+	}
+
+	for sku, product := range products {
+		key := StringKey(sku)
+		treap.InsertComplex(&key, Priority(len(sku)*100), JsonPayload[Product]{Value: product})
+	}
+
+	// Persist to disk
+	treap.Persist()
+
+	// Example 1: Iterate with memory-efficient mode (default)
+	// Nodes are automatically flushed from memory as we finish processing them
+	fmt.Println("Catalog (memory-efficient iteration):")
+	opts := DefaultIteratorOptions()
+	opts.KeepInMemory = false // Memory-efficient: flush nodes as we go
+	opts.LoadPayloads = true  // Load full product data
+
+	err := treap.WalkInOrder(opts, func(key PersistentKey[StringKey], payload JsonPayload[Product], loaded bool) error {
+		sku := string(*key.(*StringKey))
+		product := payload.Value
+		fmt.Printf("  %s: %s - $%.2f (%d in stock)\n", sku, product.Name, product.Price, product.Stock)
+		return nil
+	})
+	if err != nil {
+		fmt.Printf("Error: %v\n", err)
+	}
+
+	// Example 2: Count total items without loading payloads (even more efficient)
+	fmt.Println("\nCounting items (keys only, no payload loading):")
+	count := 0
+	opts.LoadPayloads = false // Don't load payloads - faster iteration
+
+	err = treap.WalkInOrder(opts, func(key PersistentKey[StringKey], _ JsonPayload[Product], loaded bool) error {
+		count++
+		return nil
+	})
+	if err == nil {
+		fmt.Printf("Total items in catalog: %d\n", count)
+	}
+
+	// Example 3: Use the convenience method for keys-only iteration
+	fmt.Println("\nAll SKUs (using WalkInOrderKeys):")
+	err = treap.WalkInOrderKeys(opts, func(key PersistentKey[StringKey]) error {
+		fmt.Printf("  %s\n", *key.(*StringKey))
+		return nil
+	})
+
+	// Example 4: Use Count() method
+	totalCount, _ := treap.Count()
+	fmt.Printf("\nTotal count using Count(): %d\n", totalCount)
+
+	// Output:
+	// Catalog (memory-efficient iteration):
+	//   apple: Apple - $0.50 (100 in stock)
+	//   banana: Banana - $0.30 (150 in stock)
+	//   cherry: Cherry - $2.00 (50 in stock)
+	//   date: Date - $3.50 (25 in stock)
+	//
+	// Counting items (keys only, no payload loading):
+	// Total items in catalog: 4
+	//
+	// All SKUs (using WalkInOrderKeys):
+	//   apple
+	//   banana
+	//   cherry
+	//   date
+	//
+	// Total count using Count(): 4
+}
+
+// ExamplePersistentTreap_WalkInOrder demonstrates memory-efficient iteration
+// through a persistent treap without payloads. This is useful for processing
+// large datasets where keeping all nodes in memory is not practical.
+func ExamplePersistentTreap_WalkInOrder() {
+	tmpFile := filepath.Join(os.TempDir(), "numbers.bin")
+	defer os.Remove(tmpFile)
+
+	s, _ := store.NewBasicStore(tmpFile)
+	defer s.Close()
+
+	treap := NewPersistentTreap[IntKey](IntLess, (*IntKey)(new(int32)), s)
+
+	// Insert a range of numbers
+	for i := int32(1); i <= 10; i++ {
+		key := IntKey(i)
+		treap.InsertComplex(&key, Priority(i*100))
+	}
+
+	// Persist to disk
+	treap.Persist()
+
+	// Iterate through all keys in sorted order with memory-efficient mode
+	fmt.Println("Numbers in treap:")
+	opts := DefaultIteratorOptions()
+	opts.KeepInMemory = false // Flush nodes from memory as we finish with them
+
+	first := true
+	err := treap.WalkInOrderKeys(opts, func(key PersistentKey[IntKey]) error {
+		intKey := key.(*IntKey)
+		if !first {
+			fmt.Print(" ")
+		}
+		first = false
+		fmt.Print(*intKey)
+		return nil
+	})
+	if err != nil {
+		fmt.Printf("\nError: %v\n", err)
+	}
+	fmt.Println()
+	fmt.Println("First 5 numbers:")
+	count := 0
+	first = true
+	_ = treap.WalkInOrderKeys(opts, func(key PersistentKey[IntKey]) error {
+		intKey := key.(*IntKey)
+		if !first {
+			fmt.Print(" ")
+		}
+		first = false
+		fmt.Print(*intKey)
+		count++
+		if count >= 5 {
+			return fmt.Errorf("found enough") // Stop iteration
+		}
+		return nil
+	})
+	fmt.Println()
+	sum := int32(0)
+	treap.WalkInOrderKeys(opts, func(key PersistentKey[IntKey]) error {
+		intKey := key.(*IntKey)
+		sum += int32(*intKey)
+		return nil
+	})
+	fmt.Println("Sum of all numbers:", sum)
+
+	// Output:
+	// Numbers in treap:
+	// 1 2 3 4 5 6 7 8 9 10
+	// First 5 numbers:
+	// 1 2 3 4 5
+	// Sum of all numbers: 55
+}
