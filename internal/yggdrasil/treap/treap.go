@@ -280,11 +280,19 @@ func (t *Treap[T]) InsertComplex(value T, priority Priority) {
 	t.root = t.insert(t.root, newNode)
 }
 
-// Insert inserts a new node with the given value into the treap with a random priority.
+// Insert inserts a new node with the given value into the treap.
 // The type T must implement the Key[T] interface (e.g., IntKey, StringKey).
+// If the value implements PriorityProvider, its Priority() method is used;
+// otherwise, a random priority is generated.
 // This is the preferred method for most use cases.
 func (t *Treap[T]) Insert(value T) {
-	t.InsertComplex(value, randomPriority())
+	var priority Priority
+	if pp, ok := any(value).(PriorityProvider); ok {
+		priority = pp.Priority()
+	} else {
+		priority = randomPriority()
+	}
+	t.InsertComplex(value, priority)
 }
 
 // Delete removes the node with the given value from the treap.

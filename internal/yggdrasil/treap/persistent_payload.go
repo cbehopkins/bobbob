@@ -175,10 +175,18 @@ func (t *PersistentPayloadTreap[K, P]) InsertComplex(key PersistentKey[K], prior
 	t.root = tmp
 }
 
-// Insert inserts a new node with the given key and payload into the persistent payload treap with a random priority.
+// Insert inserts a new node with the given key and payload into the persistent payload treap.
+// If the key implements PriorityProvider, its Priority() method is used;
+// otherwise, a random priority is generated.
 // This is the preferred method for most use cases.
 func (t *PersistentPayloadTreap[K, P]) Insert(key PersistentKey[K], payload P) {
-	t.InsertComplex(key, randomPriority(), payload)
+	var priority Priority
+	if pp, ok := any(key).(PriorityProvider); ok {
+		priority = pp.Priority()
+	} else {
+		priority = randomPriority()
+	}
+	t.InsertComplex(key, priority, payload)
 }
 
 // NewPayloadFromObjectId creates a PersistentPayloadTreapNode from the given object ID.

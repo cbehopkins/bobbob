@@ -270,4 +270,3 @@ Possible improvements:
 2. **Range iteration**: Iterate only over a key range
 3. **Parallel iteration**: Multiple goroutines iterating over different subtrees
 4. **Cursor-based iteration**: Save position and resume later
-5. **More aggressive flushing**: Flush parent nodes when backtracking

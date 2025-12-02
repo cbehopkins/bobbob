@@ -26,6 +26,17 @@ type PersistentKey[T any] interface {
 	UnmarshalFromObjectId(store.ObjectId, store.Storer) error
 }
 
+// PriorityProvider is an optional interface that keys can implement to provide
+// their own priority value for the treap. This is useful for keys that have
+// inherently well-distributed values (like hash values) that can serve as
+// priorities, avoiding the need to generate random priorities.
+// If a key implements this interface, the Insert method will use the provided
+// priority instead of generating a random one.
+type PriorityProvider interface {
+	// Priority returns the priority value to use for this key in the treap.
+	Priority() Priority
+}
+
 // UntypedPersistentPayload represents a payload that can be persisted without type parameters.
 type UntypedPersistentPayload interface {
 	PersistentPayload[UntypedPersistentPayload]

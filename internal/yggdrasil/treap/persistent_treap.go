@@ -556,10 +556,18 @@ func (t *PersistentTreap[T]) InsertComplex(key PersistentKey[T], priority Priori
 	t.root = t.insert(t.root, newNode)
 }
 
-// Insert inserts a new node with the given key into the persistent treap with a random priority.
+// Insert inserts a new node with the given key into the persistent treap.
+// If the key implements PriorityProvider, its Priority() method is used;
+// otherwise, a random priority is generated.
 // This is the preferred method for most use cases.
 func (t *PersistentTreap[T]) Insert(key PersistentKey[T]) {
-	t.InsertComplex(key, randomPriority())
+	var priority Priority
+	if pp, ok := any(key).(PriorityProvider); ok {
+		priority = pp.Priority()
+	} else {
+		priority = randomPriority()
+	}
+	t.InsertComplex(key, priority)
 }
 
 // Delete removes the node with the given key from the persistent treap.

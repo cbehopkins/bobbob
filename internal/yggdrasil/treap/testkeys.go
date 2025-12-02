@@ -3,6 +3,7 @@ package treap
 import (
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 
 	"bobbob/internal/store"
 )
@@ -104,5 +105,58 @@ func (k StringKey) MarshalToObjectId(stre store.Storer) (store.ObjectId, error) 
 }
 
 func (k *StringKey) UnmarshalFromObjectId(id store.ObjectId, stre store.Storer) error {
+	return store.ReadGeneric(stre, k, id)
+}
+
+// MD5Key represents a 16-byte MD5 hash that can be used as a treap key.
+// It implements PriorityProvider to use the hash value itself as the priority,
+// since MD5 hashes are uniformly distributed and make excellent priorities.
+type MD5Key [16]byte
+
+func (k MD5Key) Value() MD5Key            { return k }
+func (k MD5Key) SizeInBytes() int         { return 16 }
+func (k MD5Key) Equals(other MD5Key) bool { return k == other }
+
+// Priority implements PriorityProvider by using the first 4 bytes of the MD5 hash.
+// This provides a well-distributed priority without needing random number generation.
+func (k MD5Key) Priority() Priority {
+	return Priority(binary.LittleEndian.Uint32(k[0:4]))
+}
+
+func MD5Less(a, b MD5Key) bool {
+	for i := 0; i < 16; i++ {
+		if a[i] != b[i] {
+			return a[i] < b[i]
+		}
+	}
+	return false
+}
+
+func (k MD5Key) Marshal() ([]byte, error) {
+	return k[:], nil
+}
+
+func (k *MD5Key) Unmarshal(data []byte) error {
+	if len(data) != 16 {
+		return errors.New("MD5Key must be exactly 16 bytes")
+	}
+	copy(k[:], data)
+	return nil
+}
+
+func (k MD5Key) New() PersistentKey[MD5Key] {
+	v := MD5Key{}
+	return &v
+}
+
+func (k MD5Key) MarshalToObjectId(stre store.Storer) (store.ObjectId, error) {
+	marshalled, err := k.Marshal()
+	if err != nil {
+		return 0, err
+	}
+	return store.WriteNewObjFromBytes(stre, marshalled)
+}
+
+func (k *MD5Key) UnmarshalFromObjectId(id store.ObjectId, stre store.Storer) error {
 	return store.ReadGeneric(stre, k, id)
 }
