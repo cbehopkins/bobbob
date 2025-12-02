@@ -14,6 +14,9 @@ type dummyTypeC struct {
 	Field int
 }
 
+// TestTypeMap_SerializationAndLookup verifies that TypeMap assigns unique short codes
+// to types, serializes/deserializes correctly, and allows bidirectional lookup
+// (type to code and code to type).
 func TestTypeMap_SerializationAndLookup(t *testing.T) {
 	tm := &TypeMap{}
 
@@ -64,6 +67,8 @@ func TestTypeMap_SerializationAndLookup(t *testing.T) {
 	}
 }
 
+// TestTypeMap_SerializationAndLookup_alt_order verifies that type registration order
+// affects short code assignment, demonstrating the importance of consistent ordering.
 func TestTypeMap_SerializationAndLookup_alt_order(t *testing.T) {
 	tm := &TypeMap{}
 

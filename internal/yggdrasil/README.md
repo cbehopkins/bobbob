@@ -318,7 +318,8 @@ For persistent treaps working with large datasets:
 2. **Explicit persistence**: Call `Persist()` when you want to save
 3. **Memory release**: Call `Flush()` to save and free memory
 4. **Time-based flushing**: Call `FlushOlderThan()` to evict nodes not accessed recently
-5. **Navigation**: Child nodes auto-load on access
+5. **Percentile-based flushing**: Call `FlushOldestPercentile()` to evict oldest N% of nodes
+6. **Navigation**: Child nodes auto-load on access
 
 **Example workflow:**
 ```go
@@ -346,7 +347,39 @@ flushedCount, err := treap.FlushOlderThan(cutoffTime)
 // Nodes are still accessible - they'll be reloaded from disk as needed
 ```
 
-See `ExamplePersistentPayloadTreap_flushOlderThan` in `examples_test.go` for a complete demonstration of using `FlushOlderThan()` to manage memory in a persistent treap.
+**Percentile-based memory management:**
+
+The `FlushOldestPercentile()` method allows you to flush the oldest N% of nodes based on access time, providing aggressive memory control without relying on specific timestamps:
+
+```go
+// Flush the oldest 25% of nodes
+flushedCount, err := treap.FlushOldestPercentile(25)
+// Flushed nodes can still be accessed - they'll reload from disk
+```
+
+**Vault-level automatic memory management:**
+
+For Vault collections, you can enable automatic memory monitoring with convenient high-level APIs:
+
+```go
+// Option 1: Time-based - flush nodes older than 10 seconds when over 1000 nodes
+vault.SetMemoryBudget(1000, 10)
+
+// Option 2: Percentile-based - flush oldest 25% when over 1000 nodes
+vault.SetMemoryBudgetWithPercentile(1000, 25)
+
+// Option 3: Custom monitoring with callbacks
+vault.EnableMemoryMonitoring(
+    func(stats MemoryStats) bool {
+        return stats.TotalInMemoryNodes > 1000
+    },
+    func(stats MemoryStats) (int, error) {
+        return vault.FlushOldestPercentile(30)
+    },
+)
+```
+
+See `ExampleVault_memoryManagement` and `ExampleVault_memoryManagementPercentile` in `examples_test.go` for complete demonstrations.
 
 ## Design Patterns
 

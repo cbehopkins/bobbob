@@ -26,6 +26,8 @@ func (p MockPayload) SizeInBytes() int {
 	return len(p.Data)
 }
 
+// TestPersistentPayloadTreapNodeMarshalUnmarshal verifies that payload treap nodes
+// can be serialized and deserialized, preserving key, priority, payload, and object IDs.
 func TestPersistentPayloadTreapNodeMarshalUnmarshal(t *testing.T) {
 	store := setupTestStore(t)
 	defer store.Close()
@@ -62,6 +64,8 @@ func TestPersistentPayloadTreapNodeMarshalUnmarshal(t *testing.T) {
 	}
 }
 
+// TestPersistentPayloadTreapInsertAndSearch verifies basic insert and search operations
+// on a persistent payload treap, ensuring key-value pairs are stored and retrieved correctly.
 func TestPersistentPayloadTreapInsertAndSearch(t *testing.T) {
 	store := setupTestStore(t)
 	defer store.Close()
@@ -100,6 +104,8 @@ func TestPersistentPayloadTreapInsertAndSearch(t *testing.T) {
 	}
 }
 
+// TestPersistentPayloadTreapUpdatePayload verifies that payloads can be updated for
+// existing keys, replacing old values with new ones.
 func TestPersistentPayloadTreapUpdatePayload(t *testing.T) {
 	store := setupTestStore(t)
 	defer store.Close()
@@ -125,6 +131,8 @@ func TestPersistentPayloadTreapUpdatePayload(t *testing.T) {
 	}
 }
 
+// TestPersistentPayloadTreapInsertLargeNumberOfPairs verifies that the treap can handle
+// a large number of key-value pairs (10,000) without errors or data loss.
 func TestPersistentPayloadTreapInsertLargeNumberOfPairs(t *testing.T) {
 	store := setupTestStore(t)
 	defer store.Close()
@@ -164,6 +172,8 @@ func TestPersistentPayloadTreapInsertLargeNumberOfPairs(t *testing.T) {
 	}
 }
 
+// TestPersistentPayloadTreapLargeScaleUpdateAndVerify verifies that large-scale updates
+// (5,000 items) work correctly, with all updated values retrievable.
 func TestPersistentPayloadTreapLargeScaleUpdateAndVerify(t *testing.T) {
 	store := setupTestStore(t)
 	defer store.Close()
@@ -203,6 +213,8 @@ func TestPersistentPayloadTreapLargeScaleUpdateAndVerify(t *testing.T) {
 	}
 }
 
+// TestPersistentPayloadTreapInsertDeleteAndVerify verifies that nodes can be deleted
+// and that deleted keys are no longer findable while remaining keys are intact.
 func TestPersistentPayloadTreapInsertDeleteAndVerify(t *testing.T) {
 	store := setupTestStore(t)
 	defer store.Close()
@@ -247,6 +259,8 @@ func TestPersistentPayloadTreapInsertDeleteAndVerify(t *testing.T) {
 	}
 }
 
+// TestPersistentPayloadTreapPersistenceOne verifies that a single key-value pair
+// can be persisted and reloaded in a new session.
 func TestPersistentPayloadTreapPersistenceOne(t *testing.T) {
 	// Create the store and treap
 	tempDir := t.TempDir()
@@ -299,6 +313,8 @@ func TestPersistentPayloadTreapPersistenceOne(t *testing.T) {
 	}
 }
 
+// TestPersistentPayloadTreapPersistence verifies that multiple key-value pairs persist
+// correctly across sessions, maintaining all data through save/load cycles.
 func TestPersistentPayloadTreapPersistence(t *testing.T) {
 	// Create the store and treap
 	tempDir := t.TempDir()
@@ -382,6 +398,8 @@ func TestPersistentPayloadTreapPersistence(t *testing.T) {
 	}
 }
 
+// TestPersistentPayloadTreapNodeMarshalToObjectId verifies that nodes can be persisted
+// and assigned object IDs, then reloaded from those IDs.
 func TestPersistentPayloadTreapNodeMarshalToObjectId(t *testing.T) {
 	stre := setupTestStore(t)
 	defer stre.Close()
@@ -424,6 +442,8 @@ func TestPersistentPayloadTreapNodeMarshalToObjectId(t *testing.T) {
 
 // TestPersistentPayloadTreapLazyLoading verifies that loading a persisted treap from disk
 // only loads the root node, not the entire tree structure.
+// TestPersistentPayloadTreapLazyLoading verifies that nodes are lazily loaded from storage
+// only when accessed, not all at once when the treap is opened.
 func TestPersistentPayloadTreapLazyLoading(t *testing.T) {
 	stre := setupTestStore(t)
 	defer stre.Close()
@@ -524,6 +544,8 @@ func TestPersistentPayloadTreapLazyLoading(t *testing.T) {
 	}
 }
 
+// TestPersistentPayloadTreapTimestamps verifies that nodes track their last access time
+// and that searching updates timestamps appropriately.
 func TestPersistentPayloadTreapTimestamps(t *testing.T) {
 	store := setupTestStore(t)
 	defer store.Close()
@@ -587,6 +609,8 @@ func TestPersistentPayloadTreapTimestamps(t *testing.T) {
 	}
 }
 
+// TestPersistentPayloadTreapGetInMemoryNodes verifies that the in-memory node count
+// accurately reflects how many nodes are currently loaded vs. on disk.
 func TestPersistentPayloadTreapGetInMemoryNodes(t *testing.T) {
 	store := setupTestStore(t)
 	defer store.Close()
@@ -643,6 +667,8 @@ func TestPersistentPayloadTreapGetInMemoryNodes(t *testing.T) {
 	}
 }
 
+// TestPersistentPayloadTreapFlushOlderThan verifies that flushing removes old nodes
+// from memory based on their last access time, reducing memory footprint.
 func TestPersistentPayloadTreapFlushOlderThan(t *testing.T) {
 	store := setupTestStore(t)
 	defer store.Close()
@@ -720,6 +746,8 @@ func TestPersistentPayloadTreapFlushOlderThan(t *testing.T) {
 	}
 }
 
+// TestPersistentPayloadTreapSelectiveFlush verifies that selective flushing only removes
+// nodes that haven't been accessed recently, keeping hot nodes in memory.
 func TestPersistentPayloadTreapSelectiveFlush(t *testing.T) {
 	store := setupTestStore(t)
 	defer store.Close()
@@ -805,6 +833,8 @@ func TestPersistentPayloadTreapSelectiveFlush(t *testing.T) {
 	}
 }
 
+// TestPersistentPayloadTreapFlushAndReload verifies that flushed nodes can be reloaded
+// on demand when searched, demonstrating the full lazy loading cycle.
 func TestPersistentPayloadTreapFlushAndReload(t *testing.T) {
 	store := setupTestStore(t)
 	defer store.Close()
@@ -882,6 +912,8 @@ func TestPersistentPayloadTreapFlushAndReload(t *testing.T) {
 	}
 }
 
+// TestPersistentPayloadTreapFlushWithNoNodes verifies that flushing an empty treap
+// doesn't cause errors and returns a flush count of zero.
 func TestPersistentPayloadTreapFlushWithNoNodes(t *testing.T) {
 	store := setupTestStore(t)
 	defer store.Close()
@@ -900,6 +932,8 @@ func TestPersistentPayloadTreapFlushWithNoNodes(t *testing.T) {
 	}
 }
 
+// TestPersistentPayloadTreapFlushNoneOlderThan verifies that when no nodes are old enough
+// to flush, the flush operation completes without removing any nodes.
 func TestPersistentPayloadTreapFlushNoneOlderThan(t *testing.T) {
 	store := setupTestStore(t)
 	defer store.Close()
@@ -951,4 +985,3 @@ func TestPersistentPayloadTreapFlushNoneOlderThan(t *testing.T) {
 		t.Errorf("Expected %d nodes still in memory, got %d", len(keys), len(inMemoryNodes))
 	}
 }
-

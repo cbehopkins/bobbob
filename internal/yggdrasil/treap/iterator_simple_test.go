@@ -8,6 +8,8 @@ import (
 )
 
 // TestSimpleWalkInOrder tests basic in-order iteration
+// TestSimpleWalkInOrder verifies that WalkInOrder visits all nodes in ascending order
+// and that the callback receives each node's key and payload correctly.
 func TestSimpleWalkInOrder(t *testing.T) {
 	stre, err := store.NewBasicStore(t.TempDir() + "/test.db")
 	if err != nil {
@@ -62,6 +64,8 @@ func TestSimpleWalkInOrder(t *testing.T) {
 }
 
 // TestSimpleWalkKeys tests the convenience method for keys
+// TestSimpleWalkKeys verifies that WalkKeys visits all keys in ascending order,
+// providing a simpler interface than WalkInOrder when payloads aren't needed.
 func TestSimpleWalkKeys(t *testing.T) {
 	stre, err := store.NewBasicStore(t.TempDir() + "/test.db")
 	if err != nil {
@@ -108,6 +112,8 @@ func TestSimpleWalkKeys(t *testing.T) {
 }
 
 // TestSimpleCount tests the Count method
+// TestSimpleCount verifies that Count returns the correct number of nodes in a treap,
+// including empty treaps and treaps with multiple nodes.
 func TestSimpleCount(t *testing.T) {
 	stre, err := store.NewBasicStore(t.TempDir() + "/test.db")
 	if err != nil {

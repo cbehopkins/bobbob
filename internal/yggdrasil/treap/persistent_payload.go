@@ -283,6 +283,36 @@ func (t *PersistentPayloadTreap[K, P]) GetInMemoryNodes() []PayloadNodeInfo[K, P
 	return nodes
 }
 
+// CountInMemoryNodes returns the count of nodes currently loaded in memory.
+// This is more efficient than len(GetInMemoryNodes()) as it doesn't allocate the slice.
+func (t *PersistentPayloadTreap[K, P]) CountInMemoryNodes() int {
+	return t.countInMemoryPayloadNodes(t.root)
+}
+
+// countInMemoryPayloadNodes recursively counts in-memory nodes.
+func (t *PersistentPayloadTreap[K, P]) countInMemoryPayloadNodes(node TreapNodeInterface[K]) int {
+	if node == nil || node.IsNil() {
+		return 0
+	}
+
+	pNode, ok := node.(*PersistentPayloadTreapNode[K, P])
+	if !ok {
+		return 0
+	}
+
+	count := 1 // Count this node
+
+	// Recursively count children only if they're in memory
+	if pNode.left != nil && !pNode.left.IsNil() {
+		count += t.countInMemoryPayloadNodes(pNode.left)
+	}
+	if pNode.right != nil && !pNode.right.IsNil() {
+		count += t.countInMemoryPayloadNodes(pNode.right)
+	}
+
+	return count
+}
+
 // collectInMemoryPayloadNodes is a helper that recursively collects in-memory nodes.
 // It only traverses nodes that are already loaded (does not trigger disk reads).
 func (t *PersistentPayloadTreap[K, P]) collectInMemoryPayloadNodes(node TreapNodeInterface[K], nodes *[]PayloadNodeInfo[K, P]) {
@@ -348,6 +378,68 @@ func (t *PersistentPayloadTreap[K, P]) FlushOlderThan(cutoffTimestamp int64) (in
 			} else {
 				flushedCount++
 			}
+		}
+	}
+
+	return flushedCount, nil
+}
+
+// FlushOldestPercentile flushes the oldest percentage of nodes from memory.
+// This method first persists any unpersisted nodes, then removes the oldest N% of nodes
+// from memory based on their last access time. Nodes can be reloaded later from disk.
+//
+// Parameters:
+//   - percentage: percentage (0-100) of oldest nodes to flush
+//
+// Returns the number of nodes flushed and any error encountered.
+func (t *PersistentPayloadTreap[K, P]) FlushOldestPercentile(percentage int) (int, error) {
+	if percentage <= 0 || percentage > 100 {
+		return 0, fmt.Errorf("percentage must be between 1 and 100, got %d", percentage)
+	}
+
+	// First, persist the entire tree to ensure all nodes are saved
+	err := t.Persist()
+	if err != nil {
+		return 0, err
+	}
+
+	// Get all in-memory nodes
+	nodes := t.GetInMemoryNodes()
+	if len(nodes) == 0 {
+		return 0, nil
+	}
+
+	// Sort nodes by access time (oldest first)
+	sortedNodes := make([]PayloadNodeInfo[K, P], len(nodes))
+	copy(sortedNodes, nodes)
+
+	// Simple insertion sort by LastAccessTime (ascending)
+	for i := 1; i < len(sortedNodes); i++ {
+		key := sortedNodes[i]
+		j := i - 1
+		for j >= 0 && sortedNodes[j].LastAccessTime > key.LastAccessTime {
+			sortedNodes[j+1] = sortedNodes[j]
+			j--
+		}
+		sortedNodes[j+1] = key
+	}
+
+	// Calculate how many nodes to flush
+	numToFlush := (len(sortedNodes) * percentage) / 100
+	if numToFlush == 0 && percentage > 0 {
+		numToFlush = 1 // Flush at least one node if percentage > 0
+	}
+
+	// Flush the oldest nodes
+	flushedCount := 0
+	for i := 0; i < numToFlush && i < len(sortedNodes); i++ {
+		err := sortedNodes[i].Node.Flush()
+		if err != nil {
+			if !errors.Is(err, errNotFullyPersisted) {
+				return flushedCount, err
+			}
+		} else {
+			flushedCount++
 		}
 	}
 

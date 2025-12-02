@@ -6,6 +6,8 @@ import (
 	"bobbob/internal/store"
 )
 
+// TestNewCollectionRegistry verifies that a new registry is created with properly
+// initialized maps and default values (NextCollectionId starts at 1, maps are non-nil).
 func TestNewCollectionRegistry(t *testing.T) {
 	registry := NewCollectionRegistry()
 
@@ -26,6 +28,9 @@ func TestNewCollectionRegistry(t *testing.T) {
 	}
 }
 
+// TestRegisterCollection verifies that registering a collection assigns it a unique ID,
+// stores all the collection metadata (name, root object ID, type codes), and allows
+// retrieval by name.
 func TestRegisterCollection(t *testing.T) {
 	registry := NewCollectionRegistry()
 
@@ -60,6 +65,8 @@ func TestRegisterCollection(t *testing.T) {
 	}
 }
 
+// TestRegisterMultipleCollections verifies that multiple collections can be registered,
+// each receives a sequential ID, and all are accessible in the registry.
 func TestRegisterMultipleCollections(t *testing.T) {
 	registry := NewCollectionRegistry()
 
@@ -101,6 +108,8 @@ func TestRegisterMultipleCollections(t *testing.T) {
 	}
 }
 
+// TestRegisterCollectionDuplicate verifies that re-registering an existing collection
+// updates its metadata while preserving its collection ID.
 func TestRegisterCollectionDuplicate(t *testing.T) {
 	registry := NewCollectionRegistry()
 
@@ -137,6 +146,8 @@ func TestRegisterCollectionDuplicate(t *testing.T) {
 	}
 }
 
+// TestGetCollection verifies that collections can be retrieved by name,
+// returning the correct metadata for existing collections and false for non-existent ones.
 func TestGetCollection(t *testing.T) {
 	registry := NewCollectionRegistry()
 	registry.RegisterCollection("users", 100, 1, 2)
@@ -157,6 +168,8 @@ func TestGetCollection(t *testing.T) {
 	}
 }
 
+// TestGetCollectionById verifies that collections can be retrieved by their numeric ID,
+// enabling reverse lookup from ID to collection metadata.
 func TestGetCollectionById(t *testing.T) {
 	registry := NewCollectionRegistry()
 	collId, _ := registry.RegisterCollection("users", 100, 1, 2)
@@ -177,6 +190,8 @@ func TestGetCollectionById(t *testing.T) {
 	}
 }
 
+// TestUpdateRootObjectId verifies that a collection's root object ID can be updated
+// after registration, and that updating a non-existent collection returns an error.
 func TestUpdateRootObjectId(t *testing.T) {
 	registry := NewCollectionRegistry()
 	registry.RegisterCollection("users", 100, 1, 2)
@@ -203,6 +218,8 @@ func TestUpdateRootObjectId(t *testing.T) {
 	}
 }
 
+// TestListCollections verifies that ListCollections returns all registered collection names,
+// handling both empty registries and registries with multiple collections.
 func TestListCollections(t *testing.T) {
 	registry := NewCollectionRegistry()
 
@@ -239,6 +256,8 @@ func TestListCollections(t *testing.T) {
 	}
 }
 
+// TestMarshalUnmarshal verifies that a registry can be serialized and deserialized,
+// preserving all collection metadata and the NextCollectionId counter.
 func TestMarshalUnmarshal(t *testing.T) {
 	registry := NewCollectionRegistry()
 
@@ -289,6 +308,8 @@ func TestMarshalUnmarshal(t *testing.T) {
 	}
 }
 
+// TestMarshalUnmarshalEmpty verifies that an empty registry can be marshaled and
+// unmarshaled without errors, maintaining its empty state.
 func TestMarshalUnmarshalEmpty(t *testing.T) {
 	registry := NewCollectionRegistry()
 
@@ -311,6 +332,8 @@ func TestMarshalUnmarshalEmpty(t *testing.T) {
 	}
 }
 
+// TestCollectionRegistryWithKeyOnlyCollection verifies that collections without payloads
+// (key-only, like sets) can be registered with PayloadTypeShortCode = 0.
 func TestCollectionRegistryWithKeyOnlyCollection(t *testing.T) {
 	registry := NewCollectionRegistry()
 
@@ -332,6 +355,8 @@ func TestCollectionRegistryWithKeyOnlyCollection(t *testing.T) {
 	}
 }
 
+// TestCollectionRegistryUpdatePreservesOtherFields verifies that re-registering a collection
+// updates all metadata fields while preserving the original collection ID.
 func TestCollectionRegistryUpdatePreservesOtherFields(t *testing.T) {
 	registry := NewCollectionRegistry()
 
@@ -359,6 +384,8 @@ func TestCollectionRegistryUpdatePreservesOtherFields(t *testing.T) {
 	}
 }
 
+// TestCollectionRegistryBidirectionalLookup verifies that collections can be looked up
+// both by name and by ID, with both lookups returning consistent data.
 func TestCollectionRegistryBidirectionalLookup(t *testing.T) {
 	registry := NewCollectionRegistry()
 
@@ -390,6 +417,8 @@ func TestCollectionRegistryBidirectionalLookup(t *testing.T) {
 	}
 }
 
+// TestCollectionRegistryWithObjNotAllocated verifies that collections can be registered
+// with ObjNotAllocated (for new collections not yet persisted) and later updated to a real ObjectId.
 func TestCollectionRegistryWithObjNotAllocated(t *testing.T) {
 	registry := NewCollectionRegistry()
 

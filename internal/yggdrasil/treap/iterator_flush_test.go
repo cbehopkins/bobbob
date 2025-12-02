@@ -7,6 +7,8 @@ import (
 )
 
 // TestAggressiveFlushing verifies that nodes are flushed after processing their right subtree
+// TestAggressiveFlushing verifies that WalkKeys with KeepInMemory=false aggressively
+// flushes nodes during iteration, reducing memory usage during traversal.
 func TestAggressiveFlushing(t *testing.T) {
 	stre, err := store.NewBasicStore(t.TempDir() + "/test.db")
 	if err != nil {
@@ -71,6 +73,8 @@ func TestAggressiveFlushing(t *testing.T) {
 }
 
 // TestFlushingComparison compares memory usage with and without aggressive flushing
+// TestFlushingComparison compares memory usage between KeepInMemory=true and
+// KeepInMemory=false, demonstrating the memory reduction from aggressive flushing.
 func TestFlushingComparison(t *testing.T) {
 	stre, err := store.NewBasicStore(t.TempDir() + "/test.db")
 	if err != nil {

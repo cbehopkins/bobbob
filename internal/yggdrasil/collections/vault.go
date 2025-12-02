@@ -3,6 +3,7 @@ package collections
 import (
 	"encoding/binary"
 	"fmt"
+	"time"
 
 	"bobbob/internal/store"
 	"bobbob/internal/yggdrasil/treap"
@@ -49,6 +50,36 @@ type CollectionInterface interface {
 	GetRootObjectId() (store.ObjectId, error)
 }
 
+// MemoryStats provides current memory usage information across all collections.
+type MemoryStats struct {
+	// TotalInMemoryNodes is the total count of nodes currently loaded in memory
+	TotalInMemoryNodes int
+
+	// CollectionNodes maps collection name to its in-memory node count
+	CollectionNodes map[string]int
+
+	// OperationsSinceLastFlush tracks operations since the last flush
+	OperationsSinceLastFlush int
+}
+
+// MemoryMonitor tracks memory usage and triggers cleanup when thresholds are exceeded.
+type MemoryMonitor struct {
+	// ShouldFlush is called to determine if flushing should occur.
+	// Returns true if flushing should be triggered based on the current stats.
+	ShouldFlush func(stats MemoryStats) bool
+
+	// OnFlush is called to perform the actual flushing when triggered.
+	// Receives current stats and returns the number of nodes flushed and any error.
+	OnFlush func(stats MemoryStats) (int, error)
+
+	// CheckInterval controls how often to check (number of operations).
+	// Default: 100 (check every 100 operations)
+	CheckInterval int
+
+	// operationCount tracks operations since last check
+	operationCount int
+}
+
 // Vault is the top-level abstraction for working with multiple collections
 // (treaps) in a single persistent store. It manages:
 // - A single persistent store file
@@ -75,6 +106,9 @@ type Vault struct {
 	// Maps collection name to the actual treap instance
 	// All cached collections must implement GetRootObjectId() and Persist()
 	activeCollections map[string]CollectionInterface
+
+	// memoryMonitor manages automatic memory cleanup (optional)
+	memoryMonitor *MemoryMonitor
 }
 
 // Note: NewVault has been removed. Use LoadVault for both new and existing vaults.
@@ -392,6 +426,220 @@ func (v *Vault) ListCollections() []string {
 	return v.CollectionRegistry.ListCollections()
 }
 
+// EnableMemoryMonitoring activates automatic memory management for the vault.
+// The shouldFlush callback determines when flushing should occur based on current stats.
+// The onFlush callback performs the actual flushing and returns the number of nodes flushed.
+//
+// Example - flush based on node count:
+//
+//	vault.EnableMemoryMonitoring(
+//	    func(stats MemoryStats) bool {
+//	        return stats.TotalInMemoryNodes > 1000
+//	    },
+//	    func(stats MemoryStats) (int, error) {
+//	        cutoff := time.Now().Unix() - 10 // 10 seconds old
+//	        return vault.FlushOlderThan(cutoff)
+//	    },
+//	)
+func (v *Vault) EnableMemoryMonitoring(shouldFlush func(MemoryStats) bool, onFlush func(MemoryStats) (int, error)) {
+	v.memoryMonitor = &MemoryMonitor{
+		ShouldFlush:   shouldFlush,
+		OnFlush:       onFlush,
+		CheckInterval: 100, // default: check every 100 operations
+	}
+}
+
+// SetMemoryBudget is a convenience function that automatically flushes nodes to stay
+// under a maximum node count. This is simpler than EnableMemoryMonitoring for common cases.
+//
+// Parameters:
+//   - maxNodes: maximum number of nodes to keep in memory across all collections
+//   - flushAgeSeconds: nodes older than this (in seconds) will be flushed
+//
+// Example:
+//
+//	vault.SetMemoryBudget(1000, 10) // Keep max 1000 nodes, flush nodes >10 sec old
+func (v *Vault) SetMemoryBudget(maxNodes int, flushAgeSeconds int64) {
+	v.EnableMemoryMonitoring(
+		func(stats MemoryStats) bool {
+			return stats.TotalInMemoryNodes > maxNodes
+		},
+		func(stats MemoryStats) (int, error) {
+			// Calculate cutoff time
+			cutoff := getCurrentTimeSeconds() - flushAgeSeconds
+			return v.FlushOlderThan(cutoff)
+		},
+	)
+}
+
+// SetMemoryBudgetWithPercentile automatically manages memory by flushing the oldest
+// percentage of nodes when the maximum node count is exceeded.
+//
+// Parameters:
+//   - maxNodes: maximum number of nodes to keep in memory across all collections
+//   - flushPercentage: percentage (0-100) of oldest nodes to flush when limit is exceeded
+//
+// Example:
+//
+//	vault.SetMemoryBudgetWithPercentile(1000, 25) // Keep max 1000 nodes, flush oldest 25% when exceeded
+//
+// This is useful when you want to aggressively reduce memory without relying on
+// time-based flushing. When the limit is hit, it flushes the oldest N% of nodes
+// to bring memory usage back down.
+func (v *Vault) SetMemoryBudgetWithPercentile(maxNodes int, flushPercentage int) {
+	v.EnableMemoryMonitoring(
+		func(stats MemoryStats) bool {
+			return stats.TotalInMemoryNodes > maxNodes
+		},
+		func(stats MemoryStats) (int, error) {
+			return v.FlushOldestPercentile(flushPercentage)
+		},
+	)
+}
+
+// SetCheckInterval changes how often the memory monitor checks for flushing.
+// Default is 100 operations. Lower values check more frequently but have more overhead.
+func (v *Vault) SetCheckInterval(interval int) {
+	if v.memoryMonitor != nil {
+		v.memoryMonitor.CheckInterval = interval
+	}
+}
+
+// GetMemoryStats returns current memory usage statistics across all collections.
+func (v *Vault) GetMemoryStats() MemoryStats {
+	stats := MemoryStats{
+		CollectionNodes: make(map[string]int),
+	}
+
+	for name, coll := range v.activeCollections {
+		nodeCount := getInMemoryNodeCount(coll)
+		stats.CollectionNodes[name] = nodeCount
+		stats.TotalInMemoryNodes += nodeCount
+	}
+
+	if v.memoryMonitor != nil {
+		stats.OperationsSinceLastFlush = v.memoryMonitor.operationCount
+	}
+
+	return stats
+}
+
+// FlushOlderThan flushes nodes older than the given timestamp across all collections.
+// Returns the total number of nodes flushed and any error encountered.
+//
+// The cutoffTime should be a Unix timestamp (seconds since epoch). Nodes with
+// a last access time older than this will be flushed from memory to disk.
+func (v *Vault) FlushOlderThan(cutoffTime int64) (int, error) {
+	totalFlushed := 0
+
+	for _, coll := range v.activeCollections {
+		flushed, err := flushCollectionOlderThan(coll, cutoffTime)
+		if err != nil {
+			return totalFlushed, err
+		}
+		totalFlushed += flushed
+	}
+
+	if v.memoryMonitor != nil {
+		v.memoryMonitor.operationCount = 0
+	}
+
+	return totalFlushed, nil
+}
+
+// FlushOldestPercentile flushes the oldest percentage of nodes across all collections.
+// Returns the total number of nodes flushed and any error encountered.
+//
+// Parameters:
+//   - percentage: percentage (0-100) of oldest nodes to flush
+//
+// This determines the cutoff time by examining current node access times and
+// calculating a timestamp that would flush approximately the requested percentage.
+func (v *Vault) FlushOldestPercentile(percentage int) (int, error) {
+	if percentage <= 0 || percentage > 100 {
+		return 0, fmt.Errorf("percentage must be between 1 and 100, got %d", percentage)
+	}
+
+	totalFlushed := 0
+
+	for _, coll := range v.activeCollections {
+		flushed, err := flushCollectionOldestPercentile(coll, percentage)
+		if err != nil {
+			return totalFlushed, err
+		}
+		totalFlushed += flushed
+	}
+
+	if v.memoryMonitor != nil {
+		v.memoryMonitor.operationCount = 0
+	}
+
+	return totalFlushed, nil
+}
+
+// checkMemoryAndFlush is called internally after operations to check if flushing is needed.
+func (v *Vault) checkMemoryAndFlush() error {
+	if v.memoryMonitor == nil {
+		return nil
+	}
+
+	v.memoryMonitor.operationCount++
+
+	if v.memoryMonitor.operationCount < v.memoryMonitor.CheckInterval {
+		return nil
+	}
+
+	stats := v.GetMemoryStats()
+
+	if v.memoryMonitor.ShouldFlush(stats) {
+		_, err := v.memoryMonitor.OnFlush(stats)
+		v.memoryMonitor.operationCount = 0
+		return err
+	}
+
+	return nil
+}
+
+// Helper function to get current time in seconds (can be mocked in tests)
+var getCurrentTimeSeconds = func() int64 {
+	return time.Now().Unix()
+}
+
+// getInMemoryNodeCount returns the number of nodes in memory for a collection.
+func getInMemoryNodeCount(coll CollectionInterface) int {
+	// Try to get count from collections that support it
+	if counter, ok := coll.(interface{ CountInMemoryNodes() int }); ok {
+		return counter.CountInMemoryNodes()
+	}
+	return 0
+}
+
+// flushCollectionOlderThan flushes old nodes from a collection.
+func flushCollectionOlderThan(coll CollectionInterface, cutoffTime int64) (int, error) {
+	// Try persistent payload treaps first
+	if ppt, ok := coll.(interface{ FlushOlderThan(int64) (int, error) }); ok {
+		return ppt.FlushOlderThan(cutoffTime)
+	}
+	// Try persistent treaps
+	if pt, ok := coll.(interface{ FlushOlderThan(int64) (int, error) }); ok {
+		return pt.FlushOlderThan(cutoffTime)
+	}
+	return 0, nil
+}
+
+// flushCollectionOldestPercentile flushes the oldest percentage of nodes from a collection.
+func flushCollectionOldestPercentile(coll CollectionInterface, percentage int) (int, error) {
+	// Try persistent payload treaps first
+	if ppt, ok := coll.(interface{ FlushOldestPercentile(int) (int, error) }); ok {
+		return ppt.FlushOldestPercentile(percentage)
+	}
+	// Try persistent treaps
+	if pt, ok := coll.(interface{ FlushOldestPercentile(int) (int, error) }); ok {
+		return pt.FlushOldestPercentile(percentage)
+	}
+	return 0, nil
+}
+
 // VaultSession manages a vault with pre-configured collections.
 // Call Close() when done to persist all changes.
 type VaultSession struct {
@@ -432,6 +680,7 @@ func (s PayloadCollectionSpec[K, P]) getTypes() []any {
 	return []any{s.KeyTemplate, s.PayloadTemplate}
 }
 
+// returning any is not ideal here but Go generics limitations leave us no choice
 func (s PayloadCollectionSpec[K, P]) openCollection(v *Vault) (any, error) {
 	return GetOrCreateCollection[K, P](v, s.Name, s.LessFunc, s.KeyTemplate)
 }

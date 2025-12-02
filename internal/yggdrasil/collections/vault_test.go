@@ -221,7 +221,9 @@ func TestVaultKeyOnlyCollection(t *testing.T) {
 	}
 }
 
-// TestCollectionRegistry tests the basic functionality of the CollectionRegistry
+// TestCollectionRegistry verifies the basic functionality of the CollectionRegistry:
+// registering collections, updating root object IDs, listing collections, and
+// serialization/deserialization.
 func TestCollectionRegistry(t *testing.T) {
 	registry := NewCollectionRegistry()
 

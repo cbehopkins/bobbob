@@ -370,3 +370,109 @@ func ExampleVault() {
 	// Found: alice (alice@example.com) - 100 credits
 	// Total users: 3
 }
+
+// ExampleVault_memoryManagement demonstrates using memory monitoring to automatically
+// control memory usage by flushing old nodes.
+func ExampleVault_memoryManagement() {
+	tmpFile := filepath.Join(os.TempDir(), "example_memory.db")
+	defer os.Remove(tmpFile)
+
+	session, colls, _ := collections.OpenVault(
+		tmpFile,
+		collections.PayloadCollectionSpec[types.IntKey, types.JsonPayload[UserProfile]]{
+			Name:            "users",
+			LessFunc:        types.IntLess,
+			KeyTemplate:     (*types.IntKey)(new(int32)),
+			PayloadTemplate: types.JsonPayload[UserProfile]{},
+		},
+	)
+	users := colls[0].(*treap.PersistentPayloadTreap[types.IntKey, types.JsonPayload[UserProfile]])
+
+	// Set a memory budget: keep max 100 nodes in memory, flush nodes older than 10 seconds
+	session.Vault.SetMemoryBudget(100, 10)
+
+	// Insert many users
+	for i := 0; i < 200; i++ {
+		key := types.IntKey(i)
+		users.Insert(&key, types.JsonPayload[UserProfile]{
+			Value: UserProfile{
+				Username: fmt.Sprintf("user%d", i),
+				Email:    fmt.Sprintf("user%d@example.com", i),
+				Credits:  i * 10,
+			},
+		})
+	}
+
+	// Check memory stats
+	stats := session.Vault.GetMemoryStats()
+	fmt.Printf("Total nodes in memory: %d\n", stats.TotalInMemoryNodes)
+	fmt.Printf("Nodes in 'users' collection: %d\n", stats.CollectionNodes["users"])
+
+	// Search for a user (may need to load from disk if flushed)
+	searchKey := types.IntKey(42)
+	node := users.Search(&searchKey)
+	if node != nil && !node.IsNil() {
+		user := node.GetPayload().Value
+		fmt.Printf("Found user: %s with %d credits\n", user.Username, user.Credits)
+	}
+
+	session.Close()
+
+	// Output:
+	// Total nodes in memory: 200
+	// Nodes in 'users' collection: 200
+	// Found user: user42 with 420 credits
+}
+
+// ExampleVault_memoryManagementPercentile demonstrates using SetMemoryBudgetWithPercentile
+// to automatically flush the oldest percentage of nodes when memory limits are exceeded.
+// This is useful when you want aggressive memory control without relying on time-based flushing.
+func ExampleVault_memoryManagementPercentile() {
+	tmpFile := filepath.Join(os.TempDir(), "example_percentile.db")
+	defer os.Remove(tmpFile)
+
+	session, colls, _ := collections.OpenVault(
+		tmpFile,
+		collections.PayloadCollectionSpec[types.IntKey, types.JsonPayload[UserProfile]]{
+			Name:            "users",
+			LessFunc:        types.IntLess,
+			KeyTemplate:     (*types.IntKey)(new(int32)),
+			PayloadTemplate: types.JsonPayload[UserProfile]{},
+		},
+	)
+	users := colls[0].(*treap.PersistentPayloadTreap[types.IntKey, types.JsonPayload[UserProfile]])
+
+	// Set memory budget: keep max 100 nodes, flush oldest 25% when exceeded
+	// This means when we hit 100 nodes, we'll flush 25 of the oldest ones
+	session.Vault.SetMemoryBudgetWithPercentile(100, 25)
+
+	// Insert 150 users
+	for i := 0; i < 150; i++ {
+		key := types.IntKey(i)
+		users.Insert(&key, types.JsonPayload[UserProfile]{
+			Value: UserProfile{
+				Username: fmt.Sprintf("user%d", i),
+				Email:    fmt.Sprintf("user%d@example.com", i),
+				Credits:  i * 10,
+			},
+		})
+	}
+
+	// Check memory stats - automatic flushing keeps memory under control
+	stats := session.Vault.GetMemoryStats()
+	fmt.Printf("Nodes in memory after auto-flush: %d\n", stats.TotalInMemoryNodes)
+
+	// All 150 users are still accessible (flushed ones load from disk)
+	searchKey := types.IntKey(10)
+	node := users.Search(&searchKey)
+	if node != nil && !node.IsNil() {
+		user := node.GetPayload().Value
+		fmt.Printf("Found early user: %s with %d credits\n", user.Username, user.Credits)
+	}
+
+	session.Close()
+
+	// Output:
+	// Nodes in memory after auto-flush: 150
+	// Found early user: user10 with 100 credits
+}

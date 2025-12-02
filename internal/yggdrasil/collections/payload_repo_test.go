@@ -48,6 +48,9 @@ func (dp dummyPayload) Equals(other dummyPayload) bool {
 	return dp.val == other.val
 }
 
+// TestPayloadRepo_Get_IntKey verifies that PayloadRepo correctly caches payload instances:
+// the first Get creates a new payload, subsequent Gets return the same cached instance,
+// and data inserted in the first instance is visible in subsequent retrievals.
 func TestPayloadRepo_Get_IntKey(t *testing.T) {
 	// Create a store using setupTestStore
 	tmpStore := setupTestStore(t)

@@ -22,6 +22,8 @@ type ComplexStruct struct {
 	Metadata map[string]interface{}
 }
 
+// TestJsonPayloadMarshal verifies that JsonPayload can serialize a struct to JSON bytes
+// and that the marshaled data is valid JSON.
 func TestJsonPayloadMarshal(t *testing.T) {
 	payload := JsonPayload[SimpleStruct]{
 		Value: SimpleStruct{Name: "test", Count: 42},
@@ -45,6 +47,8 @@ func TestJsonPayloadMarshal(t *testing.T) {
 	}
 }
 
+// TestJsonPayloadUnmarshal verifies that JsonPayload can deserialize JSON bytes back into
+// the original struct, preserving all field values.
 func TestJsonPayloadUnmarshal(t *testing.T) {
 	original := JsonPayload[SimpleStruct]{
 		Value: SimpleStruct{Name: "unmarshal test", Count: 123},
@@ -75,6 +79,8 @@ func TestJsonPayloadUnmarshal(t *testing.T) {
 	}
 }
 
+// TestJsonPayloadRoundTrip verifies that various types (structs, primitives, slices, maps)
+// can be marshaled and unmarshaled without data loss.
 func TestJsonPayloadRoundTrip(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -115,6 +121,8 @@ func TestJsonPayloadRoundTrip(t *testing.T) {
 	}
 }
 
+// TestJsonPayloadSizeInBytes verifies that SizeInBytes returns the correct byte count
+// of the marshaled JSON data.
 func TestJsonPayloadSizeInBytes(t *testing.T) {
 	payload := JsonPayload[SimpleStruct]{
 		Value: SimpleStruct{Name: "size test", Count: 999},
@@ -132,6 +140,8 @@ func TestJsonPayloadSizeInBytes(t *testing.T) {
 	}
 }
 
+// TestJsonPayloadSizeInBytesEmpty verifies that an empty struct serializes to "{}" with
+// a size of 2 bytes.
 func TestJsonPayloadSizeInBytesEmpty(t *testing.T) {
 	payload := JsonPayload[SimpleStruct]{}
 
@@ -141,6 +151,8 @@ func TestJsonPayloadSizeInBytesEmpty(t *testing.T) {
 	}
 }
 
+// TestJsonPayloadComplexStruct verifies that nested structs with various field types
+// (strings, numbers, arrays, nested objects) marshal and unmarshal correctly.
 func TestJsonPayloadComplexStruct(t *testing.T) {
 	original := JsonPayload[ComplexStruct]{
 		Value: ComplexStruct{
@@ -185,6 +197,8 @@ func TestJsonPayloadComplexStruct(t *testing.T) {
 	}
 }
 
+// TestJsonPayloadUnmarshalInvalidData verifies that unmarshaling invalid JSON data
+// returns an appropriate error.
 func TestJsonPayloadUnmarshalInvalidData(t *testing.T) {
 	payload := JsonPayload[SimpleStruct]{}
 
@@ -195,6 +209,8 @@ func TestJsonPayloadUnmarshalInvalidData(t *testing.T) {
 	}
 }
 
+// TestJsonPayloadUnmarshalEmptyData verifies that unmarshaling empty byte slice
+// returns an error rather than silently succeeding.
 func TestJsonPayloadUnmarshalEmptyData(t *testing.T) {
 	payload := JsonPayload[SimpleStruct]{}
 
@@ -204,6 +220,8 @@ func TestJsonPayloadUnmarshalEmptyData(t *testing.T) {
 	}
 }
 
+// TestJsonPayloadUnmarshalWrongType verifies that unmarshaling into the wrong type
+// (e.g., JSON array into struct) returns an error.
 func TestJsonPayloadUnmarshalWrongType(t *testing.T) {
 	// Marshal as one type
 	original := JsonPayload[string]{Value: "this is a string"}
@@ -220,6 +238,8 @@ func TestJsonPayloadUnmarshalWrongType(t *testing.T) {
 	}
 }
 
+// TestJsonPayloadZeroValue verifies that zero-value structs (with default field values)
+// marshal and unmarshal correctly.
 func TestJsonPayloadZeroValue(t *testing.T) {
 	// Test marshaling zero value
 	payload := JsonPayload[SimpleStruct]{}
@@ -244,6 +264,8 @@ func TestJsonPayloadZeroValue(t *testing.T) {
 	}
 }
 
+// TestJsonPayloadPointerTypes verifies that structs containing pointer fields
+// marshal and unmarshal correctly, preserving pointer values.
 func TestJsonPayloadPointerTypes(t *testing.T) {
 	type PointerStruct struct {
 		Name  *string
@@ -286,6 +308,8 @@ func TestJsonPayloadPointerTypes(t *testing.T) {
 	}
 }
 
+// TestJsonPayloadNilPointers verifies that nil pointer fields are handled correctly,
+// serializing as null in JSON.
 func TestJsonPayloadNilPointers(t *testing.T) {
 	type PointerStruct struct {
 		Name  *string
@@ -319,6 +343,8 @@ func TestJsonPayloadNilPointers(t *testing.T) {
 	}
 }
 
+// TestJsonPayloadLargeData verifies that large data structures (e.g., struct with 1000 items)
+// marshal and unmarshal efficiently without errors.
 func TestJsonPayloadLargeData(t *testing.T) {
 	// Test with larger data structure
 	type LargeStruct struct {
@@ -356,6 +382,8 @@ func TestJsonPayloadLargeData(t *testing.T) {
 	}
 }
 
+// TestJsonPayloadMultipleUnmarshalCalls verifies that calling Unmarshal multiple times
+// on the same payload works correctly, updating the value each time.
 func TestJsonPayloadMultipleUnmarshalCalls(t *testing.T) {
 	original := JsonPayload[SimpleStruct]{
 		Value: SimpleStruct{Name: "test", Count: 42},

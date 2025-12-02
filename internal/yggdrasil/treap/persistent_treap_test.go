@@ -18,6 +18,8 @@ func setupTestStore(t *testing.T) store.Storer {
 	return store
 }
 
+// TestPersistentTreapBasics verifies basic operations on a persistent treap:
+// insertion, search, deletion, walking, and counting nodes.
 func TestPersistentTreapBasics(t *testing.T) {
 	store := setupTestStore(t)
 	defer store.Close()
@@ -111,6 +113,8 @@ func TestPersistentTreapBasics(t *testing.T) {
 	}
 }
 
+// TestPersistentTreapSearchComplexWithError verifies that SearchComplex on persistent treaps
+// properly handles and propagates callback errors, allowing search abortion.
 func TestPersistentTreapSearchComplexWithError(t *testing.T) {
 	store := setupTestStore(t)
 	defer store.Close()
@@ -166,6 +170,8 @@ func TestPersistentTreapSearchComplexWithError(t *testing.T) {
 	}
 }
 
+// TestPersistentTreapNodeMarshalUnmarshal verifies that persistent treap nodes can be
+// serialized and deserialized, preserving key, priority, and object IDs.
 func TestPersistentTreapNodeMarshalUnmarshal(t *testing.T) {
 	store := setupTestStore(t)
 	defer store.Close()
@@ -205,6 +211,8 @@ func TestPersistentTreapNodeMarshalUnmarshal(t *testing.T) {
 }
 
 // Here we want to test that is we add a child to a node, the ObjectId of the node is invalidated.
+// TestPersistentTreapNodeInvalidateObjectId verifies that modifying a node (e.g., rotating)
+// invalidates its object ID, forcing re-serialization on next persist.
 func TestPersistentTreapNodeInvalidateObjectId(t *testing.T) {
 	stre := setupTestStore(t)
 	defer stre.Close()
@@ -281,6 +289,8 @@ func TestPersistentTreapNodeInvalidateObjectId(t *testing.T) {
 	}
 }
 
+// TestPersistentTreapPersistence verifies that a treap can be persisted to storage,
+// then loaded back in a new session with all data intact.
 func TestPersistentTreapPersistence(t *testing.T) {
 	// Create the store and treap
 	tempDir := t.TempDir()
@@ -355,6 +365,8 @@ func TestPersistentTreapPersistence(t *testing.T) {
 	}
 }
 
+// TestPersistentTreapNodeMarshalUnmarshalWithChildren verifies that nodes with child
+// pointers serialize correctly, storing child object IDs and reloading them properly.
 func TestPersistentTreapNodeMarshalUnmarshalWithChildren(t *testing.T) {
 	store0 := setupTestStore(t)
 	defer store0.Close()
@@ -389,6 +401,8 @@ func TestPersistentTreapNodeMarshalUnmarshalWithChildren(t *testing.T) {
 	}
 }
 
+// TestPersistentTreapTimestamps verifies that nodes track their last access time,
+// which is used for memory management (flushing old nodes).
 func TestPersistentTreapTimestamps(t *testing.T) {
 	store := setupTestStore(t)
 	defer store.Close()
@@ -442,6 +456,8 @@ func TestPersistentTreapTimestamps(t *testing.T) {
 	}
 }
 
+// TestPersistentTreapGetInMemoryNodes verifies that GetInMemoryNodes correctly counts
+// nodes currently loaded in memory (vs. on disk).
 func TestPersistentTreapGetInMemoryNodes(t *testing.T) {
 	store := setupTestStore(t)
 	defer store.Close()
@@ -492,6 +508,8 @@ func TestPersistentTreapGetInMemoryNodes(t *testing.T) {
 	}
 }
 
+// TestPersistentTreapFlushOlderThan verifies that FlushOlderThan removes nodes from memory
+// that haven't been accessed recently, reducing memory usage.
 func TestPersistentTreapFlushOlderThan(t *testing.T) {
 	store := setupTestStore(t)
 	defer store.Close()
@@ -558,6 +576,8 @@ func TestPersistentTreapFlushOlderThan(t *testing.T) {
 	}
 }
 
+// TestPersistentTreapSelectiveFlush verifies that selective flushing removes only old nodes
+// from memory while keeping recently accessed nodes loaded.
 func TestPersistentTreapSelectiveFlush(t *testing.T) {
 	store := setupTestStore(t)
 	defer store.Close()

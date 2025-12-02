@@ -5,6 +5,8 @@ import (
 	"testing"
 )
 
+// TestTreap verifies basic treap operations: inserting keys, searching for existing
+// and non-existent keys, updating priorities, and using SearchComplex with callbacks.
 func TestTreap(t *testing.T) {
 	treap := NewTreap[IntKey](IntLess)
 
@@ -76,6 +78,8 @@ func TestTreap(t *testing.T) {
 	}
 }
 
+// TestTreapSearchComplexWithError verifies that SearchComplex properly propagates
+// errors returned from the callback function, allowing searches to be aborted.
 func TestTreapSearchComplexWithError(t *testing.T) {
 	treap := NewTreap[IntKey](IntLess)
 
@@ -115,6 +119,8 @@ func TestTreapSearchComplexWithError(t *testing.T) {
 	}
 }
 
+// TestPayloadTreap verifies that a treap can store key-value pairs (payloads),
+// allowing insertion and retrieval of both keys and associated data.
 func TestPayloadTreap(t *testing.T) {
 	treap := NewPayloadTreap[IntKey, string](IntLess)
 
@@ -146,6 +152,8 @@ func TestPayloadTreap(t *testing.T) {
 	}
 }
 
+// TestStringKeyTreap verifies that treaps work correctly with string keys,
+// properly maintaining order and allowing search operations.
 func TestStringKeyTreap(t *testing.T) {
 	treap := NewPayloadTreap[StringKey, int](StringLess)
 
@@ -177,6 +185,8 @@ func TestStringKeyTreap(t *testing.T) {
 	}
 }
 
+// TestCustomKeyTreap verifies that treaps work with custom types (ShortUIntKey),
+// demonstrating the generic key type capability.
 func TestCustomKeyTreap(t *testing.T) {
 	treap := NewPayloadTreap[exampleCustomKey, string](customKeyLess)
 
@@ -216,6 +226,8 @@ func TestCustomKeyTreap(t *testing.T) {
 	}
 }
 
+// TestTreapWalk verifies that walking a treap visits all nodes in ascending order
+// (in-order traversal) and that the callback is called for each node.
 func TestTreapWalk(t *testing.T) {
 	treap := NewTreap[IntKey](IntLess)
 
@@ -238,6 +250,8 @@ func TestTreapWalk(t *testing.T) {
 	}
 }
 
+// TestTreapWalkReverse verifies that WalkReverse visits all nodes in descending order
+// (reverse in-order traversal).
 func TestTreapWalkReverse(t *testing.T) {
 	treap := NewTreap[IntKey](IntLess)
 
@@ -260,6 +274,8 @@ func TestTreapWalkReverse(t *testing.T) {
 	}
 }
 
+// TestPointerKeyEquality verifies that pointer-based keys (like *IntKey) work correctly,
+// with equality based on value not pointer identity.
 func TestPointerKeyEquality(t *testing.T) {
 	treap := NewTreap(IntLess)
 
@@ -278,4 +294,3 @@ func TestPointerKeyEquality(t *testing.T) {
 		t.Errorf("Expected to find key %d, but found key %d instead", key1, node.GetKey().(IntKey))
 	}
 }
-

@@ -643,6 +643,36 @@ func (t *PersistentTreap[T]) GetInMemoryNodes() []NodeInfo[T] {
 	return nodes
 }
 
+// CountInMemoryNodes returns the count of nodes currently loaded in memory.
+// This is more efficient than len(GetInMemoryNodes()) as it doesn't allocate the slice.
+func (t *PersistentTreap[T]) CountInMemoryNodes() int {
+	return t.countInMemoryNodes(t.root)
+}
+
+// countInMemoryNodes recursively counts in-memory nodes.
+func (t *PersistentTreap[T]) countInMemoryNodes(node TreapNodeInterface[T]) int {
+	if node == nil || node.IsNil() {
+		return 0
+	}
+
+	pNode, ok := node.(*PersistentTreapNode[T])
+	if !ok {
+		return 0
+	}
+
+	count := 1 // Count this node
+
+	// Only traverse children that are already in memory
+	if pNode.TreapNode.left != nil {
+		count += t.countInMemoryNodes(pNode.TreapNode.left)
+	}
+	if pNode.TreapNode.right != nil {
+		count += t.countInMemoryNodes(pNode.TreapNode.right)
+	}
+
+	return count
+}
+
 // collectInMemoryNodes is a helper that recursively collects in-memory nodes.
 // It only traverses nodes that are already loaded (does not trigger disk reads).
 func (t *PersistentTreap[T]) collectInMemoryNodes(node TreapNodeInterface[T], nodes *[]NodeInfo[T]) {
@@ -708,6 +738,68 @@ func (t *PersistentTreap[T]) FlushOlderThan(cutoffTimestamp int64) (int, error) 
 			} else {
 				flushedCount++
 			}
+		}
+	}
+
+	return flushedCount, nil
+}
+
+// FlushOldestPercentile flushes the oldest percentage of nodes from memory.
+// This method first persists any unpersisted nodes, then removes the oldest N% of nodes
+// from memory based on their last access time. Nodes can be reloaded later from disk.
+//
+// Parameters:
+//   - percentage: percentage (0-100) of oldest nodes to flush
+//
+// Returns the number of nodes flushed and any error encountered.
+func (t *PersistentTreap[T]) FlushOldestPercentile(percentage int) (int, error) {
+	if percentage <= 0 || percentage > 100 {
+		return 0, fmt.Errorf("percentage must be between 1 and 100, got %d", percentage)
+	}
+
+	// First, persist the entire tree to ensure all nodes are saved
+	err := t.Persist()
+	if err != nil {
+		return 0, err
+	}
+
+	// Get all in-memory nodes
+	nodes := t.GetInMemoryNodes()
+	if len(nodes) == 0 {
+		return 0, nil
+	}
+
+	// Sort nodes by access time (oldest first)
+	sortedNodes := make([]NodeInfo[T], len(nodes))
+	copy(sortedNodes, nodes)
+
+	// Simple insertion sort by LastAccessTime (ascending)
+	for i := 1; i < len(sortedNodes); i++ {
+		key := sortedNodes[i]
+		j := i - 1
+		for j >= 0 && sortedNodes[j].LastAccessTime > key.LastAccessTime {
+			sortedNodes[j+1] = sortedNodes[j]
+			j--
+		}
+		sortedNodes[j+1] = key
+	}
+
+	// Calculate how many nodes to flush
+	numToFlush := (len(sortedNodes) * percentage) / 100
+	if numToFlush == 0 && percentage > 0 {
+		numToFlush = 1 // Flush at least one node if percentage > 0
+	}
+
+	// Flush the oldest nodes
+	flushedCount := 0
+	for i := 0; i < numToFlush && i < len(sortedNodes); i++ {
+		err := sortedNodes[i].Node.Flush()
+		if err != nil {
+			if !errors.Is(err, errNotFullyPersisted) {
+				return flushedCount, err
+			}
+		} else {
+			flushedCount++
 		}
 	}
 
