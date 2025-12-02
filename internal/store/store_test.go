@@ -640,6 +640,29 @@ func TestDeleteNonExistentObj(t *testing.T) {
 	}
 }
 
+// TestSync tests the Sync method to ensure data is flushed to disk
+func TestSync(t *testing.T) {
+	dir, store := setupTestStore(t)
+	defer os.RemoveAll(dir)
+	defer store.Close()
+
+	// Write some data
+	data := []byte("test data for sync")
+	objId := createObject(t, store, data)
+
+	// Call Sync to flush to disk
+	err := store.Sync()
+	if err != nil {
+		t.Fatalf("expected no error during Sync, got %v", err)
+	}
+
+	// Verify the object still exists after sync
+	_, found := store.objectMap.Get(objId)
+	if !found {
+		t.Fatal("expected object to still exist after Sync")
+	}
+}
+
 // Example demonstrates basic store usage: create, write, and read an object.
 func Example() {
 	// Create a temporary file for the store

@@ -429,3 +429,57 @@ func TestSectionWriterZeroLimit(t *testing.T) {
 		t.Errorf("expected to write 0 bytes, wrote %d", n)
 	}
 }
+
+// TestSectionWriterBytesWritten tests the BytesWritten method
+func TestSectionWriterBytesWritten(t *testing.T) {
+	writer := newMockWriterAt(100)
+	sw := NewSectionWriter(writer, 10, 50)
+
+	// Initially, no bytes written
+	if sw.BytesWritten() != 0 {
+		t.Errorf("expected BytesWritten to be 0, got %d", sw.BytesWritten())
+	}
+
+	// Write some data
+	sw.Write([]byte("hello"))
+	if sw.BytesWritten() != 5 {
+		t.Errorf("expected BytesWritten to be 5, got %d", sw.BytesWritten())
+	}
+
+	// Write more data
+	sw.Write([]byte(" world"))
+	if sw.BytesWritten() != 11 {
+		t.Errorf("expected BytesWritten to be 11, got %d", sw.BytesWritten())
+	}
+
+	// WriteAt should not affect BytesWritten
+	sw.WriteAt([]byte("test"), 20)
+	if sw.BytesWritten() != 11 {
+		t.Errorf("expected BytesWritten to remain 11, got %d", sw.BytesWritten())
+	}
+}
+
+// TestSectionWriterLimit tests the Limit method
+func TestSectionWriterLimit(t *testing.T) {
+	tests := []struct {
+		name  string
+		limit int64
+	}{
+		{"small limit", 10},
+		{"medium limit", 100},
+		{"large limit", 1000},
+		{"zero limit", 0},
+		{"one byte limit", 1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			writer := newMockWriterAt(2000)
+			sw := NewSectionWriter(writer, 0, tt.limit)
+
+			if sw.Limit() != tt.limit {
+				t.Errorf("expected Limit to be %d, got %d", tt.limit, sw.Limit())
+			}
+		})
+	}
+}
