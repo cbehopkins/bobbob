@@ -3,6 +3,7 @@ package treap
 import (
 	"errors"
 	"fmt"
+	"sync"
 
 	"bobbob/internal/store"
 )
@@ -134,6 +135,7 @@ func (n *PersistentPayloadTreapNode[K, P]) SetObjectId(id store.ObjectId) {
 // PersistentPayloadTreap represents a persistent treap with payloads.
 type PersistentPayloadTreap[K any, P PersistentPayload[P]] struct {
 	PersistentTreap[K]
+	mu sync.RWMutex // Protects concurrent access to the treap
 }
 
 // NewPersistentPayloadTreapNode creates a new PersistentPayloadTreapNode with the given key, priority, and payload.
@@ -169,6 +171,8 @@ func NewPersistentPayloadTreap[K any, P PersistentPayload[P]](lessFunc func(a, b
 // InsertComplex inserts a new node with the given key, priority, and payload into the persistent payload treap.
 // Use this method when you need to specify a custom priority value.
 func (t *PersistentPayloadTreap[K, P]) InsertComplex(key PersistentKey[K], priority Priority, payload P) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	newNode := NewPersistentPayloadTreapNode(key, priority, payload, t.Store, t)
 	var tmp TreapNodeInterface[K]
 	tmp = t.insert(t.root, newNode)
@@ -186,7 +190,12 @@ func (t *PersistentPayloadTreap[K, P]) Insert(key PersistentKey[K], payload P) {
 	} else {
 		priority = randomPriority()
 	}
-	t.InsertComplex(key, priority, payload)
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	newNode := NewPersistentPayloadTreapNode(key, priority, payload, t.Store, t)
+	var tmp TreapNodeInterface[K]
+	tmp = t.insert(t.root, newNode)
+	t.root = tmp
 }
 
 // NewPayloadFromObjectId creates a PersistentPayloadTreapNode from the given object ID.
@@ -218,6 +227,8 @@ func (t *PersistentPayloadTreap[K, P]) Load(objId store.ObjectId) error {
 // This method automatically updates the lastAccessTime on each accessed node.
 // The callback can return an error to abort the search.
 func (t *PersistentPayloadTreap[K, P]) SearchComplex(key PersistentKey[K], callback func(TreapNodeInterface[K]) error) (PersistentPayloadNodeInterface[K, P], error) {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
 	// Create a wrapper callback that updates the access time
 	wrappedCallback := func(node TreapNodeInterface[K]) error {
 		// Update the access time if this is a persistent node
@@ -248,11 +259,37 @@ func (t *PersistentPayloadTreap[K, P]) SearchComplex(key PersistentKey[K], callb
 // Search searches for the node with the given key in the persistent treap.
 // It calls SearchComplex with a nil callback.
 func (t *PersistentPayloadTreap[K, P]) Search(key PersistentKey[K]) PersistentPayloadNodeInterface[K, P] {
-	result, _ := t.SearchComplex(key, nil)
-	return result
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	// Create a wrapper callback that updates the access time
+	wrappedCallback := func(node TreapNodeInterface[K]) error {
+		// Update the access time if this is a persistent node
+		if pNode, ok := node.(*PersistentPayloadTreapNode[K, P]); ok {
+			pNode.TouchAccessTime()
+		}
+		return nil
+	}
+
+	node, _ := t.searchComplex(t.root, key.Value(), wrappedCallback)
+	if node == nil {
+		return nil
+	}
+	n, _ := node.(*PersistentPayloadTreapNode[K, P])
+	return n
 } // UpdatePayload updates the payload of the node with the given key.
 func (t *PersistentPayloadTreap[K, P]) UpdatePayload(key PersistentKey[K], newPayload P) error {
-	node := t.Search(key)
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	// Create a wrapper callback that updates the access time
+	wrappedCallback := func(node TreapNodeInterface[K]) error {
+		// Update the access time if this is a persistent node
+		if pNode, ok := node.(*PersistentPayloadTreapNode[K, P]); ok {
+			pNode.TouchAccessTime()
+		}
+		return nil
+	}
+
+	node, _ := t.searchComplex(t.root, key.Value(), wrappedCallback)
 	if node != nil && !node.IsNil() {
 		payloadNode, ok := node.(*PersistentPayloadTreapNode[K, P])
 		if ok {

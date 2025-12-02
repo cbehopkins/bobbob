@@ -3,6 +3,8 @@ package treap
 import (
 	"errors"
 	"fmt"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"bobbob/internal/store"
@@ -155,11 +157,12 @@ func (n *PersistentTreapNode[T]) SetLastAccessTime(timestamp int64) {
 }
 
 // TouchAccessTime updates the last access time to the current time.
+// Uses atomic operations for thread-safe concurrent access.
 func (n *PersistentTreapNode[T]) TouchAccessTime() {
 	if n == nil {
 		return
 	}
-	n.lastAccessTime = currentUnixTime()
+	atomic.StoreInt64(&n.lastAccessTime, currentUnixTime())
 }
 
 func (n *PersistentTreapNode[T]) sizeInBytes() int {
@@ -480,6 +483,7 @@ type PersistentTreap[T any] struct {
 	Treap[T]
 	keyTemplate PersistentKey[T]
 	Store       store.Storer
+	mu          sync.RWMutex // Protects concurrent access to the treap
 }
 
 // NewPersistentTreapNode creates a new PersistentTreapNode with the given key, priority, and store reference.
@@ -552,6 +556,8 @@ func (t *PersistentTreap[T]) delete(node TreapNodeInterface[T], key T) TreapNode
 // InsertComplex inserts a new node with the given key and priority into the persistent treap.
 // Use this method when you need to specify a custom priority value.
 func (t *PersistentTreap[T]) InsertComplex(key PersistentKey[T], priority Priority) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	newNode := NewPersistentTreapNode(key, priority, t.Store, t)
 	t.root = t.insert(t.root, newNode)
 }
@@ -567,11 +573,16 @@ func (t *PersistentTreap[T]) Insert(key PersistentKey[T]) {
 	} else {
 		priority = randomPriority()
 	}
-	t.InsertComplex(key, priority)
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	newNode := NewPersistentTreapNode(key, priority, t.Store, t)
+	t.root = t.insert(t.root, newNode)
 }
 
 // Delete removes the node with the given key from the persistent treap.
 func (t *PersistentTreap[T]) Delete(key PersistentKey[T]) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	t.root = t.delete(t.root, key.Value())
 }
 
@@ -582,6 +593,8 @@ func (t *PersistentTreap[T]) Delete(key PersistentKey[T]) {
 // This method automatically updates the lastAccessTime on each accessed node.
 // The callback can return an error to abort the search.
 func (t *PersistentTreap[T]) SearchComplex(key PersistentKey[T], callback func(TreapNodeInterface[T]) error) (TreapNodeInterface[T], error) {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
 	// Create a wrapper callback that updates the access time
 	wrappedCallback := func(node TreapNodeInterface[T]) error {
 		// Update the access time if this is a persistent node
@@ -600,18 +613,31 @@ func (t *PersistentTreap[T]) SearchComplex(key PersistentKey[T], callback func(T
 // Search searches for the node with the given key in the persistent treap.
 // It calls SearchComplex with a nil callback.
 func (t *PersistentTreap[T]) Search(key PersistentKey[T]) TreapNodeInterface[T] {
-	result, _ := t.SearchComplex(key, nil)
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	// Create a wrapper callback that updates the access time
+	wrappedCallback := func(node TreapNodeInterface[T]) error {
+		// Update the access time if this is a persistent node
+		if pNode, ok := node.(*PersistentTreapNode[T]); ok {
+			pNode.TouchAccessTime()
+		}
+		return nil
+	}
+	result, _ := t.searchComplex(t.root, key.Value(), wrappedCallback)
 	return result
 }
 
 // UpdatePriority updates the priority of the node with the given key.
 func (t *PersistentTreap[T]) UpdatePriority(key PersistentKey[T], newPriority Priority) {
-	node := t.Search(key)
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	node := t.search(t.root, key.Value())
 	if node != nil && !node.IsNil() {
 		node.SetPriority(newPriority)
 		// Delete and re-add as the priority change may violate treap properties
-		t.Delete(key)
-		t.InsertComplex(key, newPriority)
+		t.root = t.delete(t.root, key.Value())
+		newNode := NewPersistentTreapNode(key, newPriority, t.Store, t)
+		t.root = t.insert(t.root, newNode)
 	}
 }
 

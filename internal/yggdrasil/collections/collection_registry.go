@@ -3,6 +3,7 @@ package collections
 import (
 	"encoding/json"
 	"fmt"
+	"sync"
 
 	"bobbob/internal/store"
 	"bobbob/internal/yggdrasil/types"
@@ -43,6 +44,9 @@ type CollectionRegistry struct {
 
 	// NextCollectionId is the next available collection ID
 	NextCollectionId CollectionId `json:"next_collection_id"`
+
+	// mu protects concurrent access to the maps
+	mu sync.RWMutex `json:"-"`
 }
 
 // NewCollectionRegistry creates a new empty collection registry.
@@ -62,6 +66,9 @@ func (cr *CollectionRegistry) RegisterCollection(
 	keyTypeShortCode types.ShortCodeType,
 	payloadTypeShortCode types.ShortCodeType,
 ) (CollectionId, error) {
+	cr.mu.Lock()
+	defer cr.mu.Unlock()
+
 	if cr.Collections == nil {
 		cr.Collections = make(map[string]CollectionInfo)
 		cr.CollectionById = make(map[CollectionId]string)
@@ -98,22 +105,30 @@ func (cr *CollectionRegistry) RegisterCollection(
 
 // GetCollection retrieves collection info by name.
 func (cr *CollectionRegistry) GetCollection(name string) (CollectionInfo, bool) {
+	cr.mu.RLock()
+	defer cr.mu.RUnlock()
 	info, exists := cr.Collections[name]
 	return info, exists
 }
 
 // GetCollectionById retrieves collection info by CollectionId.
 func (cr *CollectionRegistry) GetCollectionById(id CollectionId) (CollectionInfo, bool) {
+	cr.mu.RLock()
+	defer cr.mu.RUnlock()
 	name, exists := cr.CollectionById[id]
 	if !exists {
 		return CollectionInfo{}, false
 	}
-	return cr.GetCollection(name)
+	info, exists := cr.Collections[name]
+	return info, exists
 }
 
 // UpdateRootObjectId updates the root ObjectId for a collection.
 // This is called when the treap's root changes and needs to be persisted.
 func (cr *CollectionRegistry) UpdateRootObjectId(name string, rootObjectId store.ObjectId) error {
+	cr.mu.Lock()
+	defer cr.mu.Unlock()
+
 	info, exists := cr.Collections[name]
 	if !exists {
 		return fmt.Errorf("collection %s not found", name)
@@ -126,6 +141,9 @@ func (cr *CollectionRegistry) UpdateRootObjectId(name string, rootObjectId store
 
 // ListCollections returns a slice of all collection names.
 func (cr *CollectionRegistry) ListCollections() []string {
+	cr.mu.RLock()
+	defer cr.mu.RUnlock()
+
 	names := make([]string, 0, len(cr.Collections))
 	for name := range cr.Collections {
 		names = append(names, name)
@@ -135,10 +153,14 @@ func (cr *CollectionRegistry) ListCollections() []string {
 
 // Marshal serializes the collection registry to JSON.
 func (cr *CollectionRegistry) Marshal() ([]byte, error) {
+	cr.mu.RLock()
+	defer cr.mu.RUnlock()
 	return json.Marshal(cr)
 }
 
 // Unmarshal deserializes the collection registry from JSON.
 func (cr *CollectionRegistry) Unmarshal(data []byte) error {
+	cr.mu.Lock()
+	defer cr.mu.Unlock()
 	return json.Unmarshal(data, cr)
 }

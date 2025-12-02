@@ -3,6 +3,7 @@ package collections
 import (
 	"encoding/binary"
 	"fmt"
+	"sync"
 	"time"
 
 	"bobbob/internal/store"
@@ -109,6 +110,9 @@ type Vault struct {
 
 	// memoryMonitor manages automatic memory cleanup (optional)
 	memoryMonitor *MemoryMonitor
+
+	// mu protects concurrent access to activeCollections
+	mu sync.RWMutex
 }
 
 // Note: NewVault has been removed. Use LoadVault for both new and existing vaults.
@@ -194,7 +198,22 @@ func GetOrCreateCollection[K any, P treap.PersistentPayload[P]](
 	lessFunc func(a, b K) bool,
 	keyTemplate treap.PersistentKey[K],
 ) (*treap.PersistentPayloadTreap[K, P], error) {
-	// Check if we already have this collection loaded
+	// Check if we already have this collection loaded (with read lock)
+	v.mu.RLock()
+	if cached, exists := v.activeCollections[collectionName]; exists {
+		v.mu.RUnlock()
+		if treap, ok := cached.(*treap.PersistentPayloadTreap[K, P]); ok {
+			return treap, nil
+		}
+		return nil, fmt.Errorf("collection %s exists but has wrong type", collectionName)
+	}
+	v.mu.RUnlock()
+
+	// Acquire write lock for potential creation
+	v.mu.Lock()
+	defer v.mu.Unlock()
+
+	// Double-check after acquiring write lock (another goroutine may have created it)
 	if cached, exists := v.activeCollections[collectionName]; exists {
 		if treap, ok := cached.(*treap.PersistentPayloadTreap[K, P]); ok {
 			return treap, nil
@@ -277,7 +296,22 @@ func GetOrCreateKeyOnlyCollection[K any](
 	lessFunc func(a, b K) bool,
 	keyTemplate treap.PersistentKey[K],
 ) (*treap.PersistentTreap[K], error) {
-	// Check if we already have this collection loaded
+	// Check if we already have this collection loaded (with read lock)
+	v.mu.RLock()
+	if cached, exists := v.activeCollections[collectionName]; exists {
+		v.mu.RUnlock()
+		if treap, ok := cached.(*treap.PersistentTreap[K]); ok {
+			return treap, nil
+		}
+		return nil, fmt.Errorf("collection %s exists but has wrong type", collectionName)
+	}
+	v.mu.RUnlock()
+
+	// Acquire write lock for potential creation
+	v.mu.Lock()
+	defer v.mu.Unlock()
+
+	// Double-check after acquiring write lock
 	if cached, exists := v.activeCollections[collectionName]; exists {
 		if treap, ok := cached.(*treap.PersistentTreap[K]); ok {
 			return treap, nil
@@ -343,7 +377,10 @@ func GetOrCreateKeyOnlyCollection[K any](
 // Call this after making changes to a collection and before closing the vault.
 func (v *Vault) PersistCollection(collectionName string) error {
 	// Get the collection from the cache
+	v.mu.RLock()
 	cached, exists := v.activeCollections[collectionName]
+	v.mu.RUnlock()
+
 	if !exists {
 		return fmt.Errorf("collection %s not loaded", collectionName)
 	}
@@ -368,7 +405,14 @@ func (v *Vault) PersistCollection(collectionName string) error {
 func (v *Vault) Close() error {
 	// Persist all active collections - accumulate errors instead of failing fast
 	var persistErrors []error
+	v.mu.RLock()
+	collectionNames := make([]string, 0, len(v.activeCollections))
 	for name := range v.activeCollections {
+		collectionNames = append(collectionNames, name)
+	}
+	v.mu.RUnlock()
+
+	for _, name := range collectionNames {
 		err := v.PersistCollection(name)
 		if err != nil {
 			persistErrors = append(persistErrors, fmt.Errorf("failed to persist collection %s: %w", name, err))
@@ -511,6 +555,9 @@ func (v *Vault) GetMemoryStats() MemoryStats {
 		CollectionNodes: make(map[string]int),
 	}
 
+	v.mu.RLock()
+	defer v.mu.RUnlock()
+
 	for name, coll := range v.activeCollections {
 		nodeCount := getInMemoryNodeCount(coll)
 		stats.CollectionNodes[name] = nodeCount
@@ -532,7 +579,14 @@ func (v *Vault) GetMemoryStats() MemoryStats {
 func (v *Vault) FlushOlderThan(cutoffTime int64) (int, error) {
 	totalFlushed := 0
 
+	v.mu.RLock()
+	collections := make([]CollectionInterface, 0, len(v.activeCollections))
 	for _, coll := range v.activeCollections {
+		collections = append(collections, coll)
+	}
+	v.mu.RUnlock()
+
+	for _, coll := range collections {
 		flushed, err := flushCollectionOlderThan(coll, cutoffTime)
 		if err != nil {
 			return totalFlushed, err
@@ -562,7 +616,14 @@ func (v *Vault) FlushOldestPercentile(percentage int) (int, error) {
 
 	totalFlushed := 0
 
+	v.mu.RLock()
+	collections := make([]CollectionInterface, 0, len(v.activeCollections))
 	for _, coll := range v.activeCollections {
+		collections = append(collections, coll)
+	}
+	v.mu.RUnlock()
+
+	for _, coll := range collections {
 		flushed, err := flushCollectionOldestPercentile(coll, percentage)
 		if err != nil {
 			return totalFlushed, err
