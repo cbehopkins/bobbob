@@ -358,3 +358,101 @@ func (t *Treap[T]) WalkReverse(callback func(TreapNodeInterface[T])) {
 	}
 	walkReverse(t.root)
 }
+
+// Compare compares this treap with another treap and invokes callbacks for keys that are:
+// - Only in this treap (onlyInA)
+// - In both treaps (inBoth)
+// - Only in the other treap (onlyInB)
+//
+// The comparison is done by traversing both treaps in sorted order.
+// All three callbacks are optional (can be nil).
+//
+// Example usage:
+//
+//	treapA.Compare(treapB,
+//	    func(node TreapNodeInterface[T]) error {
+//	        fmt.Printf("Only in A: %v\n", node.GetKey().Value())
+//	        return nil
+//	    },
+//	    func(nodeA, nodeB TreapNodeInterface[T]) error {
+//	        fmt.Printf("In both: %v\n", nodeA.GetKey().Value())
+//	        return nil
+//	    },
+//	    func(node TreapNodeInterface[T]) error {
+//	        fmt.Printf("Only in B: %v\n", node.GetKey().Value())
+//	        return nil
+//	    },
+//	)
+func (t *Treap[T]) Compare(
+	other *Treap[T],
+	onlyInA func(TreapNodeInterface[T]) error,
+	inBoth func(nodeA, nodeB TreapNodeInterface[T]) error,
+	onlyInB func(TreapNodeInterface[T]) error,
+) error {
+	// Create iterators for both treaps by collecting all nodes in sorted order
+	var nodesA []TreapNodeInterface[T]
+	var nodesB []TreapNodeInterface[T]
+
+	t.Walk(func(node TreapNodeInterface[T]) {
+		nodesA = append(nodesA, node)
+	})
+
+	other.Walk(func(node TreapNodeInterface[T]) {
+		nodesB = append(nodesB, node)
+	})
+
+	// Merge-style comparison
+	i, j := 0, 0
+	for i < len(nodesA) || j < len(nodesB) {
+		if i >= len(nodesA) {
+			// Exhausted A, remaining nodes are only in B
+			if onlyInB != nil {
+				if err := onlyInB(nodesB[j]); err != nil {
+					return err
+				}
+			}
+			j++
+		} else if j >= len(nodesB) {
+			// Exhausted B, remaining nodes are only in A
+			if onlyInA != nil {
+				if err := onlyInA(nodesA[i]); err != nil {
+					return err
+				}
+			}
+			i++
+		} else {
+			// Both have nodes, compare keys
+			keyA := nodesA[i].GetKey()
+			keyB := nodesB[j].GetKey()
+
+			if keyA.Equals(keyB.Value()) {
+				// Keys match - in both
+				if inBoth != nil {
+					if err := inBoth(nodesA[i], nodesB[j]); err != nil {
+						return err
+					}
+				}
+				i++
+				j++
+			} else if t.Less(keyA.Value(), keyB.Value()) {
+				// keyA < keyB, so keyA is only in A
+				if onlyInA != nil {
+					if err := onlyInA(nodesA[i]); err != nil {
+						return err
+					}
+				}
+				i++
+			} else {
+				// keyB < keyA, so keyB is only in B
+				if onlyInB != nil {
+					if err := onlyInB(nodesB[j]); err != nil {
+						return err
+					}
+				}
+				j++
+			}
+		}
+	}
+
+	return nil
+}

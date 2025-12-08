@@ -6,6 +6,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"bobbob/internal/store"
 )
@@ -639,6 +640,37 @@ func (t *PersistentTreap[T]) UpdatePriority(key PersistentKey[T], newPriority Pr
 		newNode := NewPersistentTreapNode(key, newPriority, t.Store, t)
 		t.root = t.insert(t.root, newNode)
 	}
+}
+
+// Compare compares this persistent treap with another persistent treap and invokes callbacks for keys that are:
+// - Only in this treap (onlyInA)
+// - In both treaps (inBoth)
+// - Only in the other treap (onlyInB)
+//
+// This is a thread-safe wrapper around the base Treap.Compare method.
+// Both treaps are locked for reading during the comparison.
+func (t *PersistentTreap[T]) Compare(
+	other *PersistentTreap[T],
+	onlyInA func(TreapNodeInterface[T]) error,
+	inBoth func(nodeA, nodeB TreapNodeInterface[T]) error,
+	onlyInB func(TreapNodeInterface[T]) error,
+) error {
+	// Lock both treaps for reading
+	// Always lock in a consistent order to avoid deadlocks
+	// Use pointer addresses to determine order
+	if uintptr(unsafe.Pointer(t)) < uintptr(unsafe.Pointer(other)) {
+		t.mu.RLock()
+		defer t.mu.RUnlock()
+		other.mu.RLock()
+		defer other.mu.RUnlock()
+	} else {
+		other.mu.RLock()
+		defer other.mu.RUnlock()
+		t.mu.RLock()
+		defer t.mu.RUnlock()
+	}
+
+	return t.Treap.Compare(&other.Treap, onlyInA, inBoth, onlyInB)
 }
 
 // Persist persists the entire treap to the store.

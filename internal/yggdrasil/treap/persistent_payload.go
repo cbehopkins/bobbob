@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"unsafe"
 
 	"bobbob/internal/store"
 )
@@ -298,6 +299,58 @@ func (t *PersistentPayloadTreap[K, P]) UpdatePayload(key PersistentKey[K], newPa
 		}
 	}
 	return nil
+}
+
+// Compare compares this persistent payload treap with another persistent payload treap and invokes callbacks for keys that are:
+// - Only in this treap (onlyInA)
+// - In both treaps (inBoth)
+// - Only in the other treap (onlyInB)
+//
+// This is a thread-safe wrapper around the base Treap.Compare method.
+// Both treaps are locked for reading during the comparison.
+//
+// Note: The callbacks receive TreapNodeInterface[K] which can be type-asserted to
+// PersistentPayloadNodeInterface[K, P] to access payloads:
+//
+//	treapA.Compare(treapB,
+//	    func(node TreapNodeInterface[K]) error {
+//	        payloadNode := node.(PersistentPayloadNodeInterface[K, P])
+//	        fmt.Printf("Only in A: key=%v, payload=%v\n", node.GetKey().Value(), payloadNode.GetPayload())
+//	        return nil
+//	    },
+//	    func(nodeA, nodeB TreapNodeInterface[K]) error {
+//	        payloadA := nodeA.(PersistentPayloadNodeInterface[K, P]).GetPayload()
+//	        payloadB := nodeB.(PersistentPayloadNodeInterface[K, P]).GetPayload()
+//	        fmt.Printf("In both: key=%v\n", nodeA.GetKey().Value())
+//	        return nil
+//	    },
+//	    func(node TreapNodeInterface[K]) error {
+//	        fmt.Printf("Only in B: %v\n", node.GetKey().Value())
+//	        return nil
+//	    },
+//	)
+func (t *PersistentPayloadTreap[K, P]) Compare(
+	other *PersistentPayloadTreap[K, P],
+	onlyInA func(TreapNodeInterface[K]) error,
+	inBoth func(nodeA, nodeB TreapNodeInterface[K]) error,
+	onlyInB func(TreapNodeInterface[K]) error,
+) error {
+	// Lock both treaps for reading
+	// Always lock in a consistent order to avoid deadlocks
+	// Use pointer addresses to determine order
+	if uintptr(unsafe.Pointer(t)) < uintptr(unsafe.Pointer(other)) {
+		t.mu.RLock()
+		defer t.mu.RUnlock()
+		other.mu.RLock()
+		defer other.mu.RUnlock()
+	} else {
+		other.mu.RLock()
+		defer other.mu.RUnlock()
+		t.mu.RLock()
+		defer t.mu.RUnlock()
+	}
+
+	return t.PersistentTreap.Treap.Compare(&other.PersistentTreap.Treap, onlyInA, inBoth, onlyInB)
 }
 
 func (t *PersistentPayloadTreap[K, P]) Persist() error {
