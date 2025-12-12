@@ -25,6 +25,7 @@ func (n *PersistentPayloadTreapNode[K, P]) GetPayload() P {
 // SetPayload sets the payload of the node.
 func (n *PersistentPayloadTreapNode[K, P]) SetPayload(payload P) {
 	n.payload = payload
+	n.Store.DeleteObj(n.objectId) // Invalidate the stored object ID
 	n.objectId = store.ObjNotAllocated
 }
 
@@ -131,6 +132,14 @@ func (n *PersistentPayloadTreapNode[K, P]) SetObjectId(id store.ObjectId) {
 	n.objectId = id
 }
 
+// IsObjectIdInvalid returns true if the node's ObjectId has been invalidated (is negative).
+func (n *PersistentPayloadTreapNode[K, P]) IsObjectIdInvalid() bool {
+	if n == nil {
+		return true
+	}
+	return n.objectId < 0
+}
+
 // PersistentPayloadTreapInterface and PersistentPayloadNodeInterface have been moved to interfaces.go
 
 // PersistentPayloadTreap represents a persistent treap with payloads.
@@ -169,8 +178,46 @@ func NewPersistentPayloadTreap[K any, P PersistentPayload[P]](lessFunc func(a, b
 	}
 }
 
+// insert overrides the base insert method to handle payload updates for duplicate keys.
+// If a key already exists, it updates the payload instead of creating a duplicate node.
+func (t *PersistentPayloadTreap[K, P]) insert(node TreapNodeInterface[K], newNode TreapNodeInterface[K]) TreapNodeInterface[K] {
+	if node == nil || node.IsNil() {
+		return newNode
+	}
+
+	newKey := newNode.GetKey().Value()
+	nodeKey := node.GetKey().Value()
+
+	// Check for exact key match - update payload instead of inserting duplicate
+	if !t.Less(newKey, nodeKey) && !t.Less(nodeKey, newKey) {
+		// Keys are equal - update the payload
+		if payloadNode, ok := node.(*PersistentPayloadTreapNode[K, P]); ok {
+			if newPayloadNode, ok := newNode.(*PersistentPayloadTreapNode[K, P]); ok {
+				payloadNode.SetPayload(newPayloadNode.GetPayload())
+				return node
+			}
+		}
+		return node
+	}
+
+	if t.Less(newKey, nodeKey) {
+		_ = node.SetLeft(t.insert(node.GetLeft(), newNode))
+		if node.GetLeft() != nil && node.GetLeft().GetPriority() > node.GetPriority() {
+			node = t.rotateRight(node)
+		}
+	} else {
+		_ = node.SetRight(t.insert(node.GetRight(), newNode))
+		if node.GetRight() != nil && node.GetRight().GetPriority() > node.GetPriority() {
+			node = t.rotateLeft(node)
+		}
+	}
+
+	return node
+}
+
 // InsertComplex inserts a new node with the given key, priority, and payload into the persistent payload treap.
 // Use this method when you need to specify a custom priority value.
+// If a key already exists, this will update its payload instead of creating a duplicate.
 func (t *PersistentPayloadTreap[K, P]) InsertComplex(key PersistentKey[K], priority Priority, payload P) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -183,6 +230,7 @@ func (t *PersistentPayloadTreap[K, P]) InsertComplex(key PersistentKey[K], prior
 // Insert inserts a new node with the given key and payload into the persistent payload treap.
 // If the key implements PriorityProvider, its Priority() method is used;
 // otherwise, a random priority is generated.
+// If a key already exists, this will update its payload instead of creating a duplicate.
 // This is the preferred method for most use cases.
 func (t *PersistentPayloadTreap[K, P]) Insert(key PersistentKey[K], payload P) {
 	var priority Priority

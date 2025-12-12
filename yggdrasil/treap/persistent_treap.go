@@ -92,6 +92,7 @@ func (n *PersistentTreapNode[T]) GetPriority() Priority {
 
 // SetPriority sets the priority of the node.
 func (n *PersistentTreapNode[T]) SetPriority(p Priority) {
+	n.Store.DeleteObj(n.objectId) // Invalidate the stored object ID
 	n.objectId = store.ObjNotAllocated
 	n.TreapNode.priority = p
 }
@@ -123,6 +124,7 @@ func (n *PersistentTreapNode[T]) GetRight() TreapNodeInterface[T] {
 // SetLeft sets the left child of the node.
 func (n *PersistentTreapNode[T]) SetLeft(left TreapNodeInterface[T]) error {
 	n.TreapNode.left = left
+	n.Store.DeleteObj(n.objectId) // Invalidate the stored object ID
 	n.objectId = store.ObjNotAllocated
 	return nil
 }
@@ -130,6 +132,7 @@ func (n *PersistentTreapNode[T]) SetLeft(left TreapNodeInterface[T]) error {
 // SetRight sets the right child of the node.
 func (n *PersistentTreapNode[T]) SetRight(right TreapNodeInterface[T]) error {
 	n.TreapNode.right = right
+	n.Store.DeleteObj(n.objectId) // Invalidate the stored object ID
 	n.objectId = store.ObjNotAllocated
 	return nil
 }
@@ -208,45 +211,75 @@ func (n *PersistentTreapNode[T]) SetObjectId(id store.ObjectId) {
 	n.objectId = id
 }
 
+// IsObjectIdInvalid returns true if the node's ObjectId has been invalidated (is negative).
+func (n *PersistentTreapNode[T]) IsObjectIdInvalid() bool {
+	if n == nil {
+		return true
+	}
+	return n.objectId < 0
+}
+
 // Persist saves this node and its children to the store.
 // It recursively persists child nodes that haven't been saved yet.
 func (n *PersistentTreapNode[T]) Persist() error {
 	if n == nil {
 		return nil
 	}
-	if n.TreapNode.left != nil && !store.IsValidObjectId(n.leftObjectId) {
+
+	// Process left child
+	if n.TreapNode.left != nil {
 		leftNode, ok := n.TreapNode.left.(PersistentTreapNodeInterface[T])
 		if !ok {
 			return fmt.Errorf("left child is not a PersistentTreapNodeInterface")
 		}
-		if leftNode != nil {
+
+		// Check if child needs persisting: either cached ID is invalid OR child node itself is invalid
+		needsPersist := !store.IsValidObjectId(n.leftObjectId) || leftNode.IsObjectIdInvalid()
+
+		if needsPersist {
 			err := leftNode.Persist()
 			if err != nil {
 				return fmt.Errorf("failed to persist left child: %w", err)
 			}
+			leftObjId, err := leftNode.ObjectId()
+			if err != nil {
+				return fmt.Errorf("failed to get left child object ID: %w", err)
+			}
+			// If the ObjectId changed, invalidate ourselves
+			if leftObjId != n.leftObjectId && store.IsValidObjectId(n.leftObjectId) {
+				n.Store.DeleteObj(n.objectId)
+				n.objectId = store.ObjNotAllocated
+			}
+			n.leftObjectId = leftObjId
 		}
-		leftObjId, err := leftNode.ObjectId()
-		if err != nil {
-			return fmt.Errorf("failed to get left child object ID: %w", err)
-		}
-		n.leftObjectId = leftObjId
 	}
-	if n.TreapNode.right != nil && !store.IsValidObjectId(n.rightObjectId) {
+
+	// Process right child
+	if n.TreapNode.right != nil {
 		rightNode, ok := n.TreapNode.right.(PersistentTreapNodeInterface[T])
 		if !ok {
 			return fmt.Errorf("right child is not a PersistentTreapNodeInterface")
 		}
-		if rightNode != nil {
+
+		// Check if child needs persisting: either cached ID is invalid OR child node itself is invalid
+		needsPersist := !store.IsValidObjectId(n.rightObjectId) || rightNode.IsObjectIdInvalid()
+
+		if needsPersist {
 			err := rightNode.Persist()
 			if err != nil {
 				return fmt.Errorf("failed to persist right child: %w", err)
 			}
+			rightObjId, err := rightNode.ObjectId()
+			if err != nil {
+				return fmt.Errorf("failed to get right child object ID: %w", err)
+			}
+			// If the ObjectId changed, invalidate ourselves
+			if rightObjId != n.rightObjectId && store.IsValidObjectId(n.rightObjectId) {
+				n.Store.DeleteObj(n.objectId)
+				n.objectId = store.ObjNotAllocated
+			}
+			n.rightObjectId = rightObjId
 		}
-		rightObjId, err := rightNode.ObjectId()
-		if err != nil {
-			return fmt.Errorf("failed to get right child object ID: %w", err)
-		}
-		n.rightObjectId = rightObjId
 	}
 	return n.persist()
 }
@@ -340,6 +373,7 @@ func (n *PersistentTreapNode[T]) Marshal() ([]byte, error) {
 			}
 			if newLeftObjectId != n.leftObjectId {
 				n.leftObjectId = newLeftObjectId
+				n.Store.DeleteObj(n.objectId) // Invalidate the stored object ID
 				n.objectId = store.ObjNotAllocated
 			}
 		}
@@ -354,6 +388,7 @@ func (n *PersistentTreapNode[T]) Marshal() ([]byte, error) {
 				return nil, fmt.Errorf("failed to allocate left child object ID during marshal: %w", err)
 			}
 			n.leftObjectId = leftObjId
+			n.Store.DeleteObj(n.objectId) // Invalidate the stored object ID
 			n.objectId = store.ObjNotAllocated
 		}
 	}
@@ -369,6 +404,7 @@ func (n *PersistentTreapNode[T]) Marshal() ([]byte, error) {
 			}
 			if newRightObjectId != n.rightObjectId {
 				n.rightObjectId = newRightObjectId
+				n.Store.DeleteObj(n.objectId) // Invalidate the stored object ID
 				n.objectId = store.ObjNotAllocated
 			}
 		}
@@ -383,6 +419,7 @@ func (n *PersistentTreapNode[T]) Marshal() ([]byte, error) {
 				return nil, fmt.Errorf("failed to allocate right child object ID during marshal: %w", err)
 			}
 			n.rightObjectId = rightObjId
+			n.Store.DeleteObj(n.objectId) // Invalidate the stored object ID
 			n.objectId = store.ObjNotAllocated
 		}
 	}

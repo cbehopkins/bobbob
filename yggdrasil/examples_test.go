@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/cbehopkins/bobbob/store"
 	"github.com/cbehopkins/bobbob/yggdrasil/collections"
@@ -428,10 +429,10 @@ func ExampleVault_memoryManagement() {
 // to automatically flush the oldest percentage of nodes when memory limits are exceeded.
 // This is useful when you want aggressive memory control without relying on time-based flushing.
 func ExampleVault_memoryManagementPercentile() {
-	tmpFile := filepath.Join(os.TempDir(), "example_percentile.db")
+	tmpFile := filepath.Join(os.TempDir(), "example_percentile_"+fmt.Sprintf("%d", time.Now().UnixNano())+".db")
 	defer os.Remove(tmpFile)
 
-	session, colls, _ := collections.OpenVault(
+	session, colls, err := collections.OpenVault(
 		tmpFile,
 		collections.PayloadCollectionSpec[types.IntKey, types.JsonPayload[UserProfile]]{
 			Name:            "users",
@@ -440,6 +441,14 @@ func ExampleVault_memoryManagementPercentile() {
 			PayloadTemplate: types.JsonPayload[UserProfile]{},
 		},
 	)
+	if err != nil {
+		fmt.Printf("Error opening vault: %v\n", err)
+		return
+	}
+	if len(colls) == 0 {
+		fmt.Println("No collections returned")
+		return
+	}
 	users := colls[0].(*treap.PersistentPayloadTreap[types.IntKey, types.JsonPayload[UserProfile]])
 
 	// Set memory budget: keep max 100 nodes, flush oldest 25% when exceeded
@@ -447,7 +456,7 @@ func ExampleVault_memoryManagementPercentile() {
 	session.Vault.SetMemoryBudgetWithPercentile(100, 25)
 
 	// Insert 150 users
-	for i := 0; i < 150; i++ {
+	for i := range 150 {
 		key := types.IntKey(i)
 		users.Insert(&key, types.JsonPayload[UserProfile]{
 			Value: UserProfile{
@@ -475,4 +484,78 @@ func ExampleVault_memoryManagementPercentile() {
 	// Output:
 	// Nodes in memory after auto-flush: 150
 	// Found early user: user10 with 100 credits
+}
+
+// ExampleVault_updateExistingKey demonstrates what happens when you insert
+// the same key multiple times. This shows whether payloads are overwritten,
+// ignored, or if some other behavior occurs.
+func ExampleVault_updateExistingKey() {
+	tmpFile := filepath.Join(os.TempDir(), "example_update.db")
+	defer os.Remove(tmpFile)
+
+	session, colls, _ := collections.OpenVault(
+		tmpFile,
+		collections.PayloadCollectionSpec[types.StringKey, types.JsonPayload[UserProfile]]{
+			Name:            "users",
+			LessFunc:        types.StringLess,
+			KeyTemplate:     (*types.StringKey)(new(string)),
+			PayloadTemplate: types.JsonPayload[UserProfile]{},
+		},
+	)
+	users := colls[0].(*treap.PersistentPayloadTreap[types.StringKey, types.JsonPayload[UserProfile]])
+
+	// Insert initial user alice
+	aliceKey := types.StringKey("alice")
+	users.Insert(&aliceKey, types.JsonPayload[UserProfile]{
+		Value: UserProfile{Username: "alice", Email: "alice@example.com", Credits: 100},
+	})
+
+	// Insert another user bob
+	bobKey := types.StringKey("bob")
+	users.Insert(&bobKey, types.JsonPayload[UserProfile]{
+		Value: UserProfile{Username: "bob", Email: "bob@example.com", Credits: 50},
+	})
+
+	// Check initial count
+	count, _ := users.Count()
+	fmt.Printf("Initial count: %d\n", count)
+
+	// Read alice's current data
+	node := users.Search(&aliceKey)
+	if node != nil && !node.IsNil() {
+		user := node.GetPayload().Value
+		fmt.Printf("Alice before update: credits=%d, email=%s\n", user.Credits, user.Email)
+	}
+
+	// Insert alice again with DIFFERENT payload
+	users.Insert(&aliceKey, types.JsonPayload[UserProfile]{
+		Value: UserProfile{Username: "alice", Email: "alice.new@example.com", Credits: 500},
+	})
+
+	// Check count after re-inserting alice
+	count, _ = users.Count()
+	fmt.Printf("Count after re-insert: %d\n", count)
+
+	// Read alice's data after update
+	node = users.Search(&aliceKey)
+	if node != nil && !node.IsNil() {
+		user := node.GetPayload().Value
+		fmt.Printf("Alice after update: credits=%d, email=%s\n", user.Credits, user.Email)
+	}
+
+	// Verify bob is unchanged
+	node = users.Search(&bobKey)
+	if node != nil && !node.IsNil() {
+		user := node.GetPayload().Value
+		fmt.Printf("Bob (unchanged): credits=%d\n", user.Credits)
+	}
+
+	session.Close()
+
+	// Output:
+	// Initial count: 2
+	// Alice before update: credits=100, email=alice@example.com
+	// Count after re-insert: 2
+	// Alice after update: credits=500, email=alice.new@example.com
+	// Bob (unchanged): credits=50
 }

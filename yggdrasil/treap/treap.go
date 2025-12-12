@@ -188,7 +188,16 @@ func (t *Treap[T]) insert(node TreapNodeInterface[T], newNode TreapNodeInterface
 		return newNode
 	}
 
-	if t.Less(newNode.GetKey().Value(), node.GetKey().Value()) {
+	newKey := newNode.GetKey().Value()
+	nodeKey := node.GetKey().Value()
+
+	// Check for exact key match - don't insert duplicate
+	if !t.Less(newKey, nodeKey) && !t.Less(nodeKey, newKey) {
+		// Keys are equal - return existing node without adding duplicate
+		return node
+	}
+
+	if t.Less(newKey, nodeKey) {
 		_ = node.SetLeft(t.insert(node.GetLeft(), newNode))
 		if node.GetLeft() != nil && node.GetLeft().GetPriority() > node.GetPriority() {
 			node = t.rotateRight(node)

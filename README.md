@@ -10,7 +10,7 @@ Don't want to implement a full database?
 
 BunchOfBinaryBlOBs might be for you.
 
-FWIW the name bobbob comes from when I can't think of a name for something I often use foo and bar like everyone else. But sometimes Bob seems to work better and of course [Bob was](https://galactanet.com/comic/view.php?strip=530)  [there too](https://galactanet.com/comic/view.php?strip=517)
+FWIW the name bobbob comes from when I can't think of a name for something I often use foo and bar like everyone else. But sometimes Bob seems to work better and of course [Bob was](https://galactanet.com/comic/view.php?strip=517)  [there too](https://galactanet.com/comic/view.php?strip=530)
 
 ## Core Concepts
 
@@ -119,4 +119,8 @@ This comes in a sorted and unsorted variant. Fundamentally they are the same str
 
 If one desires a map/dict like object there is the yggdrasil package. This builds upon store to create a map/dict behaviour on top of a store. This provides peristent set/key/value pair behaviour for arbitrary data types, for arbitrarily large data sets regardless of available system memory (uses a treap and lazy loading)
 
-There is clearly much to be done...
+I use a treap because I'm familiar with it from the gkvlite package. Its properties of a self balancing tree are also quite nice for this
+
+Once you have a treap (really just a set of keys/set) you have map/dict support by extending it to support payloads. As long as your payload matches the PersistentPayload interface you're good to store any type as a Peristent type.
+
+The Collection allows you to build multiple collections within a store. This is starting to look like a database unfortunatly. One is able to set aging policies on the data such that one does not have to manually flush data. See the various examples for how to do this sort of thing.

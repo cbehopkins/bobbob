@@ -385,6 +385,9 @@ func writeInt32(buf []byte, offset, value int) int {
 // DeleteObj removes an object from the store and frees its space.
 // It atomically retrieves the object info and marks the space as free.
 func (s *multiStore) DeleteObj(objId store.ObjectId) error {
+	if !store.IsValidObjectId(objId) {
+		return nil
+	}
 	objectInfo, found := s.objectMap.GetAndDelete(objId, func(info store.ObjectInfo) {
 		// Free the space in the allocator using the stored info
 		s.allocators[1].Free(info.Offset, info.Size)

@@ -327,6 +327,9 @@ func (s *baseStore) DeleteObj(objId ObjectId) error {
 	// and then recursively delete them. However, we can only do that on the
 	// unmarshalled type - so we do not have that information here.
 	// Therefore, complex objects need to implement a delete method.
+	if !IsValidObjectId(objId) {
+		return nil
+	}
 	if err := s.checkFileInitialized(); err != nil {
 		return err
 	}

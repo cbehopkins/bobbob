@@ -271,7 +271,8 @@ type omniBlockAllocator struct {
 func NewOmniBlockAllocator(blockSize []int, blockCount int, parent Allocator) *omniBlockAllocator {
 	blockMap := make(map[int]*blockAllocator)
 	for i, size := range blockSize {
-		blockMap[size] = NewBlockAllocator(size, blockCount, 0, ObjectId(i))
+		// Start from ObjectId 1 to avoid ObjectId 0 which is reserved for store's internal use
+		blockMap[size] = NewBlockAllocator(size, blockCount, 0, ObjectId(i+1))
 	}
 	return &omniBlockAllocator{
 		blockMap:   blockMap,

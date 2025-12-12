@@ -67,6 +67,7 @@ type PersistentTreapNodeInterface[T any] interface {
 	TreapNodeInterface[T]
 	ObjectId() (store.ObjectId, error) // Returns the object ID of the node, allocating one if necessary
 	SetObjectId(store.ObjectId)        // Sets the object ID of the node
+	IsObjectIdInvalid() bool           // Returns true if the node's ObjectId has been invalidated (is negative)
 	Persist() error                    // Persist the node and its children to the store
 	Flush() error                      // Flush the node and its children from memory
 }
