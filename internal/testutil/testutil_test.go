@@ -3,7 +3,7 @@ package testutil_test
 import (
 	"testing"
 
-	"bobbob/internal/testutil"
+	"github.com/cbehopkins/bobbob/internal/testutil"
 )
 
 // Example test demonstrating testutil usage

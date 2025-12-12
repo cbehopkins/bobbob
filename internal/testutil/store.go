@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"bobbob/internal/store"
+	"github.com/cbehopkins/bobbob/store"
 )
 
 // SetupTestStore creates a temporary directory and a new basic store for testing.

@@ -5,7 +5,7 @@ import (
 	"io"
 	"testing"
 
-	"bobbob/internal/store"
+	"github.com/cbehopkins/bobbob/store"
 )
 
 // WriteObject is a helper that writes data to a new object in the store.
