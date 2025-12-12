@@ -1,7 +1,3 @@
-module bobbob
+module github.com/cbehopkins/bobbob
 
-go 1.18
-
-require (
-    // Add any dependencies here as needed
-)
+go 1.23
