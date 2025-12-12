@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cbehopkins/bobbob/collections"
 	"github.com/cbehopkins/bobbob/store"
 	"github.com/cbehopkins/bobbob/yggdrasil/treap"
 	"github.com/cbehopkins/bobbob/yggdrasil/types"
@@ -775,14 +776,15 @@ func OpenVault(filename string, specs ...CollectionSpec) (*VaultSession, []any, 
 	// Try to load existing store, or create new one
 	var s store.Storer
 	var err error
-	s, err = store.LoadBaseStore(filename)
-	if err != nil {
-		// File doesn't exist or can't be loaded, create new store
-		s, err = store.NewBasicStore(filename)
-		if err != nil {
-			return nil, nil, fmt.Errorf("failed to create store: %w", err)
+	// Prefer MultiStore for optimized allocator routing
+	ms, mErr := collections.LoadMultiStore(filename)
+	if mErr != nil {
+		ms, mErr = collections.NewMultiStore(filename)
+		if mErr != nil {
+			return nil, nil, fmt.Errorf("failed to create MultiStore: %w", mErr)
 		}
 	}
+	s = ms
 
 	// Load vault (works for both new and existing)
 	vault, err := LoadVault(s)

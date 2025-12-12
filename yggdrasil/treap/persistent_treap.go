@@ -349,6 +349,37 @@ func (n *PersistentTreapNode[T]) persist() error {
 	return store.WriteBytesToObj(n.Store, buf, objId)
 }
 
+// syncChildObjectId ensures the cached object ID for a child matches the child's actual persisted ID.
+// If the child exists:
+// - When the cached ID is valid, it fetches the child's ID and if it differs, updates the cache and invalidates this node's objectId.
+// - When the cached ID is invalid, it fetches the child's ID, sets the cache, and invalidates this node's objectId.
+// If the child doesn't exist, it does nothing.
+func (n *PersistentTreapNode[T]) syncChildObjectId(child TreapNodeInterface[T], cached *store.ObjectId, side string) error {
+	if child == nil {
+		return nil
+	}
+	pChild, ok := child.(PersistentTreapNodeInterface[T])
+	if !ok {
+		return fmt.Errorf("%s child is not a PersistentTreapNodeInterface", side)
+	}
+
+	childObjId, err := pChild.ObjectId()
+	if err != nil {
+		if store.IsValidObjectId(*cached) {
+			return fmt.Errorf("failed to get %s child object ID during marshal: %w", side, err)
+		}
+		return fmt.Errorf("failed to allocate %s child object ID during marshal: %w", side, err)
+	}
+
+	// If cached is valid and differs, or cached is invalid and child exists, update and invalidate self
+	if !store.IsValidObjectId(*cached) || childObjId != *cached {
+		*cached = childObjId
+		n.Store.DeleteObj(n.objectId)
+		n.objectId = store.ObjNotAllocated
+	}
+	return nil
+}
+
 func (n *PersistentTreapNode[T]) Marshal() ([]byte, error) {
 	buf := make([]byte, n.sizeInBytes())
 	offset := 0
@@ -361,67 +392,12 @@ func (n *PersistentTreapNode[T]) Marshal() ([]byte, error) {
 		return nil, fmt.Errorf("failed to marshal key to object ID: %w", err)
 	}
 
-	if store.IsValidObjectId(n.leftObjectId) {
-		if n.TreapNode.left != nil {
-			leftNode, ok := n.TreapNode.left.(PersistentTreapNodeInterface[T])
-			if !ok {
-				return nil, fmt.Errorf("left child is not a PersistentTreapNodeInterface")
-			}
-			newLeftObjectId, err := leftNode.ObjectId()
-			if err != nil {
-				return nil, fmt.Errorf("failed to get left child object ID during marshal: %w", err)
-			}
-			if newLeftObjectId != n.leftObjectId {
-				n.leftObjectId = newLeftObjectId
-				n.Store.DeleteObj(n.objectId) // Invalidate the stored object ID
-				n.objectId = store.ObjNotAllocated
-			}
-		}
-	} else {
-		if n.TreapNode.left != nil {
-			leftNode, ok := n.TreapNode.left.(PersistentTreapNodeInterface[T])
-			if !ok {
-				return nil, fmt.Errorf("left child is not a PersistentTreapNodeInterface")
-			}
-			leftObjId, err := leftNode.ObjectId()
-			if err != nil {
-				return nil, fmt.Errorf("failed to allocate left child object ID during marshal: %w", err)
-			}
-			n.leftObjectId = leftObjId
-			n.Store.DeleteObj(n.objectId) // Invalidate the stored object ID
-			n.objectId = store.ObjNotAllocated
-		}
+	// Sync left and right children object IDs and invalidate self if they changed
+	if err := n.syncChildObjectId(n.TreapNode.left, &n.leftObjectId, "left"); err != nil {
+		return nil, err
 	}
-	if store.IsValidObjectId(n.rightObjectId) {
-		if n.TreapNode.right != nil {
-			rightNode, ok := n.TreapNode.right.(PersistentTreapNodeInterface[T])
-			if !ok {
-				return nil, fmt.Errorf("right child is not a PersistentTreapNodeInterface")
-			}
-			newRightObjectId, err := rightNode.ObjectId()
-			if err != nil {
-				return nil, fmt.Errorf("failed to get right child object ID during marshal: %w", err)
-			}
-			if newRightObjectId != n.rightObjectId {
-				n.rightObjectId = newRightObjectId
-				n.Store.DeleteObj(n.objectId) // Invalidate the stored object ID
-				n.objectId = store.ObjNotAllocated
-			}
-		}
-	} else {
-		if n.TreapNode.right != nil {
-			rightNode, ok := n.TreapNode.right.(PersistentTreapNodeInterface[T])
-			if !ok {
-				return nil, fmt.Errorf("right child is not a PersistentTreapNodeInterface")
-			}
-			rightObjId, err := rightNode.ObjectId()
-			if err != nil {
-				return nil, fmt.Errorf("failed to allocate right child object ID during marshal: %w", err)
-			}
-			n.rightObjectId = rightObjId
-			n.Store.DeleteObj(n.objectId) // Invalidate the stored object ID
-			n.objectId = store.ObjNotAllocated
-		}
+	if err := n.syncChildObjectId(n.TreapNode.right, &n.rightObjectId, "right"); err != nil {
+		return nil, err
 	}
 	selfObjId, err := n.ObjectId()
 	if err != nil {
