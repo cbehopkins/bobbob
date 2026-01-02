@@ -36,7 +36,7 @@ const (
 
 // IterationCallback is invoked for each node visited during tree iteration.
 // Return nil to continue; return an error to halt iteration immediately.
-type IterationCallback[T any] func(node *PersistentTreapNode[T]) error
+type IterationCallback[T any] func(node TreapNodeInterface[T]) error
 
 // currentUnixTime returns the current Unix timestamp in seconds.
 // This is used for tracking node access times for age-based memory management.
@@ -771,7 +771,7 @@ func (t *PersistentTreap[T]) Iter(ctx context.Context) iter.Seq2[TreapNodeInterf
 	return func(yield func(TreapNodeInterface[T], error) bool) {
 		mode := t.getIterationMode()
 
-		callback := func(node *PersistentTreapNode[T]) error {
+		callback := func(node TreapNodeInterface[T]) error {
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
@@ -789,7 +789,7 @@ func (t *PersistentTreap[T]) Iter(ctx context.Context) iter.Seq2[TreapNodeInterf
 		case IterateInMemoryOnly:
 			err = t.iterateInMemory(t.root, callback)
 		case IterateOnDiskTransient:
-			rootNode, ok := t.root.(*PersistentTreapNode[T])
+			rootNode, ok := t.root.(PersistentTreapNodeInterface[T])
 			if !ok {
 				err = fmt.Errorf("root is not a PersistentTreapNode")
 				break
@@ -805,7 +805,7 @@ func (t *PersistentTreap[T]) Iter(ctx context.Context) iter.Seq2[TreapNodeInterf
 			}
 			err = t.iterateOnDiskTransient(objId, callback)
 		case IterateOnDiskAndLoad:
-			rootNode, ok := t.root.(*PersistentTreapNode[T])
+			rootNode, ok := t.root.(PersistentTreapNodeInterface[T])
 			if !ok {
 				err = fmt.Errorf("root is not a PersistentTreapNode")
 				break
@@ -902,7 +902,7 @@ func (t *PersistentTreap[T]) Iterate(mode IterationMode, callback IterationCallb
 	case IterateInMemoryOnly:
 		return t.iterateInMemory(t.root, callback)
 	case IterateOnDiskTransient:
-		rootNode, ok := t.root.(*PersistentTreapNode[T])
+		rootNode, ok := t.root.(PersistentTreapNodeInterface[T])
 		if !ok {
 			return fmt.Errorf("root is not a PersistentTreapNode")
 		}
@@ -916,7 +916,7 @@ func (t *PersistentTreap[T]) Iterate(mode IterationMode, callback IterationCallb
 		}
 		return t.iterateOnDiskTransient(objId, callback)
 	case IterateOnDiskAndLoad:
-		rootNode, ok := t.root.(*PersistentTreapNode[T])
+		rootNode, ok := t.root.(PersistentTreapNodeInterface[T])
 		if !ok {
 			return fmt.Errorf("root is not a PersistentTreapNode")
 		}
@@ -942,16 +942,30 @@ func (t *PersistentTreap[T]) iterateInMemory(node TreapNodeInterface[T], callbac
 		return nil
 	}
 
-	pNode, ok := node.(*PersistentTreapNode[T])
+	pNode, ok := node.(PersistentTreapNodeInterface[T])
 	if !ok {
 		return nil // Skip non-persistent nodes
 	}
 
 	// In-order: left, node, right
-	// Note: We access TreapNode.left/right directly to avoid GetLeft()/GetRight()
-	// which would trigger lazy loading of children from disk
-	if pNode.TreapNode.left != nil {
-		if err := t.iterateInMemory(pNode.TreapNode.left, callback); err != nil {
+	// Note: We need to access the underlying TreapNode pointers directly to avoid
+	// triggering GetLeft()/GetRight() which would trigger lazy loading of children from disk.
+	// For nodes that are PersistentTreapNode[T] directly, we access TreapNode.left/right.
+	// For nodes that embed PersistentTreapNode (like PersistentPayloadTreapNode), we get the
+	// embedded TreapNode from the interface.
+
+	// Get left child from the underlying TreapNode
+	var left TreapNodeInterface[T]
+	if pNodeConcrete, ok := pNode.(*PersistentTreapNode[T]); ok {
+		left = pNodeConcrete.TreapNode.left
+	} else {
+		// For other types that embed TreapNode, we can't directly access the embedded field
+		// through the interface, so we use GetLeft() which may trigger disk loads in some cases
+		left = pNode.GetLeft()
+	}
+
+	if left != nil && !left.IsNil() {
+		if err := t.iterateInMemory(left, callback); err != nil {
 			return err
 		}
 	}
@@ -960,8 +974,18 @@ func (t *PersistentTreap[T]) iterateInMemory(node TreapNodeInterface[T], callbac
 		return err
 	}
 
-	if pNode.TreapNode.right != nil {
-		if err := t.iterateInMemory(pNode.TreapNode.right, callback); err != nil {
+	// Get right child from the underlying TreapNode
+	var right TreapNodeInterface[T]
+	if pNodeConcrete, ok := pNode.(*PersistentTreapNode[T]); ok {
+		right = pNodeConcrete.TreapNode.right
+	} else {
+		// For other types that embed TreapNode, we can't directly access the embedded field
+		// through the interface, so we use GetRight() which may trigger disk loads in some cases
+		right = pNode.GetRight()
+	}
+
+	if right != nil && !right.IsNil() {
+		if err := t.iterateInMemory(right, callback); err != nil {
 			return err
 		}
 	}
@@ -1079,7 +1103,7 @@ func (t *PersistentTreap[T]) countInMemoryNodes(node TreapNodeInterface[T]) int 
 		return 0
 	}
 
-	pNode, ok := node.(*PersistentTreapNode[T])
+	pNode, ok := node.(PersistentTreapNodeInterface[T])
 	if !ok {
 		return 0
 	}
@@ -1087,11 +1111,13 @@ func (t *PersistentTreap[T]) countInMemoryNodes(node TreapNodeInterface[T]) int 
 	count := 1 // Count this node
 
 	// Only traverse children that are already in memory
-	if pNode.TreapNode.left != nil {
-		count += t.countInMemoryNodes(pNode.TreapNode.left)
+	left := pNode.GetLeft()
+	if left != nil && !left.IsNil() {
+		count += t.countInMemoryNodes(left)
 	}
-	if pNode.TreapNode.right != nil {
-		count += t.countInMemoryNodes(pNode.TreapNode.right)
+	right := pNode.GetRight()
+	if right != nil && !right.IsNil() {
+		count += t.countInMemoryNodes(right)
 	}
 
 	return count
@@ -1141,9 +1167,13 @@ func (t *PersistentTreap[T]) FlushOlderThan(cutoffTimestamp int64) (int, error) 
 	}
 
 	flushedCount := 0
-	err := t.Iterate(IterateInMemoryOnly, func(node *PersistentTreapNode[T]) error {
-		if node.GetLastAccessTime() < cutoffTimestamp {
-			flushErr := node.Flush()
+	err := t.Iterate(IterateInMemoryOnly, func(node TreapNodeInterface[T]) error {
+		pNode, ok := node.(*PersistentTreapNode[T])
+		if !ok {
+			return nil
+		}
+		if pNode.GetLastAccessTime() < cutoffTimestamp {
+			flushErr := pNode.Flush()
 			if flushErr != nil {
 				// If errNotFullyPersisted, continue flushing others
 				if !errors.Is(flushErr, errNotFullyPersisted) {
@@ -1179,8 +1209,12 @@ func (t *PersistentTreap[T]) FlushOldestPercentile(percentage int) (int, error) 
 
 	// Collect all in-memory nodes with their access times
 	var nodes []*PersistentTreapNode[T]
-	if err := t.Iterate(IterateInMemoryOnly, func(node *PersistentTreapNode[T]) error {
-		nodes = append(nodes, node)
+	if err := t.Iterate(IterateInMemoryOnly, func(node TreapNodeInterface[T]) error {
+		pNode, ok := node.(*PersistentTreapNode[T])
+		if !ok {
+			return nil
+		}
+		nodes = append(nodes, pNode)
 		return nil
 	}); err != nil {
 		return 0, err

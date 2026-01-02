@@ -9,6 +9,7 @@ import (
 	"github.com/cbehopkins/bobbob/store"
 )
 
+// FIXME is this a dead file - I think so...
 type PayloadRepo struct {
 	PersistentPayloadTreap treap.PersistentPayloadTreapInterface[vault.ShortCodeType, treap.UntypedPersistentPayload]
 	TypeMap                *vault.TypeMap

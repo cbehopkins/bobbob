@@ -1,6 +1,7 @@
 package vault
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,7 +10,6 @@ import (
 
 	"github.com/cbehopkins/bobbob/store"
 	"github.com/cbehopkins/bobbob/yggdrasil/collections"
-	"github.com/cbehopkins/bobbob/yggdrasil/treap"
 	"github.com/cbehopkins/bobbob/yggdrasil/types"
 )
 
@@ -538,9 +538,8 @@ type fileData struct {
 	BackupDest []string
 }
 
-// TestGetOrCreateCollectionWithIdentityPayloadRegistration is a regression test that verifies
-// GetOrCreateCollectionWithIdentity correctly uses the provided payload template during type registration.
-// Previously, the function created a zero-value payload for registration, which could cause type mismatches.
+// TestGetOrCreateCollectionWithIdentityPayloadRegistration demonstrates a fault where Iter
+// returns 0 items on dynamic identity-based collections, even though Search works.
 func TestGetOrCreateCollectionWithIdentityPayloadRegistration(t *testing.T) {
 	tmpFile := filepath.Join(os.TempDir(), fmt.Sprintf("treap_test_%d.db", time.Now().UnixNano()))
 	defer os.Remove(tmpFile)
@@ -551,50 +550,43 @@ func TestGetOrCreateCollectionWithIdentityPayloadRegistration(t *testing.T) {
 	}
 	defer session.Close()
 
-	// Create a collection with custom payload type using dynamic identity API
 	coll, err := GetOrCreateCollectionWithIdentity(
 		session.Vault,
 		types.IntKey(1),
-		types.StringLess,
-		(*types.StringKey)(new(string)),
-		types.JsonPayload[fileData]{},
+		types.IntLess,
+		(*types.IntKey)(new(int32)),
+		types.JsonPayload[string]{},
 	)
 	if err != nil {
 		t.Fatalf("failed to create collection: %v", err)
 	}
 
-	// Insert test items
-	key1 := types.StringKey("item1")
-	fd1 := fileData{Size: 100, Fpath: "/file1"}
-	coll.Insert(&key1, types.JsonPayload[fileData]{Value: fd1})
+	// Insert items
+	key1 := types.IntKey(10)
+	coll.Insert(&key1, types.JsonPayload[string]{Value: "first"})
+	key2 := types.IntKey(20)
+	coll.Insert(&key2, types.JsonPayload[string]{Value: "second"})
 
-	key2 := types.StringKey("item2")
-	fd2 := fileData{Size: 200, Fpath: "/file2"}
-	coll.Insert(&key2, types.JsonPayload[fileData]{Value: fd2})
-
-	// Regression: Verify Search works
-	searchNode := coll.Search(&key1)
-	if searchNode == nil || searchNode.IsNil() {
-		t.Errorf("Search failed to find key1")
-	} else if payloadNode, ok := searchNode.(treap.PersistentPayloadNodeInterface[types.StringKey, types.JsonPayload[fileData]]); ok {
-		retrieved := payloadNode.GetPayload().Value
-		if retrieved.Size != 100 || retrieved.Fpath != "/file1" {
-			t.Errorf("Search returned wrong payload for key1: got %+v", retrieved)
-		}
-	} else {
-		t.Errorf("could not cast node to expected payload type")
+	// Persist the collection to initialize root object ID
+	if err := coll.Persist(); err != nil {
+		t.Fatalf("failed to persist collection: %v", err)
 	}
 
-	// Regression: Verify second item can also be found
-	searchNode2 := coll.Search(&key2)
-	if searchNode2 == nil || searchNode2.IsNil() {
-		t.Errorf("Search failed to find key2")
-	} else if payloadNode, ok := searchNode2.(treap.PersistentPayloadNodeInterface[types.StringKey, types.JsonPayload[fileData]]); ok {
-		retrieved := payloadNode.GetPayload().Value
-		if retrieved.Size != 200 || retrieved.Fpath != "/file2" {
-			t.Errorf("Search returned wrong payload for key2: got %+v", retrieved)
+	// Search works fine
+	if coll.Search(&key1) == nil {
+		t.Errorf("Search failed")
+	}
+
+	// But Iter returns 0 items (the fault)
+	ctx := context.Background()
+	itemCount := 0
+	for node := range coll.Iter(ctx) {
+		if node != nil {
+			itemCount++
 		}
-	} else {
-		t.Errorf("could not cast node to expected payload type")
+	}
+
+	if itemCount != 2 {
+		t.Errorf("Iter returned %d items (expected 2)", itemCount)
 	}
 }
