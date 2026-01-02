@@ -1,6 +1,7 @@
 package treap
 
 import (
+	"encoding/base64"
 	"encoding/hex"
 	"strings"
 	"testing"
@@ -67,6 +68,50 @@ func TestMD5KeyUnmarshal(t *testing.T) {
 	if err := key.Unmarshal(badData); err == nil {
 		t.Fatalf("expected error unmarshalling short data, got nil")
 	} else if err.Error() != "MD5Key must be exactly 16 bytes" {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestMd5KeyFromBase64StringSuccess(t *testing.T) {
+	hexStr := "0123456789abcdeffedcba9876543210"
+
+	decodedHex, err := hex.DecodeString(hexStr)
+	if err != nil {
+		t.Fatalf("failed to decode hex: %v", err)
+	}
+
+	b64 := base64.RawStdEncoding.EncodeToString(decodedHex)
+
+	key, err := Md5KeyFromBase64String(b64)
+	if err != nil {
+		t.Fatalf("Md5KeyFromBase64String returned error: %v", err)
+	}
+
+	var expected MD5Key
+	copy(expected[:], decodedHex)
+
+	if key != expected {
+		t.Fatalf("parsed key mismatch: got %x, want %x", key, expected)
+	}
+}
+
+func TestMd5KeyFromBase64StringInvalidLength(t *testing.T) {
+	// base64 for 3 bytes, not 16
+	_, err := Md5KeyFromBase64String("QUJD")
+	if err == nil {
+		t.Fatalf("expected error for wrong length, got nil")
+	}
+	if !strings.Contains(err.Error(), "expected 16 bytes") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestMd5KeyFromBase64StringInvalidData(t *testing.T) {
+	_, err := Md5KeyFromBase64String("***not-base64***")
+	if err == nil {
+		t.Fatalf("expected error for invalid base64, got nil")
+	}
+	if !strings.Contains(err.Error(), "invalid base64") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }

@@ -635,6 +635,64 @@ func ExampleVault_updateExistingKey() {
 	// Bob (unchanged): credits=50
 }
 
+// ExampleVault_dynamicCollections demonstrates adding collections on-demand using identities.
+// Each identity (IntKey) maps to a collection of MD5Key -> []string payloads, created lazily.
+func ExampleVault_dynamicCollections() {
+	tmpFile := filepath.Join(os.TempDir(), "example_dynamic_vault.db")
+	defer os.Remove(tmpFile)
+
+	// Open with no predefined collections; we'll create them dynamically.
+	session, _, err := vault.OpenVaultWithIdentity[types.IntKey](tmpFile)
+	if err != nil {
+		fmt.Printf("Error opening vault: %v\n", err)
+		return
+	}
+	// Set memory budget: keep max 100 nodes, flush oldest 25% when exceeded
+	session.Vault.SetMemoryBudgetWithPercentile(100, 25)
+
+	getCollection := func(id types.IntKey) *treap.PersistentPayloadTreap[treap.MD5Key, types.JsonPayload[[]string]] {
+		coll, err := vault.GetOrCreateCollectionWithIdentity(
+			session.Vault,
+			id,
+			treap.MD5Less,
+			(*treap.MD5Key)(new(treap.MD5Key)),
+			types.JsonPayload[[]string]{},
+		)
+		if err != nil {
+			panic(err)
+		}
+		return coll
+	}
+
+	// Write to collection 1 (created on demand)
+	coll1 := getCollection(types.IntKey(1))
+	keyA, _ := treap.MD5KeyFromString("a1b2c3d4e5f6708192a3b4c5d6e7f809")
+	coll1.Insert(&keyA, types.JsonPayload[[]string]{Value: []string{"alpha", "beta"}})
+
+	// Write to collection 2 (also created on demand)
+	coll2 := getCollection(types.IntKey(2))
+	keyB, _ := treap.MD5KeyFromString("11223344556677889900aabbccddeeff")
+	coll2.Insert(&keyB, types.JsonPayload[[]string]{Value: []string{"gamma"}})
+
+	// Read back from collection 1
+	if node := coll1.Search(&keyA); node != nil && !node.IsNil() {
+		values := node.GetPayload().Value
+		fmt.Printf("collection 1: %v\n", values)
+	}
+
+	// Persist and close
+	if node := coll2.Search(&keyB); node != nil && !node.IsNil() {
+		values := node.GetPayload().Value
+		fmt.Printf("collection 2: %v\n", values)
+	}
+
+	session.Close()
+
+	// Output:
+	// collection 1: [alpha beta]
+	// collection 2: [gamma]
+}
+
 // ExampleVault_compareCollections demonstrates:
 // 1. Creating a vault with two collections
 // 2. Setting up FlushOldestPercentile for memory management

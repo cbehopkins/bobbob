@@ -896,6 +896,39 @@ func OpenVaultWithIdentity[I comparable](filename string, specs ...IdentitySpec[
 	return session, result, nil
 }
 
+// GetOrCreateCollectionWithIdentity dynamically creates or loads a collection tied to an identity.
+// It registers key/payload types as needed, ensures the identity map exists, and records the mapping.
+// This enables treating the vault as a collection-of-collections that can grow at runtime.
+func GetOrCreateCollectionWithIdentity[I comparable, K any, P treap.PersistentPayload[P]](
+	v *Vault,
+	identity I,
+	lessFunc func(a, b K) bool,
+	keyTemplate treap.PersistentKey[K],
+	payloadTemplate P,
+) (*treap.PersistentPayloadTreap[K, P], error) {
+	// Ensure types are registered so the collection registry can validate them.
+	v.RegisterType(keyTemplate)
+	var zeroP P
+	v.RegisterType(zeroP)
+
+	if _, err := v.ensureIdentityMap(); err != nil {
+		return nil, fmt.Errorf("failed to ensure identity map: %w", err)
+	}
+
+	collectionName := fmt.Sprint(identity)
+
+	coll, err := GetOrCreateCollection[K, P](v, collectionName, lessFunc, keyTemplate)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := v.setIdentityMapping(collectionName, collectionName); err != nil {
+		return nil, err
+	}
+
+	return coll, nil
+}
+
 // ensureIdentityMap lazily creates/loads the reserved identity-map collection.
 func (v *Vault) ensureIdentityMap() (*treap.PersistentPayloadTreap[types.StringKey, types.JsonPayload[identityMapping]], error) {
 	// Register key/payload types to keep TypeMap consistent.

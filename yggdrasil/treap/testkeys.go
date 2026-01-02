@@ -1,6 +1,8 @@
 package treap
 
 import (
+	"crypto/md5"
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -165,6 +167,21 @@ func MD5KeyFromString(md5Hex string) (MD5Key, error) {
 		if n != 1 {
 			return key, fmt.Errorf("expected to parse 1 byte at position %d, got %d", i*2, n)
 		}
+	}
+	return key, nil
+}
+
+// Md5KeyFromBase64String parses an unpadded base64 MD5 digest into an MD5Key.
+func Md5KeyFromBase64String(s string) (MD5Key, error) {
+	var key MD5Key
+
+	// RawStdEncoding handles no-padding base64
+	n, err := base64.RawStdEncoding.Decode(key[:], []byte(s))
+	if err != nil {
+		return MD5Key{}, fmt.Errorf("invalid base64 md5 key %q: %w", s, err)
+	}
+	if n != md5.Size {
+		return MD5Key{}, fmt.Errorf("invalid base64 md5 key %q: expected %d bytes, got %d", s, md5.Size, n)
 	}
 	return key, nil
 }
