@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"sync"
-	"unsafe"
 
 	"github.com/cbehopkins/bobbob/store"
 )
@@ -356,8 +355,8 @@ func (t *PersistentPayloadTreap[K, P]) UpdatePayload(key PersistentKey[K], newPa
 // - In both treaps (inBoth)
 // - Only in the other treap (onlyInB)
 //
-// This is a thread-safe wrapper around the base Treap.Compare method.
-// Both treaps are locked for reading during the comparison.
+// This is a thread-safe wrapper that locks both treaps in a consistent data-driven order
+// based on their root key values to prevent deadlocks.
 //
 // Note: The callbacks receive TreapNodeInterface[K] which can be type-asserted to
 // PersistentPayloadNodeInterface[K, P] to access payloads:
@@ -385,10 +384,9 @@ func (t *PersistentPayloadTreap[K, P]) Compare(
 	inBoth func(nodeA, nodeB TreapNodeInterface[K]) error,
 	onlyInB func(TreapNodeInterface[K]) error,
 ) error {
-	// Lock both treaps for reading
-	// Always lock in a consistent order to avoid deadlocks
-	// Use pointer addresses to determine order
-	if uintptr(unsafe.Pointer(t)) < uintptr(unsafe.Pointer(other)) {
+	// Lock both treaps for reading in a consistent order to avoid deadlocks.
+	// Order is determined by the underlying PersistentTreap's data-driven comparison.
+	if t.PersistentTreap.shouldLockFirst(&other.PersistentTreap) {
 		t.mu.RLock()
 		defer t.mu.RUnlock()
 		other.mu.RLock()

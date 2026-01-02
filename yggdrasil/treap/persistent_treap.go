@@ -3,6 +3,7 @@ package treap
 import (
 	"errors"
 	"fmt"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -12,6 +13,28 @@ import (
 )
 
 var errNotFullyPersisted = errors.New("node not fully persisted")
+
+// IterationMode defines how the tree iterator should traverse nodes.
+type IterationMode int
+
+const (
+	// IterateInMemoryOnly traverses only nodes currently loaded in memory.
+	// No disk access is performed.
+	IterateInMemoryOnly IterationMode = iota
+
+	// IterateOnDiskTransient loads nodes from disk transiently during traversal
+	// but does not cache them in the in-memory tree. Nodes are read, processed,
+	// and child object IDs are followed without modifying tree pointers.
+	IterateOnDiskTransient
+
+	// IterateOnDiskAndLoad loads nodes from disk and retains them in memory
+	// after visitation, populating the in-memory tree structure.
+	IterateOnDiskAndLoad
+)
+
+// IterationCallback is invoked for each node visited during tree iteration.
+// Return nil to continue; return an error to halt iteration immediately.
+type IterationCallback[T any] func(node *PersistentTreapNode[T]) error
 
 // currentUnixTime returns the current Unix timestamp in seconds.
 // This is used for tracking node access times for age-based memory management.
@@ -657,23 +680,67 @@ func (t *PersistentTreap[T]) UpdatePriority(key PersistentKey[T], newPriority Pr
 	}
 }
 
+// shouldLockFirst determines if this treap should be locked before the other treap
+// for deadlock prevention. It uses data-driven comparison of root keys rather than
+// unsafe pointer comparisons.
+//
+// Lock order is determined by:
+// 1. Comparing root keys if both trees have roots (using the treap's Less function)
+// 2. If roots have equal keys, using pointer order as a tiebreaker
+// 3. If one tree is empty, locking the non-empty tree first
+// 4. If both are empty, using pointer order as tiebreaker
+func (t *PersistentTreap[T]) shouldLockFirst(other *PersistentTreap[T]) bool {
+	// Check if roots exist
+	tHasRoot := t.root != nil && !t.root.IsNil()
+	otherHasRoot := other.root != nil && !other.root.IsNil()
+
+	// If both have roots, compare their keys
+	if tHasRoot && otherHasRoot {
+		tKey := t.root.GetKey().Value()
+		otherKey := other.root.GetKey().Value()
+
+		// If keys are equal, use pointer comparison as tiebreaker
+		if !t.Less(tKey, otherKey) && !t.Less(otherKey, tKey) {
+			return uintptr(unsafe.Pointer(t)) < uintptr(unsafe.Pointer(other))
+		}
+
+		// Use the treap's Less function for ordering
+		return t.Less(tKey, otherKey)
+	}
+
+	// If only this tree has a root, lock it first
+	if tHasRoot {
+		return true
+	}
+
+	// If only other has a root, lock it first
+	if otherHasRoot {
+		return false
+	}
+
+	// Both empty: use pointer comparison as tiebreaker
+	return uintptr(unsafe.Pointer(t)) < uintptr(unsafe.Pointer(other))
+}
+
 // Compare compares this persistent treap with another persistent treap and invokes callbacks for keys that are:
 // - Only in this treap (onlyInA)
 // - In both treaps (inBoth)
 // - Only in the other treap (onlyInB)
 //
-// This is a thread-safe wrapper around the base Treap.Compare method.
-// Both treaps are locked for reading during the comparison.
+// This method traverses both trees in sorted order, comparing keys.
+// If nodes are loaded in memory, it uses them directly.
+// If nodes need to be loaded from disk, they are loaded transiently without populating the in-memory tree.
+// Both treaps are locked for reading during the comparison to ensure consistency.
+// Lock ordering is determined by data-driven comparison of root keys, not pointer addresses.
 func (t *PersistentTreap[T]) Compare(
 	other *PersistentTreap[T],
 	onlyInA func(TreapNodeInterface[T]) error,
 	inBoth func(nodeA, nodeB TreapNodeInterface[T]) error,
 	onlyInB func(TreapNodeInterface[T]) error,
 ) error {
-	// Lock both treaps for reading
-	// Always lock in a consistent order to avoid deadlocks
-	// Use pointer addresses to determine order
-	if uintptr(unsafe.Pointer(t)) < uintptr(unsafe.Pointer(other)) {
+	// Lock both treaps in a consistent order to avoid deadlocks
+	// Order is determined by comparing root keys (data-driven), not pointer addresses
+	if t.shouldLockFirst(other) {
 		t.mu.RLock()
 		defer t.mu.RUnlock()
 		other.mu.RLock()
@@ -685,7 +752,76 @@ func (t *PersistentTreap[T]) Compare(
 		defer t.mu.RUnlock()
 	}
 
-	return t.Treap.Compare(&other.Treap, onlyInA, inBoth, onlyInB)
+	nodeChA, errChA, cancelA := newPersistentStream(t)
+	nodeChB, errChB, cancelB := newPersistentStream(other)
+	defer cancelA()
+	defer cancelB()
+
+	nextA := channelNext(nodeChA, errChA)
+	nextB := channelNext(nodeChB, errChB)
+
+	return mergeOrdered(nextA, nextB, t.Less, onlyInA, inBoth, onlyInB)
+}
+
+// newPersistentStream streams nodes from a persistent treap using its iterate logic
+// and respects cancellation to avoid goroutine leaks when Compare returns early.
+func newPersistentStream[T any](treap *PersistentTreap[T]) (chan TreapNodeInterface[T], chan error, func()) {
+	nodeCh := make(chan TreapNodeInterface[T], 1)
+	errCh := make(chan error, 1)
+	done := make(chan struct{})
+
+	go func() {
+		defer close(nodeCh)
+		defer close(errCh)
+
+		mode := treap.getIterationMode()
+		err := treap.Iterate(mode, func(node *PersistentTreapNode[T]) error {
+			select {
+			case <-done:
+				return errWalkCanceled
+			case nodeCh <- node:
+				return nil
+			}
+		})
+
+		if err == errWalkCanceled {
+			err = nil
+		}
+
+		errCh <- err
+	}()
+
+	cancel := func() { close(done) }
+	return nodeCh, errCh, cancel
+}
+
+// getIterationMode determines which iteration mode to use for this tree.
+// If nodes are cached in memory, use in-memory iteration.
+// If the tree has been persisted, use transient disk iteration.
+// Otherwise fall back to in-memory iteration for unpersisted trees.
+func (t *PersistentTreap[T]) getIterationMode() IterationMode {
+	if t.root == nil {
+		return IterateInMemoryOnly
+	}
+
+	// Check if we have in-memory nodes
+	inMemoryCount := t.countInMemoryNodes(t.root)
+	if inMemoryCount > 0 {
+		return IterateInMemoryOnly
+	}
+
+	// No in-memory nodes, but check if the root has been persisted
+	rootNode, ok := t.root.(*PersistentTreapNode[T])
+	if !ok {
+		return IterateInMemoryOnly
+	}
+	objId, err := rootNode.ObjectId()
+	if err != nil || !store.IsValidObjectId(objId) {
+		return IterateInMemoryOnly
+	}
+
+	// Use transient disk iteration for persisted trees without in-memory nodes
+	return IterateOnDiskTransient
 }
 
 // Persist persists the entire treap to the store.
@@ -705,6 +841,174 @@ func (t *PersistentTreap[T]) Load(objId store.ObjectId) error {
 	var err error
 	t.root, err = NewFromObjectId(objId, t, t.Store)
 	return err
+}
+
+// Iterate traverses the tree according to the specified mode, invoking the callback
+// on each node visited. The callback can return an error to halt iteration.
+//
+// Behavior depends on mode:
+//   - IterateInMemoryOnly: traverses only cached nodes (no disk access)
+//   - IterateOnDiskTransient: loads nodes from disk transiently without caching
+//     If the tree hasn't been persisted (no root object ID), falls back to in-memory iteration
+//   - IterateOnDiskAndLoad: loads nodes from disk and retains them in memory
+//     If the tree hasn't been persisted (no root object ID), falls back to in-memory iteration
+//
+// The iteration is in-order (left, node, right).
+func (t *PersistentTreap[T]) Iterate(mode IterationMode, callback IterationCallback[T]) error {
+	if t.root == nil {
+		return nil
+	}
+
+	switch mode {
+	case IterateInMemoryOnly:
+		return t.iterateInMemory(t.root, callback)
+	case IterateOnDiskTransient:
+		rootNode, ok := t.root.(*PersistentTreapNode[T])
+		if !ok {
+			return fmt.Errorf("root is not a PersistentTreapNode")
+		}
+		objId, err := rootNode.ObjectId()
+		if err != nil {
+			return fmt.Errorf("failed to get root object ID: %w", err)
+		}
+		// If root hasn't been persisted, fall back to in-memory iteration
+		if !store.IsValidObjectId(objId) {
+			return t.iterateInMemory(t.root, callback)
+		}
+		return t.iterateOnDiskTransient(objId, callback)
+	case IterateOnDiskAndLoad:
+		rootNode, ok := t.root.(*PersistentTreapNode[T])
+		if !ok {
+			return fmt.Errorf("root is not a PersistentTreapNode")
+		}
+		objId, err := rootNode.ObjectId()
+		if err != nil {
+			return fmt.Errorf("failed to get root object ID: %w", err)
+		}
+		// If root hasn't been persisted, fall back to in-memory iteration
+		if !store.IsValidObjectId(objId) {
+			return t.iterateInMemory(t.root, callback)
+		}
+		return t.iterateOnDiskAndLoad(objId, callback)
+	default:
+		return fmt.Errorf("unknown iteration mode: %d", mode)
+	}
+}
+
+// iterateInMemory traverses only cached nodes without disk access.
+// Unlike the shared inOrderWalk, this directly accesses the cached pointers
+// to avoid triggering lazy loading of nodes from disk.
+func (t *PersistentTreap[T]) iterateInMemory(node TreapNodeInterface[T], callback IterationCallback[T]) error {
+	if node == nil || node.IsNil() {
+		return nil
+	}
+
+	pNode, ok := node.(*PersistentTreapNode[T])
+	if !ok {
+		return nil // Skip non-persistent nodes
+	}
+
+	// In-order: left, node, right
+	// Note: We access TreapNode.left/right directly to avoid GetLeft()/GetRight()
+	// which would trigger lazy loading of children from disk
+	if pNode.TreapNode.left != nil {
+		if err := t.iterateInMemory(pNode.TreapNode.left, callback); err != nil {
+			return err
+		}
+	}
+
+	if err := callback(pNode); err != nil {
+		return err
+	}
+
+	if pNode.TreapNode.right != nil {
+		if err := t.iterateInMemory(pNode.TreapNode.right, callback); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// iterateOnDiskTransient loads nodes transiently via object IDs without caching.
+// Uses an explicit stack to avoid excessive recursion depth for large trees.
+func (t *PersistentTreap[T]) iterateOnDiskTransient(rootObjId store.ObjectId, callback IterationCallback[T]) error {
+	if !store.IsValidObjectId(rootObjId) {
+		return nil
+	}
+
+	// Stack for in-order traversal: (objId, state)
+	// state: 0=enter, 1=visiting node, 2=exit right
+	type stackFrame struct {
+		objId store.ObjectId
+		state int
+	}
+
+	stack := []stackFrame{{objId: rootObjId, state: 0}}
+
+	for len(stack) > 0 {
+		frame := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+
+		if !store.IsValidObjectId(frame.objId) {
+			continue
+		}
+
+		// Load node transiently
+		node, err := NewFromObjectId(frame.objId, t, t.Store)
+		if err != nil {
+			return fmt.Errorf("failed to load node from disk (objId=%d): %w", frame.objId, err)
+		}
+
+		switch frame.state {
+		case 0: // Enter: push right, visit node, push left
+			if store.IsValidObjectId(node.rightObjectId) {
+				stack = append(stack, stackFrame{objId: node.rightObjectId, state: 0})
+			}
+			stack = append(stack, stackFrame{objId: frame.objId, state: 1})
+			if store.IsValidObjectId(node.leftObjectId) {
+				stack = append(stack, stackFrame{objId: node.leftObjectId, state: 0})
+			}
+
+		case 1: // Visit node
+			if err := callback(node); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+// iterateOnDiskAndLoad loads nodes and retains them in the in-memory tree.
+func (t *PersistentTreap[T]) iterateOnDiskAndLoad(objId store.ObjectId, callback IterationCallback[T]) error {
+	if !store.IsValidObjectId(objId) {
+		return nil
+	}
+
+	node, err := NewFromObjectId(objId, t, t.Store)
+	if err != nil {
+		return fmt.Errorf("failed to load node from disk (objId=%d): %w", objId, err)
+	}
+
+	// In-order: left, node, right
+	if store.IsValidObjectId(node.leftObjectId) {
+		if err := t.iterateOnDiskAndLoad(node.leftObjectId, callback); err != nil {
+			return err
+		}
+	}
+
+	if err := callback(node); err != nil {
+		return err
+	}
+
+	if store.IsValidObjectId(node.rightObjectId) {
+		if err := t.iterateOnDiskAndLoad(node.rightObjectId, callback); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 // NodeInfo contains information about a node in memory, including its access timestamp.
@@ -793,36 +1097,27 @@ func (t *PersistentTreap[T]) collectInMemoryNodes(node TreapNodeInterface[T], no
 // Returns the number of nodes flushed and any error encountered.
 func (t *PersistentTreap[T]) FlushOlderThan(cutoffTimestamp int64) (int, error) {
 	// First, persist the entire tree to ensure all nodes are saved
-	err := t.Persist()
-	if err != nil {
+	if err := t.Persist(); err != nil {
 		return 0, err
 	}
 
-	// Get all in-memory nodes
-	nodes := t.GetInMemoryNodes()
-
-	// Count how many we flush
 	flushedCount := 0
-
-	// Flush nodes older than the cutoff
-	for _, nodeInfo := range nodes {
-		if nodeInfo.LastAccessTime < cutoffTimestamp {
-			// Attempt to flush this node
-			err := nodeInfo.Node.Flush()
-			if err != nil {
-				// If we get errNotFullyPersisted, it means children weren't persisted
-				// but we already called Persist() above, so this shouldn't happen
-				// Continue anyway to flush what we can
-				if !errors.Is(err, errNotFullyPersisted) {
-					return flushedCount, err
+	err := t.Iterate(IterateInMemoryOnly, func(node *PersistentTreapNode[T]) error {
+		if node.GetLastAccessTime() < cutoffTimestamp {
+			flushErr := node.Flush()
+			if flushErr != nil {
+				// If errNotFullyPersisted, continue flushing others
+				if !errors.Is(flushErr, errNotFullyPersisted) {
+					return flushErr
 				}
 			} else {
 				flushedCount++
 			}
 		}
-	}
+		return nil
+	})
 
-	return flushedCount, nil
+	return flushedCount, err
 }
 
 // FlushOldestPercentile flushes the oldest percentage of nodes from memory.
@@ -839,42 +1134,38 @@ func (t *PersistentTreap[T]) FlushOldestPercentile(percentage int) (int, error) 
 	}
 
 	// First, persist the entire tree to ensure all nodes are saved
-	err := t.Persist()
-	if err != nil {
+	if err := t.Persist(); err != nil {
 		return 0, err
 	}
 
-	// Get all in-memory nodes
-	nodes := t.GetInMemoryNodes()
+	// Collect all in-memory nodes with their access times
+	var nodes []*PersistentTreapNode[T]
+	if err := t.Iterate(IterateInMemoryOnly, func(node *PersistentTreapNode[T]) error {
+		nodes = append(nodes, node)
+		return nil
+	}); err != nil {
+		return 0, err
+	}
+
 	if len(nodes) == 0 {
 		return 0, nil
 	}
 
-	// Sort nodes by access time (oldest first)
-	sortedNodes := make([]NodeInfo[T], len(nodes))
-	copy(sortedNodes, nodes)
-
-	// Simple insertion sort by LastAccessTime (ascending)
-	for i := 1; i < len(sortedNodes); i++ {
-		key := sortedNodes[i]
-		j := i - 1
-		for j >= 0 && sortedNodes[j].LastAccessTime > key.LastAccessTime {
-			sortedNodes[j+1] = sortedNodes[j]
-			j--
-		}
-		sortedNodes[j+1] = key
-	}
+	// Sort nodes by access time (oldest first) using slice sort
+	sort.Slice(nodes, func(i, j int) bool {
+		return nodes[i].GetLastAccessTime() < nodes[j].GetLastAccessTime()
+	})
 
 	// Calculate how many nodes to flush
-	numToFlush := (len(sortedNodes) * percentage) / 100
+	numToFlush := (len(nodes) * percentage) / 100
 	if numToFlush == 0 && percentage > 0 {
 		numToFlush = 1 // Flush at least one node if percentage > 0
 	}
 
 	// Flush the oldest nodes
 	flushedCount := 0
-	for i := 0; i < numToFlush && i < len(sortedNodes); i++ {
-		err := sortedNodes[i].Node.Flush()
+	for i := 0; i < numToFlush && i < len(nodes); i++ {
+		err := nodes[i].Flush()
 		if err != nil {
 			if !errors.Is(err, errNotFullyPersisted) {
 				return flushedCount, err

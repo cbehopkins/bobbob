@@ -89,6 +89,58 @@ func randomPriority() Priority {
 	return Priority(rand.Uint32())
 }
 
+// TreeCallback is a callback function invoked during tree traversal.
+// It receives a node and can return an error to halt traversal.
+type TreeCallback[T any] func(TreapNodeInterface[T]) error
+
+// inOrderWalk is a shared helper that performs in-order traversal of a tree.
+// It works with any tree that implements TreapNodeInterface[T].
+// The callback is invoked for each node; returning an error halts traversal.
+func inOrderWalk[T any](node TreapNodeInterface[T], callback TreeCallback[T]) error {
+	if node == nil || node.IsNil() {
+		return nil
+	}
+
+	// In-order: left, node, right
+	if err := inOrderWalk(node.GetLeft(), callback); err != nil {
+		return err
+	}
+
+	if err := callback(node); err != nil {
+		return err
+	}
+
+	if err := inOrderWalk(node.GetRight(), callback); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// reverseOrderWalk is a shared helper that performs reverse in-order traversal of a tree.
+// It works with any tree that implements TreapNodeInterface[T].
+// The callback is invoked for each node; returning an error halts traversal.
+func reverseOrderWalk[T any](node TreapNodeInterface[T], callback TreeCallback[T]) error {
+	if node == nil || node.IsNil() {
+		return nil
+	}
+
+	// Reverse in-order: right, node, left
+	if err := reverseOrderWalk(node.GetRight(), callback); err != nil {
+		return err
+	}
+
+	if err := callback(node); err != nil {
+		return err
+	}
+
+	if err := reverseOrderWalk(node.GetLeft(), callback); err != nil {
+		return err
+	}
+
+	return nil
+}
+
 // TreapNodeInterface has been moved to interfaces.go
 
 // TreapNode represents a node in an in-memory treap.
@@ -342,30 +394,20 @@ func (t *Treap[T]) UpdatePriority(value T, newPriority Priority) {
 
 // Walk traverses the treap in order and calls the callback function on each node.
 func (t *Treap[T]) Walk(callback func(TreapNodeInterface[T])) {
-	var walk func(node TreapNodeInterface[T])
-	walk = func(node TreapNodeInterface[T]) {
-		if node == nil || node.IsNil() {
-			return
-		}
-		walk(node.GetLeft())
+	// Ignore errors since callback doesn't return error
+	_ = inOrderWalk(t.root, func(node TreapNodeInterface[T]) error {
 		callback(node)
-		walk(node.GetRight())
-	}
-	walk(t.root)
+		return nil
+	})
 }
 
 // WalkReverse traverses the treap in reverse order and calls the callback function on each node.
 func (t *Treap[T]) WalkReverse(callback func(TreapNodeInterface[T])) {
-	var walkReverse func(node TreapNodeInterface[T])
-	walkReverse = func(node TreapNodeInterface[T]) {
-		if node == nil || node.IsNil() {
-			return
-		}
-		walkReverse(node.GetRight())
+	// Ignore errors since callback doesn't return error
+	_ = reverseOrderWalk(t.root, func(node TreapNodeInterface[T]) error {
 		callback(node)
-		walkReverse(node.GetLeft())
-	}
-	walkReverse(t.root)
+		return nil
+	})
 }
 
 // Compare compares this treap with another treap and invokes callbacks for keys that are:
@@ -398,70 +440,151 @@ func (t *Treap[T]) Compare(
 	inBoth func(nodeA, nodeB TreapNodeInterface[T]) error,
 	onlyInB func(TreapNodeInterface[T]) error,
 ) error {
-	// Create iterators for both treaps by collecting all nodes in sorted order
-	var nodesA []TreapNodeInterface[T]
-	var nodesB []TreapNodeInterface[T]
+	// Stream both trees via in-order walks without buffering entire trees.
+	nodeChA, errChA, cancelA := newInOrderStream(t.root)
+	nodeChB, errChB, cancelB := newInOrderStream(other.root)
+	defer cancelA()
+	defer cancelB()
 
-	t.Walk(func(node TreapNodeInterface[T]) {
-		nodesA = append(nodesA, node)
-	})
+	nextA := channelNext(nodeChA, errChA)
+	nextB := channelNext(nodeChB, errChB)
 
-	other.Walk(func(node TreapNodeInterface[T]) {
-		nodesB = append(nodesB, node)
-	})
+	return mergeOrdered(nextA, nextB, t.Less, onlyInA, inBoth, onlyInB)
+}
 
-	// Merge-style comparison
-	i, j := 0, 0
-	for i < len(nodesA) || j < len(nodesB) {
-		if i >= len(nodesA) {
-			// Exhausted A, remaining nodes are only in B
+var errWalkCanceled = errors.New("walk canceled")
+
+// channelNext adapts a streamed node channel into an iterator-style next function.
+// It surfaces walker errors (including cancellation-as-nil) when the channel is exhausted.
+func channelNext[T any](nodeCh <-chan TreapNodeInterface[T], errCh <-chan error) func() (TreapNodeInterface[T], bool, error) {
+	var done bool
+	return func() (TreapNodeInterface[T], bool, error) {
+		if done {
+			return nil, false, nil
+		}
+		node, ok := <-nodeCh
+		if ok {
+			return node, true, nil
+		}
+		done = true
+		err := <-errCh
+		return nil, false, err
+	}
+}
+
+// mergeOrdered drives a merge-style comparison over two in-order iterators.
+// Iterators must yield nodes in ascending key order. less is the key comparator.
+func mergeOrdered[T any](
+	nextA func() (TreapNodeInterface[T], bool, error),
+	nextB func() (TreapNodeInterface[T], bool, error),
+	less func(a, b T) bool,
+	onlyInA func(TreapNodeInterface[T]) error,
+	inBoth func(nodeA, nodeB TreapNodeInterface[T]) error,
+	onlyInB func(TreapNodeInterface[T]) error,
+) error {
+	nodeA, okA, err := nextA()
+	if err != nil {
+		return err
+	}
+	nodeB, okB, err := nextB()
+	if err != nil {
+		return err
+	}
+
+	for okA || okB {
+		switch {
+		case !okA:
 			if onlyInB != nil {
-				if err := onlyInB(nodesB[j]); err != nil {
+				if err := onlyInB(nodeB); err != nil {
 					return err
 				}
 			}
-			j++
-		} else if j >= len(nodesB) {
-			// Exhausted B, remaining nodes are only in A
+			nodeB, okB, err = nextB()
+			if err != nil {
+				return err
+			}
+		case !okB:
 			if onlyInA != nil {
-				if err := onlyInA(nodesA[i]); err != nil {
+				if err := onlyInA(nodeA); err != nil {
 					return err
 				}
 			}
-			i++
-		} else {
-			// Both have nodes, compare keys
-			keyA := nodesA[i].GetKey()
-			keyB := nodesB[j].GetKey()
+			nodeA, okA, err = nextA()
+			if err != nil {
+				return err
+			}
+		default:
+			keyA := nodeA.GetKey()
+			keyB := nodeB.GetKey()
 
 			if keyA.Equals(keyB.Value()) {
-				// Keys match - in both
 				if inBoth != nil {
-					if err := inBoth(nodesA[i], nodesB[j]); err != nil {
+					if err := inBoth(nodeA, nodeB); err != nil {
 						return err
 					}
 				}
-				i++
-				j++
-			} else if t.Less(keyA.Value(), keyB.Value()) {
-				// keyA < keyB, so keyA is only in A
+				nodeA, okA, err = nextA()
+				if err != nil {
+					return err
+				}
+				nodeB, okB, err = nextB()
+				if err != nil {
+					return err
+				}
+			} else if less(keyA.Value(), keyB.Value()) {
 				if onlyInA != nil {
-					if err := onlyInA(nodesA[i]); err != nil {
+					if err := onlyInA(nodeA); err != nil {
 						return err
 					}
 				}
-				i++
+				nodeA, okA, err = nextA()
+				if err != nil {
+					return err
+				}
 			} else {
-				// keyB < keyA, so keyB is only in B
 				if onlyInB != nil {
-					if err := onlyInB(nodesB[j]); err != nil {
+					if err := onlyInB(nodeB); err != nil {
 						return err
 					}
 				}
-				j++
+				nodeB, okB, err = nextB()
+				if err != nil {
+					return err
+				}
 			}
 		}
 	}
 
 	return nil
+}
+
+// newInOrderStream starts an in-order walk and streams nodes over a channel.
+// Cancellation is respected via the returned cancel function.
+func newInOrderStream[T any](root TreapNodeInterface[T]) (chan TreapNodeInterface[T], chan error, func()) {
+	nodeCh := make(chan TreapNodeInterface[T], 1)
+	errCh := make(chan error, 1)
+	done := make(chan struct{})
+
+	go func() {
+		defer close(nodeCh)
+		defer close(errCh)
+
+		err := inOrderWalk(root, func(node TreapNodeInterface[T]) error {
+			select {
+			case <-done:
+				return errWalkCanceled
+			case nodeCh <- node:
+				return nil
+			}
+		})
+
+		if err == errWalkCanceled {
+			err = nil
+		}
+
+		errCh <- err
+	}()
+
+	cancel := func() { close(done) }
+	return nodeCh, errCh, cancel
 }
