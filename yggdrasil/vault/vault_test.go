@@ -1,11 +1,15 @@
 package vault
 
 import (
+	"fmt"
+	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/cbehopkins/bobbob/store"
 	"github.com/cbehopkins/bobbob/yggdrasil/collections"
+	"github.com/cbehopkins/bobbob/yggdrasil/treap"
 	"github.com/cbehopkins/bobbob/yggdrasil/types"
 )
 
@@ -525,5 +529,72 @@ func TestVaultPersistenceAcrossSessions(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Failed to close vault in session 3: %v", err)
 		}
+	}
+}
+
+type fileData struct {
+	Size       int64
+	Fpath      string
+	BackupDest []string
+}
+
+// TestGetOrCreateCollectionWithIdentityPayloadRegistration is a regression test that verifies
+// GetOrCreateCollectionWithIdentity correctly uses the provided payload template during type registration.
+// Previously, the function created a zero-value payload for registration, which could cause type mismatches.
+func TestGetOrCreateCollectionWithIdentityPayloadRegistration(t *testing.T) {
+	tmpFile := filepath.Join(os.TempDir(), fmt.Sprintf("treap_test_%d.db", time.Now().UnixNano()))
+	defer os.Remove(tmpFile)
+
+	session, _, err := OpenVaultWithIdentity[types.IntKey](tmpFile)
+	if err != nil {
+		t.Fatalf("failed to open vault: %v", err)
+	}
+	defer session.Close()
+
+	// Create a collection with custom payload type using dynamic identity API
+	coll, err := GetOrCreateCollectionWithIdentity(
+		session.Vault,
+		types.IntKey(1),
+		types.StringLess,
+		(*types.StringKey)(new(string)),
+		types.JsonPayload[fileData]{},
+	)
+	if err != nil {
+		t.Fatalf("failed to create collection: %v", err)
+	}
+
+	// Insert test items
+	key1 := types.StringKey("item1")
+	fd1 := fileData{Size: 100, Fpath: "/file1"}
+	coll.Insert(&key1, types.JsonPayload[fileData]{Value: fd1})
+
+	key2 := types.StringKey("item2")
+	fd2 := fileData{Size: 200, Fpath: "/file2"}
+	coll.Insert(&key2, types.JsonPayload[fileData]{Value: fd2})
+
+	// Regression: Verify Search works
+	searchNode := coll.Search(&key1)
+	if searchNode == nil || searchNode.IsNil() {
+		t.Errorf("Search failed to find key1")
+	} else if payloadNode, ok := searchNode.(treap.PersistentPayloadNodeInterface[types.StringKey, types.JsonPayload[fileData]]); ok {
+		retrieved := payloadNode.GetPayload().Value
+		if retrieved.Size != 100 || retrieved.Fpath != "/file1" {
+			t.Errorf("Search returned wrong payload for key1: got %+v", retrieved)
+		}
+	} else {
+		t.Errorf("could not cast node to expected payload type")
+	}
+
+	// Regression: Verify second item can also be found
+	searchNode2 := coll.Search(&key2)
+	if searchNode2 == nil || searchNode2.IsNil() {
+		t.Errorf("Search failed to find key2")
+	} else if payloadNode, ok := searchNode2.(treap.PersistentPayloadNodeInterface[types.StringKey, types.JsonPayload[fileData]]); ok {
+		retrieved := payloadNode.GetPayload().Value
+		if retrieved.Size != 200 || retrieved.Fpath != "/file2" {
+			t.Errorf("Search returned wrong payload for key2: got %+v", retrieved)
+		}
+	} else {
+		t.Errorf("could not cast node to expected payload type")
 	}
 }

@@ -908,8 +908,7 @@ func GetOrCreateCollectionWithIdentity[I comparable, K any, P treap.PersistentPa
 ) (*treap.PersistentPayloadTreap[K, P], error) {
 	// Ensure types are registered so the collection registry can validate them.
 	v.RegisterType(keyTemplate)
-	var zeroP P
-	v.RegisterType(zeroP)
+	v.RegisterType(payloadTemplate)
 
 	if _, err := v.ensureIdentityMap(); err != nil {
 		return nil, fmt.Errorf("failed to ensure identity map: %w", err)
