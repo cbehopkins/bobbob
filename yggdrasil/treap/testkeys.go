@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"fmt"
 
 	"github.com/cbehopkins/bobbob/store"
 )
@@ -147,6 +148,25 @@ func (k *MD5Key) Unmarshal(data []byte) error {
 func (k MD5Key) New() PersistentKey[MD5Key] {
 	v := MD5Key{}
 	return &v
+}
+
+// MD5KeyFromString converts a 32-character hex string to a 16-byte MD5Key.
+// Returns an error if the string is not exactly 32 characters or contains invalid hex.
+func MD5KeyFromString(md5Hex string) (MD5Key, error) {
+	var key MD5Key
+	if len(md5Hex) != 32 {
+		return key, fmt.Errorf("invalid md5 hex string length: got %d, want 32", len(md5Hex))
+	}
+	for i := range 16 {
+		n, err := fmt.Sscanf(md5Hex[i*2:i*2+2], "%02x", &key[i])
+		if err != nil {
+			return key, fmt.Errorf("failed to parse hex at position %d: %w", i*2, err)
+		}
+		if n != 1 {
+			return key, fmt.Errorf("expected to parse 1 byte at position %d, got %d", i*2, n)
+		}
+	}
+	return key, nil
 }
 
 func (k MD5Key) MarshalToObjectId(stre store.Storer) (store.ObjectId, error) {

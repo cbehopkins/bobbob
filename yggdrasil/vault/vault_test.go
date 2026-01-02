@@ -1,10 +1,11 @@
-package collections
+package vault
 
 import (
 	"path/filepath"
 	"testing"
 
 	"github.com/cbehopkins/bobbob/store"
+	"github.com/cbehopkins/bobbob/yggdrasil/collections"
 	"github.com/cbehopkins/bobbob/yggdrasil/types"
 )
 
@@ -225,7 +226,7 @@ func TestVaultKeyOnlyCollection(t *testing.T) {
 // registering collections, updating root object IDs, listing collections, and
 // serialization/deserialization.
 func TestCollectionRegistry(t *testing.T) {
-	registry := NewCollectionRegistry()
+	registry := collections.NewCollectionRegistry()
 
 	// Register a collection
 	collId, err := registry.RegisterCollection("users", 100, 1, 2)
@@ -264,12 +265,12 @@ func TestCollectionRegistry(t *testing.T) {
 	}
 
 	// List collections
-	collections := registry.ListCollections()
-	if len(collections) != 1 {
-		t.Errorf("Expected 1 collection, got %d", len(collections))
+	collectionNames := registry.ListCollections()
+	if len(collectionNames) != 1 {
+		t.Errorf("Expected 1 collection, got %d", len(collectionNames))
 	}
-	if collections[0] != "users" {
-		t.Errorf("Expected collection 'users', got '%s'", collections[0])
+	if collectionNames[0] != "users" {
+		t.Errorf("Expected collection 'users', got '%s'", collectionNames[0])
 	}
 
 	// Test serialization
@@ -279,7 +280,7 @@ func TestCollectionRegistry(t *testing.T) {
 	}
 
 	// Deserialize
-	newRegistry := NewCollectionRegistry()
+	newRegistry := collections.NewCollectionRegistry()
 	err = newRegistry.Unmarshal(data)
 	if err != nil {
 		t.Fatalf("Failed to unmarshal registry: %v", err)

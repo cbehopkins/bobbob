@@ -4,6 +4,8 @@ import (
 	"crypto/md5"
 	"encoding/hex"
 	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/cbehopkins/bobbob/store"
@@ -235,8 +237,12 @@ func (fc *FileCollection) Compare(other *FileCollection, logger func(string)) (*
 // by MD5 hash to find duplicates, unique files, and files with different sizes
 func ExamplePersistentPayloadTreap_Compare() {
 	// Create temporary stores for the example
-	store, _ := store.NewBasicStore("exampleA.db")
-	defer store.Close()
+	path := filepath.Join(os.TempDir(), "exampleA.db")
+	store, _ := store.NewBasicStore(path)
+	defer func() {
+		store.Close()
+		_ = os.Remove(path)
+	}()
 
 	// Create two file collections
 	collectionA := NewFileCollection(store)
@@ -331,7 +337,9 @@ func TestFileCollectionCompare(t *testing.T) {
 func TestMemoryManagementWithFileCollection(t *testing.T) {
 	// === MANUAL MEMORY MANAGEMENT ===
 	fmt.Println("=== Manual Memory Management ===")
-	store, _ := store.NewBasicStore("exampleMemory.db")
+	tempDir := t.TempDir()
+	memPath := filepath.Join(tempDir, "exampleMemory.db")
+	store, _ := store.NewBasicStore(memPath)
 	defer store.Close()
 
 	collection := NewFileCollection(store)

@@ -1,4 +1,4 @@
-package collections
+package vault
 
 import (
 	"path/filepath"

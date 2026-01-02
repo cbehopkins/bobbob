@@ -12,6 +12,8 @@ import (
 // UntypedPersistentPayload and PersistentPayload interfaces have been moved to interfaces.go
 
 // PersistentPayloadTreapNode represents a node in the persistent payload treap.
+// It embeds the payload along with the persistent treap node functionality.
+// That is when you persist this node, both the treap structure and the payload are persisted together.
 type PersistentPayloadTreapNode[K any, P PersistentPayload[P]] struct {
 	PersistentTreapNode[K]
 	payload P

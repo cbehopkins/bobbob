@@ -307,9 +307,11 @@ func (n *PersistentTreapNode[T]) flushChild(child *TreapNodeInterface[T], childO
 	return nil
 }
 
-// Flush saves this node and its children to the store, then removes them from memory.
+// Flush saves this node's children to the store and removes them from memory.
 // This is used to reduce memory usage while keeping the tree accessible via the store.
-// The node can be reloaded later using its ObjectId.
+// The children can be reloaded later using their ObjectIds.
+// Note: This flushes the node's CHILDREN, not the node itself. To flush a node,
+// its parent must call flushChild on it.
 func (n *PersistentTreapNode[T]) Flush() error {
 	if n == nil {
 		return nil

@@ -1,4 +1,4 @@
-package collections
+package vault
 
 import (
 	"encoding/binary"
@@ -6,8 +6,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cbehopkins/bobbob/collections"
+	multistore "github.com/cbehopkins/bobbob/multistore"
 	"github.com/cbehopkins/bobbob/store"
+	ycollections "github.com/cbehopkins/bobbob/yggdrasil/collections"
 	"github.com/cbehopkins/bobbob/yggdrasil/treap"
 	"github.com/cbehopkins/bobbob/yggdrasil/types"
 )
@@ -102,7 +103,7 @@ type Vault struct {
 	TypeMap *types.TypeMap
 
 	// CollectionRegistry tracks all collections in this vault
-	CollectionRegistry *CollectionRegistry
+	CollectionRegistry *ycollections.CollectionRegistry
 
 	// ActiveCollections caches loaded collections
 	// Maps collection name to the actual treap instance
@@ -126,7 +127,7 @@ func LoadVault(stre store.Storer) (*Vault, error) {
 	vault := &Vault{
 		Store:              stre,
 		TypeMap:            types.NewTypeMap(),
-		CollectionRegistry: NewCollectionRegistry(),
+		CollectionRegistry: ycollections.NewCollectionRegistry(),
 		activeCollections:  make(map[string]CollectionInterface),
 	}
 
@@ -164,7 +165,7 @@ func LoadVault(stre store.Storer) (*Vault, error) {
 	if store.IsValidObjectId(metadata.CollectionRegistryObjectId) {
 		registryData, err := store.ReadBytesFromObj(stre, metadata.CollectionRegistryObjectId)
 		if err == nil {
-			loadedRegistry := NewCollectionRegistry()
+			loadedRegistry := ycollections.NewCollectionRegistry()
 			if err := loadedRegistry.Unmarshal(registryData); err == nil {
 				vault.CollectionRegistry = loadedRegistry
 			}
@@ -777,9 +778,9 @@ func OpenVault(filename string, specs ...CollectionSpec) (*VaultSession, []any, 
 	var s store.Storer
 	var err error
 	// Prefer MultiStore for optimized allocator routing
-	ms, mErr := collections.LoadMultiStore(filename)
+	ms, mErr := multistore.LoadMultiStore(filename)
 	if mErr != nil {
-		ms, mErr = collections.NewMultiStore(filename)
+		ms, mErr = multistore.NewMultiStore(filename)
 		if mErr != nil {
 			return nil, nil, fmt.Errorf("failed to create MultiStore: %w", mErr)
 		}

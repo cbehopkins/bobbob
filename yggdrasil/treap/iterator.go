@@ -71,30 +71,8 @@ func (t *PersistentTreap[K]) WalkInOrder(opts IteratorOptions, callback func(nod
 			break
 		}
 
-		// Peek at the top of stack (don't pop yet)
+		// Pop and visit this node
 		state.current = state.stack[len(state.stack)-1]
-
-		// Check if we're coming back from the right subtree
-		// (i.e., we've already visited this node and processed its right child)
-		if state.lastVisited != nil && state.current.GetRight() != nil &&
-			!state.current.GetRight().IsNil() && state.current.GetRight() == state.lastVisited {
-			// We've finished both left and right subtrees, now we can flush
-			if !state.opts.KeepInMemory {
-				if pNode, ok := state.current.(*PersistentTreapNode[K]); ok {
-					if store.IsValidObjectId(pNode.objectId) {
-						_ = pNode.Flush() // Ignore flush errors during iteration
-					}
-				}
-			}
-
-			// Pop this node and mark it as visited
-			state.stack = state.stack[:len(state.stack)-1]
-			state.lastVisited = state.current
-			state.current = nil // Move back up the tree
-			continue
-		}
-
-		// If we haven't visited the right subtree yet, pop and visit this node
 		state.stack = state.stack[:len(state.stack)-1]
 
 		// Convert to persistent node
@@ -109,18 +87,29 @@ func (t *PersistentTreap[K]) WalkInOrder(opts IteratorOptions, callback func(nod
 			return err
 		}
 
-		// Mark this as the last visited node
-		state.lastVisited = state.current
-
-		// If this node has no right subtree, we can flush it immediately
-		if !state.opts.KeepInMemory && (state.current.GetRight() == nil || state.current.GetRight().IsNil()) {
+		// After visiting this node, flush its left child if we're not keeping in memory
+		// We've finished with the entire left subtree at this point
+		if !state.opts.KeepInMemory && pNode.TreapNode.left != nil {
 			if store.IsValidObjectId(pNode.objectId) {
-				_ = pNode.Flush() // Ignore flush errors during iteration
+				_ = pNode.flushChild(&pNode.TreapNode.left, &pNode.leftObjectId)
 			}
 		}
 
+		// Mark this as the last visited node
+		state.lastVisited = state.current
+
 		// Move to right subtree
 		state.current = state.current.GetRight()
+		
+		// If we're not moving to a right child (it's nil), and we just visited a node,
+		// flush the right child of that node since we're done with the right subtree too
+		if state.current == nil && state.lastVisited != nil && !state.opts.KeepInMemory {
+			if pNode, ok := state.lastVisited.(*PersistentTreapNode[K]); ok {
+				if pNode.TreapNode.right != nil && store.IsValidObjectId(pNode.objectId) {
+					_ = pNode.flushChild(&pNode.TreapNode.right, &pNode.rightObjectId)
+				}
+			}
+		}
 	}
 
 	return nil
@@ -176,29 +165,8 @@ func (t *PersistentPayloadTreap[K, P]) WalkInOrder(opts IteratorOptions, callbac
 			break
 		}
 
-		// Peek at the top of stack
-		state.current = state.stack[len(state.stack)-1]
-
-		// Check if we're coming back from the right subtree
-		if state.lastVisited != nil && state.current.GetRight() != nil &&
-			!state.current.GetRight().IsNil() && state.current.GetRight() == state.lastVisited {
-			// We've finished both left and right subtrees, flush this node
-			if !state.opts.KeepInMemory {
-				if pNode, ok := state.current.(*PersistentPayloadTreapNode[K, P]); ok {
-					if store.IsValidObjectId(pNode.objectId) {
-						_ = pNode.Flush()
-					}
-				}
-			}
-
-			// Pop and mark as visited
-			state.stack = state.stack[:len(state.stack)-1]
-			state.lastVisited = state.current
-			state.current = nil
-			continue
-		}
-
 		// Pop and visit this node
+		state.current = state.stack[len(state.stack)-1]
 		state.stack = state.stack[:len(state.stack)-1]
 
 		// Convert to persistent payload node
@@ -225,18 +193,29 @@ func (t *PersistentPayloadTreap[K, P]) WalkInOrder(opts IteratorOptions, callbac
 			return err
 		}
 
-		// Mark as last visited
-		state.lastVisited = state.current
-
-		// If no right subtree, flush immediately
-		if !opts.KeepInMemory && (state.current.GetRight() == nil || state.current.GetRight().IsNil()) {
+		// After visiting this node, flush its left child if we're not keeping in memory
+		// We've finished with the entire left subtree at this point
+		if !state.opts.KeepInMemory && pNode.TreapNode.left != nil {
 			if store.IsValidObjectId(pNode.objectId) {
-				_ = pNode.Flush()
+				_ = pNode.flushChild(&pNode.TreapNode.left, &pNode.leftObjectId)
 			}
 		}
 
+		// Mark as last visited
+		state.lastVisited = state.current
+
 		// Move to right subtree
 		state.current = state.current.GetRight()
+		
+		// If we're not moving to a right child (it's nil), and we just visited a node,
+		// flush the right child of that node since we're done with the right subtree too
+		if state.current == nil && state.lastVisited != nil && !state.opts.KeepInMemory {
+			if pNode, ok := state.lastVisited.(*PersistentPayloadTreapNode[K, P]); ok {
+				if pNode.TreapNode.right != nil && store.IsValidObjectId(pNode.objectId) {
+					_ = pNode.flushChild(&pNode.TreapNode.right, &pNode.rightObjectId)
+				}
+			}
+		}
 	}
 
 	return nil

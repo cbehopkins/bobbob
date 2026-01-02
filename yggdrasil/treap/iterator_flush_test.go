@@ -19,12 +19,17 @@ func TestAggressiveFlushing(t *testing.T) {
 	templateKey := IntKey(0).New()
 	treap := NewPersistentTreap(IntLess, templateKey, stre)
 
-	// Create a balanced tree: insert in order 1,2,3,4,5,6,7
-	// With random priorities, this creates a more interesting structure
-	for i := IntKey(1); i <= 7; i++ {
-		key := i
-		treap.Insert(&key)
-	}
+	// Create a balanced tree with deterministic priorities
+	// Use InsertComplex to control the tree structure
+	// Priority decreases from center to edges for a more balanced tree
+	k1, k2, k3, k4, k5, k6, k7 := IntKey(1), IntKey(2), IntKey(3), IntKey(4), IntKey(5), IntKey(6), IntKey(7)
+	treap.InsertComplex(&k4, Priority(1000)) // Root
+	treap.InsertComplex(&k2, Priority(900))
+	treap.InsertComplex(&k6, Priority(900))
+	treap.InsertComplex(&k1, Priority(800))
+	treap.InsertComplex(&k3, Priority(800))
+	treap.InsertComplex(&k5, Priority(800))
+	treap.InsertComplex(&k7, Priority(800))
 
 	// Persist everything
 	err = treap.Persist()

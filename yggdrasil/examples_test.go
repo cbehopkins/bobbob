@@ -9,9 +9,9 @@ import (
 	"time"
 
 	"github.com/cbehopkins/bobbob/store"
-	"github.com/cbehopkins/bobbob/yggdrasil/collections"
 	"github.com/cbehopkins/bobbob/yggdrasil/treap"
 	"github.com/cbehopkins/bobbob/yggdrasil/types"
+	"github.com/cbehopkins/bobbob/yggdrasil/vault"
 )
 
 // Type aliases to work around Go's limitation with generic types in function literals
@@ -291,9 +291,9 @@ func ExampleVault() {
 
 	// ===== Session 1: Create vault and add data =====
 	{
-		session, colls, _ := collections.OpenVault(
+		session, colls, _ := vault.OpenVault(
 			tmpFile,
-			collections.PayloadCollectionSpec[types.StringKey, types.JsonPayload[UserProfile]]{
+			vault.PayloadCollectionSpec[types.StringKey, types.JsonPayload[UserProfile]]{
 				Name:            "users",
 				LessFunc:        types.StringLess,
 				KeyTemplate:     (*types.StringKey)(new(string)),
@@ -319,9 +319,9 @@ func ExampleVault() {
 
 	// ===== Session 2: Reload vault and access data =====
 	{
-		session, colls, _ := collections.OpenVault(
+		session, colls, _ := vault.OpenVault(
 			tmpFile,
-			collections.PayloadCollectionSpec[types.StringKey, types.JsonPayload[UserProfile]]{
+			vault.PayloadCollectionSpec[types.StringKey, types.JsonPayload[UserProfile]]{
 				Name:            "users",
 				LessFunc:        types.StringLess,
 				KeyTemplate:     (*types.StringKey)(new(string)),
@@ -349,9 +349,9 @@ func ExampleVault() {
 
 	// ===== Session 3: Verify all data persisted =====
 	{
-		session, colls, _ := collections.OpenVault(
+		session, colls, _ := vault.OpenVault(
 			tmpFile,
-			collections.PayloadCollectionSpec[types.StringKey, types.JsonPayload[UserProfile]]{
+			vault.PayloadCollectionSpec[types.StringKey, types.JsonPayload[UserProfile]]{
 				Name:            "users",
 				LessFunc:        types.StringLess,
 				KeyTemplate:     (*types.StringKey)(new(string)),
@@ -378,9 +378,9 @@ func ExampleVault_memoryManagement() {
 	tmpFile := filepath.Join(os.TempDir(), "example_memory.db")
 	defer os.Remove(tmpFile)
 
-	session, colls, _ := collections.OpenVault(
+	session, colls, _ := vault.OpenVault(
 		tmpFile,
-		collections.PayloadCollectionSpec[types.IntKey, types.JsonPayload[UserProfile]]{
+		vault.PayloadCollectionSpec[types.IntKey, types.JsonPayload[UserProfile]]{
 			Name:            "users",
 			LessFunc:        types.IntLess,
 			KeyTemplate:     (*types.IntKey)(new(int32)),
@@ -432,9 +432,9 @@ func ExampleVault_memoryManagementPercentile() {
 	tmpFile := filepath.Join(os.TempDir(), "example_percentile_"+fmt.Sprintf("%d", time.Now().UnixNano())+".db")
 	defer os.Remove(tmpFile)
 
-	session, colls, err := collections.OpenVault(
+	session, colls, err := vault.OpenVault(
 		tmpFile,
-		collections.PayloadCollectionSpec[types.IntKey, types.JsonPayload[UserProfile]]{
+		vault.PayloadCollectionSpec[types.IntKey, types.JsonPayload[UserProfile]]{
 			Name:            "users",
 			LessFunc:        types.IntLess,
 			KeyTemplate:     (*types.IntKey)(new(int32)),
@@ -493,9 +493,9 @@ func ExampleVault_updateExistingKey() {
 	tmpFile := filepath.Join(os.TempDir(), "example_update.db")
 	defer os.Remove(tmpFile)
 
-	session, colls, _ := collections.OpenVault(
+	session, colls, _ := vault.OpenVault(
 		tmpFile,
-		collections.PayloadCollectionSpec[types.StringKey, types.JsonPayload[UserProfile]]{
+		vault.PayloadCollectionSpec[types.StringKey, types.JsonPayload[UserProfile]]{
 			Name:            "users",
 			LessFunc:        types.StringLess,
 			KeyTemplate:     (*types.StringKey)(new(string)),
