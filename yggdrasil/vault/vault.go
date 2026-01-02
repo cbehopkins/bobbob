@@ -13,6 +13,14 @@ import (
 	"github.com/cbehopkins/bobbob/yggdrasil/types"
 )
 
+const identityMapCollectionName = "__vault_identity_map__reserved"
+
+// identityMapping holds the collection name associated to a user-provided identity key.
+// Stored as JsonPayload to avoid defining a custom PersistentPayload.
+type identityMapping struct {
+	CollectionName string `json:"collectionName"`
+}
+
 // Reserved ObjectIds for vault metadata
 // VaultMetadataObjectId is typically the first object allocated (ObjectId 1)
 // since ObjectId 0 is used by the store's internal objectMap
@@ -726,6 +734,37 @@ type CollectionSpec interface {
 	openCollection(v *Vault) (any, error)
 }
 
+// IdentitySpec is a collection specification tagged with a caller-provided identity.
+// Identity must be comparable (so it can be used as a map key). Its string form via fmt.Sprint
+// is used for human-readable naming and deterministic persistence.
+type IdentitySpec[I comparable] interface {
+	CollectionSpec
+	getIdentity() I
+}
+
+// PayloadIdentitySpec wraps a payload collection spec with an identity value.
+// The identity string representation is used as the collection name; the identity itself
+// is returned to the caller so indexing does not rely on position.
+type PayloadIdentitySpec[I comparable, K any, P treap.PersistentPayload[P]] struct {
+	Identity        I
+	LessFunc        func(a, b K) bool
+	KeyTemplate     treap.PersistentKey[K]
+	PayloadTemplate P
+}
+
+func (s PayloadIdentitySpec[I, K, P]) getIdentity() I { return s.Identity }
+func (s PayloadIdentitySpec[I, K, P]) getName() string {
+	return fmt.Sprint(s.Identity)
+}
+
+func (s PayloadIdentitySpec[I, K, P]) getTypes() []any {
+	return []any{s.KeyTemplate, s.PayloadTemplate}
+}
+
+func (s PayloadIdentitySpec[I, K, P]) openCollection(v *Vault) (any, error) {
+	return GetOrCreateCollection[K, P](v, s.getName(), s.LessFunc, s.KeyTemplate)
+}
+
 // PayloadCollectionSpec specifies a collection with both keys and payloads.
 type PayloadCollectionSpec[K any, P treap.PersistentPayload[P]] struct {
 	Name        string
@@ -821,4 +860,78 @@ func OpenVault(filename string, specs ...CollectionSpec) (*VaultSession, []any, 
 	}
 
 	return session, collections, nil
+}
+
+// OpenVaultWithIdentity works like OpenVault but returns a map keyed by the provided identities
+// (instead of a positional slice). Identity must be comparable. The identity's fmt.Sprint form is
+// used as the collection name, and a reserved identity-map collection is maintained for deterministic reloads.
+func OpenVaultWithIdentity[I comparable](filename string, specs ...IdentitySpec[I]) (*VaultSession, map[I]any, error) {
+	baseSpecs := make([]CollectionSpec, len(specs))
+	for i, spec := range specs {
+		baseSpecs[i] = spec
+	}
+
+	session, colls, err := OpenVault(filename, baseSpecs...)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// Ensure identity map exists
+	if _, err := session.Vault.ensureIdentityMap(); err != nil {
+		session.Close()
+		return nil, nil, fmt.Errorf("failed to ensure identity map: %w", err)
+	}
+
+	result := make(map[I]any, len(specs))
+	for i, spec := range specs {
+		id := spec.getIdentity()
+		result[id] = colls[i]
+		idStr := fmt.Sprint(id)
+		if err := session.Vault.setIdentityMapping(idStr, spec.getName()); err != nil {
+			session.Close()
+			return nil, nil, fmt.Errorf("failed to set identity mapping for %s: %w", idStr, err)
+		}
+	}
+
+	return session, result, nil
+}
+
+// ensureIdentityMap lazily creates/loads the reserved identity-map collection.
+func (v *Vault) ensureIdentityMap() (*treap.PersistentPayloadTreap[types.StringKey, types.JsonPayload[identityMapping]], error) {
+	// Register key/payload types to keep TypeMap consistent.
+	v.RegisterType((*types.StringKey)(new(string)))
+	v.RegisterType(types.JsonPayload[identityMapping]{})
+
+	// Cached?
+	if cached, ok := v.activeCollections[identityMapCollectionName]; ok {
+		if treap, ok := cached.(*treap.PersistentPayloadTreap[types.StringKey, types.JsonPayload[identityMapping]]); ok {
+			return treap, nil
+		}
+		return nil, fmt.Errorf("identity map cached with unexpected type")
+	}
+
+	coll, err := GetOrCreateCollection[types.StringKey, types.JsonPayload[identityMapping]](
+		v,
+		identityMapCollectionName,
+		types.StringLess,
+		(*types.StringKey)(new(string)),
+	)
+	if err != nil {
+		return nil, err
+	}
+	// Cache it explicitly
+	v.activeCollections[identityMapCollectionName] = coll
+	return coll, nil
+}
+
+// setIdentityMapping records identity -> collection name in the reserved identity map.
+func (v *Vault) setIdentityMapping(identityStr, collectionName string) error {
+	imap, err := v.ensureIdentityMap()
+	if err != nil {
+		return err
+	}
+	key := types.StringKey(identityStr)
+	payload := types.JsonPayload[identityMapping]{Value: identityMapping{CollectionName: collectionName}}
+	imap.Insert(&key, payload)
+	return nil
 }

@@ -643,17 +643,19 @@ func ExampleVault_compareCollections() {
 	tmpFile := filepath.Join(os.TempDir(), "example_compare_vault.db")
 	defer os.Remove(tmpFile)
 
-	// 1. Create a vault with two collections using OpenVault
-	session, colls, err := vault.OpenVault(
+	// 1. Create a vault with two collections using identity-based lookup (no positional indexing)
+	primaryID := types.StringKey("users_primary")
+	backupID := types.StringKey("users_backup")
+	session, colls, err := vault.OpenVaultWithIdentity(
 		tmpFile,
-		vault.PayloadCollectionSpec[types.IntKey, types.JsonPayload[UserProfile]]{
-			Name:            "users_primary",
+		vault.PayloadIdentitySpec[types.StringKey, types.IntKey, types.JsonPayload[UserProfile]]{
+			Identity:        primaryID,
 			LessFunc:        types.IntLess,
 			KeyTemplate:     (*types.IntKey)(new(int32)),
 			PayloadTemplate: types.JsonPayload[UserProfile]{},
 		},
-		vault.PayloadCollectionSpec[types.IntKey, types.JsonPayload[UserProfile]]{
-			Name:            "users_backup",
+		vault.PayloadIdentitySpec[types.StringKey, types.IntKey, types.JsonPayload[UserProfile]]{
+			Identity:        backupID,
 			LessFunc:        types.IntLess,
 			KeyTemplate:     (*types.IntKey)(new(int32)),
 			PayloadTemplate: types.JsonPayload[UserProfile]{},
@@ -663,10 +665,9 @@ func ExampleVault_compareCollections() {
 		fmt.Printf("Error: %v\n", err)
 		return
 	}
-	defer session.Close()
 
-	primaryUsers := colls[0].(*treap.PersistentPayloadTreap[types.IntKey, types.JsonPayload[UserProfile]])
-	backupUsers := colls[1].(*treap.PersistentPayloadTreap[types.IntKey, types.JsonPayload[UserProfile]])
+	primaryUsers := colls[primaryID].(*treap.PersistentPayloadTreap[types.IntKey, types.JsonPayload[UserProfile]])
+	backupUsers := colls[backupID].(*treap.PersistentPayloadTreap[types.IntKey, types.JsonPayload[UserProfile]])
 
 	// 2. Set up memory management with FlushOldestPercentile
 	// Keep max 100 nodes in memory, flush oldest 25% when exceeded
@@ -694,6 +695,15 @@ func ExampleVault_compareCollections() {
 	backupUsers.Insert(&key4, types.JsonPayload[UserProfile]{
 		Value: UserProfile{Username: "david", Email: "david@example.com", Credits: 120},
 	})
+
+	if err := primaryUsers.Persist(); err != nil {
+		fmt.Printf("Persist primary: %v\n", err)
+		return
+	}
+	if err := backupUsers.Persist(); err != nil {
+		fmt.Printf("Persist backup: %v\n", err)
+		return
+	}
 
 	// 3. Use Compare to find differences between collections
 	fmt.Println("=== Comparing Primary vs Backup ===")
@@ -742,6 +752,45 @@ func ExampleVault_compareCollections() {
 	stats := session.Vault.GetMemoryStats()
 	fmt.Printf("\nMemory usage: %d nodes total\n", stats.TotalInMemoryNodes)
 
+	// 4. Close and re-open to demonstrate persistence
+	session.Close()
+	reopenSession, reopenedColls, err := vault.OpenVaultWithIdentity(
+		tmpFile,
+		vault.PayloadIdentitySpec[types.StringKey, types.IntKey, types.JsonPayload[UserProfile]]{
+			Identity:        primaryID,
+			LessFunc:        types.IntLess,
+			KeyTemplate:     (*types.IntKey)(new(int32)),
+			PayloadTemplate: types.JsonPayload[UserProfile]{},
+		},
+		vault.PayloadIdentitySpec[types.StringKey, types.IntKey, types.JsonPayload[UserProfile]]{
+			Identity:        backupID,
+			LessFunc:        types.IntLess,
+			KeyTemplate:     (*types.IntKey)(new(int32)),
+			PayloadTemplate: types.JsonPayload[UserProfile]{},
+		},
+	)
+	if err != nil {
+		fmt.Printf("Error reopening vault: %v\n", err)
+		return
+	}
+	defer reopenSession.Close()
+
+	reopenedPrimary := reopenedColls[primaryID].(*treap.PersistentPayloadTreap[types.IntKey, types.JsonPayload[UserProfile]])
+	reopenedBackup := reopenedColls[backupID].(*treap.PersistentPayloadTreap[types.IntKey, types.JsonPayload[UserProfile]])
+
+	fmt.Printf("\n=== Reloading vault to verify persistence ===\n")
+
+	if node := reopenedPrimary.Search(&key1); node != nil && !node.IsNil() {
+		user := node.GetPayload().Value
+		fmt.Printf("Reloaded primary alice: %d credits\n", user.Credits)
+	}
+
+	reloadedNode := reopenedBackup.Search(&key3)
+	if reloadedNode != nil && !reloadedNode.IsNil() {
+		user := reloadedNode.GetPayload().Value
+		fmt.Printf("Reloaded backup charlie: %s (%s) - %d credits\n", user.Username, user.Email, user.Credits)
+	}
+
 	// Output:
 	// === Comparing Primary vs Backup ===
 	// Only in primary: alice (ID: 1)
@@ -749,5 +798,9 @@ func ExampleVault_compareCollections() {
 	// Modified: charlie (ID: 3) - Primary: 75 credits, Backup: 80 credits
 	// Only in backup: david (ID: 4)
 	//
-	// Memory usage: 6 nodes total
+	// Memory usage: 8 nodes total
+	//
+	// === Reloading vault to verify persistence ===
+	// Reloaded primary alice: 100 credits
+	// Reloaded backup charlie: charlie (charlie.new@example.com) - 80 credits
 }
