@@ -1,6 +1,7 @@
 package yggdrasil
 
 import (
+	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -38,8 +39,9 @@ func Example() {
 	// Output: Found key: 10
 }
 
-// ExampleTreap_Walk demonstrates iterating through treap nodes in order.
-func ExampleTreap_Walk() {
+// ExampleTreap_Iter demonstrates iterating through treap nodes in sorted order
+// using the Go 1.23+ iterator protocol.
+func ExampleTreap_Iter() {
 	t := treap.NewTreap[types.IntKey](types.IntLess)
 
 	// Insert keys with priorities
@@ -48,10 +50,10 @@ func ExampleTreap_Walk() {
 	t.InsertComplex(types.IntKey(20), 3)
 	t.InsertComplex(types.IntKey(40), 4)
 
-	// Walk through in sorted order
-	t.Walk(func(node IntKeyNode) {
+	// Iterate through in sorted order using range
+	for node := range t.Iter() {
 		fmt.Printf("%d ", node.GetKey().Value())
-	})
+	}
 	fmt.Println()
 	// Output: 10 20 30 40
 }
@@ -133,13 +135,13 @@ func ExamplePayloadTreap() {
 		fmt.Printf("score = %d\n", payload)
 	}
 
-	// Walk through all entries in sorted order
-	pt.Walk(func(node StringKeyNode) {
+	// Iterate through all entries in sorted order
+	for node := range pt.Iter() {
 		key := node.GetKey().(types.StringKey)
 		if payload, found := getPayload(node); found {
 			fmt.Printf("%s: %d\n", key, payload)
 		}
-	})
+	}
 	// Output: score = 95
 	// age: 25
 	// level: 7
@@ -221,10 +223,10 @@ func ExampleTreap_Delete() {
 	// Delete a node
 	treap.Delete(types.IntKey(20))
 
-	// Walk to verify deletion
-	treap.Walk(func(node IntKeyNode) {
+	// Iterate to verify deletion
+	for node := range treap.Iter() {
 		fmt.Printf("%d ", node.GetKey().(types.IntKey))
-	})
+	}
 	fmt.Println()
 	// Output: 10 30
 }
@@ -248,10 +250,14 @@ func ExamplePersistentTreap() {
 	// Persist to disk
 	treap.Persist()
 
-	// Walk through persisted treap
-	treap.Walk(func(node IntKeyNode) {
+	// Iterate through persisted treap
+	ctx := context.Background()
+	for node, err := range treap.Iter(ctx) {
+		if err != nil {
+			break
+		}
 		fmt.Printf("%d ", *node.GetKey().(*types.IntKey))
-	})
+	}
 	fmt.Println()
 	// Output: 3 5 7
 }
@@ -274,6 +280,75 @@ func ExampleTreap_UpdatePriority() {
 			node.GetPriority())
 	}
 	// Output: Key 100 has new priority 250
+}
+
+// ExamplePersistentTreap_Iter demonstrates iterating over a persistent treap
+// with context support and error handling.
+func ExamplePersistentTreap_Iter() {
+	tmpFile := filepath.Join(os.TempDir(), "example_iter.bin")
+	defer os.Remove(tmpFile)
+
+	s, _ := store.NewBasicStore(tmpFile)
+	defer s.Close()
+
+	pt := treap.NewPersistentTreap[types.IntKey](types.IntLess, (*types.IntKey)(new(int32)), s)
+
+	// Insert and persist some keys
+	key10, key20, key30 := types.IntKey(10), types.IntKey(20), types.IntKey(30)
+	pt.InsertComplex(&key10, 1)
+	pt.InsertComplex(&key20, 2)
+	pt.InsertComplex(&key30, 3)
+	pt.Persist()
+
+	// Iterate using context (can be canceled)
+	ctx := context.Background()
+	for node, err := range pt.Iter(ctx) {
+		if err != nil {
+			fmt.Printf("Error: %v\n", err)
+			break
+		}
+		fmt.Printf("%d ", *node.GetKey().(*types.IntKey))
+	}
+	fmt.Println()
+	// Output: 10 20 30
+}
+
+// ExampleMD5Key demonstrates using MD5 hashes as treap keys.
+// MD5Key is a 16-byte array that can be used as a key in treaps, with the
+// hash value itself serving as the priority (since MD5 hashes are uniformly
+// distributed). This is useful for content-addressable storage.
+func ExampleMD5Key() {
+	t := treap.NewTreap[treap.MD5Key](treap.MD5Less)
+
+	// Create MD5 keys from hex strings (32 characters = 16 bytes)
+	key1, _ := treap.MD5KeyFromString("a1b2c3d4e5f6708192a3b4c5d6e7f809")
+	key2, _ := treap.MD5KeyFromString("11223344556677889900aabbccddeeff")
+	key3, _ := treap.MD5KeyFromString("00000000000000000000000000000001")
+
+	// Insert keys - MD5Key implements PriorityProvider so no priority needed
+	t.Insert(key1)
+	t.Insert(key2)
+	t.Insert(key3)
+
+	// Search for a specific hash
+	node := t.Search(key2)
+	if node != nil && !node.IsNil() {
+		key := node.GetKey().Value()
+		fmt.Printf("Found key: %x\n", key[:8])
+	}
+
+	// Iterate through all keys in sorted order
+	for node := range t.Iter() {
+		key := node.GetKey().Value()
+		// Print first 8 bytes for brevity
+		fmt.Printf("Key: %x...\n", key[:8])
+	}
+
+	// Output:
+	// Found key: 1122334455667788
+	// Key: 0000000000000000...
+	// Key: 1122334455667788...
+	// Key: a1b2c3d4e5f67081...
 }
 
 // UserProfile represents a simple user profile for demonstration.
@@ -558,4 +633,121 @@ func ExampleVault_updateExistingKey() {
 	// Count after re-insert: 2
 	// Alice after update: credits=500, email=alice.new@example.com
 	// Bob (unchanged): credits=50
+}
+
+// ExampleVault_compareCollections demonstrates:
+// 1. Creating a vault with two collections
+// 2. Setting up FlushOldestPercentile for memory management
+// 3. Using Compare to find differences between collections
+func ExampleVault_compareCollections() {
+	tmpFile := filepath.Join(os.TempDir(), "example_compare_vault.db")
+	defer os.Remove(tmpFile)
+
+	// 1. Create a vault with two collections using OpenVault
+	session, colls, err := vault.OpenVault(
+		tmpFile,
+		vault.PayloadCollectionSpec[types.IntKey, types.JsonPayload[UserProfile]]{
+			Name:            "users_primary",
+			LessFunc:        types.IntLess,
+			KeyTemplate:     (*types.IntKey)(new(int32)),
+			PayloadTemplate: types.JsonPayload[UserProfile]{},
+		},
+		vault.PayloadCollectionSpec[types.IntKey, types.JsonPayload[UserProfile]]{
+			Name:            "users_backup",
+			LessFunc:        types.IntLess,
+			KeyTemplate:     (*types.IntKey)(new(int32)),
+			PayloadTemplate: types.JsonPayload[UserProfile]{},
+		},
+	)
+	if err != nil {
+		fmt.Printf("Error: %v\n", err)
+		return
+	}
+	defer session.Close()
+
+	primaryUsers := colls[0].(*treap.PersistentPayloadTreap[types.IntKey, types.JsonPayload[UserProfile]])
+	backupUsers := colls[1].(*treap.PersistentPayloadTreap[types.IntKey, types.JsonPayload[UserProfile]])
+
+	// 2. Set up memory management with FlushOldestPercentile
+	// Keep max 100 nodes in memory, flush oldest 25% when exceeded
+	session.Vault.SetMemoryBudgetWithPercentile(100, 25)
+
+	// Add users to primary collection
+	key1, key2, key3, key4 := types.IntKey(1), types.IntKey(2), types.IntKey(3), types.IntKey(4)
+	primaryUsers.Insert(&key1, types.JsonPayload[UserProfile]{
+		Value: UserProfile{Username: "alice", Email: "alice@example.com", Credits: 100},
+	})
+	primaryUsers.Insert(&key2, types.JsonPayload[UserProfile]{
+		Value: UserProfile{Username: "bob", Email: "bob@example.com", Credits: 50},
+	})
+	primaryUsers.Insert(&key3, types.JsonPayload[UserProfile]{
+		Value: UserProfile{Username: "charlie", Email: "charlie@example.com", Credits: 75},
+	})
+
+	// Add users to backup collection (some overlap, some different)
+	backupUsers.Insert(&key2, types.JsonPayload[UserProfile]{
+		Value: UserProfile{Username: "bob", Email: "bob@example.com", Credits: 50}, // identical
+	})
+	backupUsers.Insert(&key3, types.JsonPayload[UserProfile]{
+		Value: UserProfile{Username: "charlie", Email: "charlie.new@example.com", Credits: 80}, // modified email and credits
+	})
+	backupUsers.Insert(&key4, types.JsonPayload[UserProfile]{
+		Value: UserProfile{Username: "david", Email: "david@example.com", Credits: 120},
+	})
+
+	// 3. Use Compare to find differences between collections
+	fmt.Println("=== Comparing Primary vs Backup ===")
+
+	err = primaryUsers.Compare(backupUsers,
+		// Only in primary
+		func(node treap.TreapNodeInterface[types.IntKey]) error {
+			if payloadNode, ok := node.(treap.PersistentPayloadNodeInterface[types.IntKey, types.JsonPayload[UserProfile]]); ok {
+				user := payloadNode.GetPayload().Value
+				fmt.Printf("Only in primary: %s (ID: %d)\n", user.Username, *node.GetKey().(*types.IntKey))
+			}
+			return nil
+		},
+		// In both collections
+		func(nodeA, nodeB treap.TreapNodeInterface[types.IntKey]) error {
+			payloadA, okA := nodeA.(treap.PersistentPayloadNodeInterface[types.IntKey, types.JsonPayload[UserProfile]])
+			payloadB, okB := nodeB.(treap.PersistentPayloadNodeInterface[types.IntKey, types.JsonPayload[UserProfile]])
+			if okA && okB {
+				userA := payloadA.GetPayload().Value
+				userB := payloadB.GetPayload().Value
+				id := *nodeA.GetKey().(*types.IntKey)
+
+				if userA.Email == userB.Email && userA.Credits == userB.Credits {
+					fmt.Printf("Identical: %s (ID: %d)\n", userA.Username, id)
+				} else {
+					fmt.Printf("Modified: %s (ID: %d) - Primary: %d credits, Backup: %d credits\n",
+						userA.Username, id, userA.Credits, userB.Credits)
+				}
+			}
+			return nil
+		},
+		// Only in backup
+		func(node treap.TreapNodeInterface[types.IntKey]) error {
+			if payloadNode, ok := node.(treap.PersistentPayloadNodeInterface[types.IntKey, types.JsonPayload[UserProfile]]); ok {
+				user := payloadNode.GetPayload().Value
+				fmt.Printf("Only in backup: %s (ID: %d)\n", user.Username, *node.GetKey().(*types.IntKey))
+			}
+			return nil
+		},
+	)
+	if err != nil {
+		fmt.Printf("Error comparing: %v\n", err)
+	}
+
+	// Show memory stats
+	stats := session.Vault.GetMemoryStats()
+	fmt.Printf("\nMemory usage: %d nodes total\n", stats.TotalInMemoryNodes)
+
+	// Output:
+	// === Comparing Primary vs Backup ===
+	// Only in primary: alice (ID: 1)
+	// Identical: bob (ID: 2)
+	// Modified: charlie (ID: 3) - Primary: 75 credits, Backup: 80 credits
+	// Only in backup: david (ID: 4)
+	//
+	// Memory usage: 6 nodes total
 }

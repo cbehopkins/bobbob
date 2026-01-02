@@ -56,6 +56,7 @@ package treap
 import (
 	"encoding/binary"
 	"errors"
+	"iter"
 	"math/rand"
 )
 
@@ -440,36 +441,88 @@ func (t *Treap[T]) Compare(
 	inBoth func(nodeA, nodeB TreapNodeInterface[T]) error,
 	onlyInB func(TreapNodeInterface[T]) error,
 ) error {
-	// Stream both trees via in-order walks without buffering entire trees.
-	nodeChA, errChA, cancelA := newInOrderStream(t.root)
-	nodeChB, errChB, cancelB := newInOrderStream(other.root)
+	// Stream both trees via in-order iterators without buffering entire trees.
+	nextA, cancelA := seqNext(t.Iter())
+	nextB, cancelB := seqNext(other.Iter())
 	defer cancelA()
 	defer cancelB()
-
-	nextA := channelNext(nodeChA, errChA)
-	nextB := channelNext(nodeChB, errChB)
 
 	return mergeOrdered(nextA, nextB, t.Less, onlyInA, inBoth, onlyInB)
 }
 
 var errWalkCanceled = errors.New("walk canceled")
 
-// channelNext adapts a streamed node channel into an iterator-style next function.
-// It surfaces walker errors (including cancellation-as-nil) when the channel is exhausted.
-func channelNext[T any](nodeCh <-chan TreapNodeInterface[T], errCh <-chan error) func() (TreapNodeInterface[T], bool, error) {
-	var done bool
-	return func() (TreapNodeInterface[T], bool, error) {
-		if done {
-			return nil, false, nil
+// seqNext adapts an iter.Seq into an iterator-style next function with cancellation.
+// Cancellation prevents goroutine leaks when the consumer returns early.
+func seqNext[T any](seq iter.Seq[T]) (func() (T, bool, error), func()) {
+	done := make(chan struct{})
+	itemCh := make(chan T, 1)
+
+	go func() {
+		defer close(itemCh)
+		seq(func(v T) bool {
+			select {
+			case <-done:
+				return false
+			case itemCh <- v:
+				return true
+			}
+		})
+	}()
+
+	next := func() (T, bool, error) {
+		v, ok := <-itemCh
+		if !ok {
+			var zero T
+			return zero, false, nil
 		}
-		node, ok := <-nodeCh
-		if ok {
-			return node, true, nil
-		}
-		done = true
-		err := <-errCh
-		return nil, false, err
+		return v, true, nil
 	}
+
+	cancel := func() { close(done) }
+	return next, cancel
+}
+
+// seq2Next adapts an iter.Seq2 that yields values and errors into a next function.
+// If the sequence yields a non-nil error, iteration stops and that error is returned.
+func seq2Next[T any](seq iter.Seq2[T, error]) (func() (T, bool, error), func()) {
+	done := make(chan struct{})
+	itemCh := make(chan T, 1)
+	errCh := make(chan error, 1)
+
+	go func() {
+		defer close(itemCh)
+		defer close(errCh)
+
+		seq(func(v T, err error) bool {
+			if err != nil {
+				errCh <- err
+				return false
+			}
+			select {
+			case <-done:
+				return false
+			case itemCh <- v:
+				return true
+			}
+		})
+
+		// No error encountered during iteration
+		errCh <- nil
+	}()
+
+	next := func() (T, bool, error) {
+		v, ok := <-itemCh
+		if ok {
+			return v, true, nil
+		}
+		err := <-errCh
+		var zero T
+		return zero, false, err
+	}
+
+	cancel := func() { close(done) }
+	return next, cancel
 }
 
 // mergeOrdered drives a merge-style comparison over two in-order iterators.
@@ -558,33 +611,38 @@ func mergeOrdered[T any](
 	return nil
 }
 
-// newInOrderStream starts an in-order walk and streams nodes over a channel.
-// Cancellation is respected via the returned cancel function.
-func newInOrderStream[T any](root TreapNodeInterface[T]) (chan TreapNodeInterface[T], chan error, func()) {
-	nodeCh := make(chan TreapNodeInterface[T], 1)
-	errCh := make(chan error, 1)
-	done := make(chan struct{})
+// Iter returns an in-order iterator over the treap using the Go iterator protocol.
+// Traversal is O(height) space via an explicit stack.
+func (t *Treap[T]) Iter() iter.Seq[TreapNodeInterface[T]] {
+	return func(yield func(TreapNodeInterface[T]) bool) {
+		stack := initInOrderStack(t.root)
+		for len(stack) > 0 {
+			n := stack[len(stack)-1]
+			stack = stack[:len(stack)-1]
 
-	go func() {
-		defer close(nodeCh)
-		defer close(errCh)
-
-		err := inOrderWalk(root, func(node TreapNodeInterface[T]) error {
-			select {
-			case <-done:
-				return errWalkCanceled
-			case nodeCh <- node:
-				return nil
+			if right := n.GetRight(); right != nil && !right.IsNil() {
+				pushLeftmost(right, &stack)
 			}
-		})
 
-		if err == errWalkCanceled {
-			err = nil
+			if !yield(n) {
+				return
+			}
 		}
+	}
+}
 
-		errCh <- err
-	}()
+// initInOrderStack initializes a stack with the leftmost path.
+func initInOrderStack[T any](root TreapNodeInterface[T]) []TreapNodeInterface[T] {
+	var stack []TreapNodeInterface[T]
+	pushLeftmost(root, &stack)
+	return stack
+}
 
-	cancel := func() { close(done) }
-	return nodeCh, errCh, cancel
+// pushLeftmost pushes a node and all its left descendants onto the stack.
+func pushLeftmost[T any](node TreapNodeInterface[T], stack *[]TreapNodeInterface[T]) {
+	current := node
+	for current != nil && !current.IsNil() {
+		*stack = append(*stack, current)
+		current = current.GetLeft()
+	}
 }

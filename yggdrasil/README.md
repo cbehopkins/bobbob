@@ -42,7 +42,8 @@ type TreapNode[T any] struct {
 - In-memory data structure
 - Generic over key type `T`
 - Self-balancing via random priorities
-- Simple operations: Insert, Delete, Search, Walk
+- Simple operations: Insert, Delete, Search
+- Iteration using Go 1.23+ iterator protocol (iter.Seq)
 
 ### 2. PayloadTreap - Adding Data
 
@@ -206,6 +207,49 @@ tuple, ok := tm.GetTypeByName("MyCustomType")
 tuple, ok := tm.GetTypeByShortCode(shortCode)
 ```
 
+## Iteration Protocol
+
+The package uses **Go 1.23+ iterator protocol** (`iter.Seq` and `iter.Seq2`) for memory-efficient traversal:
+
+### In-Memory Treaps
+
+Use `iter.Seq[TreapNodeInterface[T]]` for simple iteration:
+
+```go
+treap := NewTreap[int](IntLess)
+// ... insert data ...
+
+// Range over nodes in sorted order
+for node := range treap.Iter() {
+    fmt.Printf("Key: %d\n", node.GetKey().Value())
+}
+```
+
+### Persistent Treaps  
+
+Use `iter.Seq2[TreapNodeInterface[T], error]` with context for I/O error handling:
+
+```go
+treap := NewPersistentTreap[int](IntLess, keyTemplate, store)
+// ... insert and persist data ...
+
+ctx := context.Background()
+for node, err := range treap.Iter(ctx) {
+    if err != nil {
+        log.Printf("Disk error: %v", err)
+        break
+    }
+    fmt.Printf("Key: %d\n", *node.GetKey().(*IntKey))
+}
+```
+
+**Key features:**
+- **O(height) memory**: Uses explicit stack, not recursion
+- **Streaming**: Nodes aren't buffered in memory
+- **Cancellation**: Context support for persistent treaps
+- **Lazy loading**: Persistent treaps load from disk on-demand
+- **No allocations** for in-memory iteration after initial stack setup
+
 ## API Reference
 
 ### In-Memory Treap
@@ -220,8 +264,11 @@ treap := NewTreap[int](func(a, b int) bool { return a < b })
 treap.Insert(key, priority)           // Add or update
 treap.Delete(key)                     // Remove
 node := treap.Search(key)             // Find
-treap.Walk(func(node) { ... })        // In-order traversal
-treap.WalkReverse(func(node) { ... }) // Reverse-order traversal
+
+// Iteration using Go iterator protocol (iter.Seq)
+for node := range treap.Iter() {
+    // Process node in sorted order
+}
 ```
 
 ### PayloadTreap
@@ -234,7 +281,12 @@ treap := NewPayloadTreap[string, MyData](StringLess)
 **Operations:**
 ```go
 treap.Insert(key, priority, payload)  // Add key with data
-// Search, Delete, Walk inherited from Treap
+// Search, Delete, Iter inherited from Treap
+
+// Iterate over entries in sorted order
+for node := range treap.Iter() {
+    payload := node.GetPayload()
+}
 ```
 
 ### PersistentTreap
@@ -255,6 +307,16 @@ treap.Insert(key, priority)
 node.Persist()  // Save node and children to disk
 node.Flush()    // Save then remove from memory
 objId := node.ObjectId()  // Get disk location
+
+// Iteration with context support (iter.Seq2)
+ctx := context.Background()
+for node, err := range treap.Iter(ctx) {
+    if err != nil {
+        // Handle disk I/O errors
+        break
+    }
+    // Process node (may load from disk transiently)
+}
 
 // Loading
 node, err := NewFromObjectId[int](objId, treap, store)

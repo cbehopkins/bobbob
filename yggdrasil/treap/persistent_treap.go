@@ -1,8 +1,10 @@
 package treap
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"iter"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -752,47 +754,84 @@ func (t *PersistentTreap[T]) Compare(
 		defer t.mu.RUnlock()
 	}
 
-	nodeChA, errChA, cancelA := newPersistentStream(t)
-	nodeChB, errChB, cancelB := newPersistentStream(other)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	nextA, cancelA := seq2Next(t.Iter(ctx))
+	nextB, cancelB := seq2Next(other.Iter(ctx))
 	defer cancelA()
 	defer cancelB()
-
-	nextA := channelNext(nodeChA, errChA)
-	nextB := channelNext(nodeChB, errChB)
 
 	return mergeOrdered(nextA, nextB, t.Less, onlyInA, inBoth, onlyInB)
 }
 
-// newPersistentStream streams nodes from a persistent treap using its iterate logic
-// and respects cancellation to avoid goroutine leaks when Compare returns early.
-func newPersistentStream[T any](treap *PersistentTreap[T]) (chan TreapNodeInterface[T], chan error, func()) {
-	nodeCh := make(chan TreapNodeInterface[T], 1)
-	errCh := make(chan error, 1)
-	done := make(chan struct{})
+// Iter returns an in-order iterator over the persistent treap using the Go iterator protocol.
+// It respects context cancellation and surfaces iteration errors via Seq2.
+func (t *PersistentTreap[T]) Iter(ctx context.Context) iter.Seq2[TreapNodeInterface[T], error] {
+	return func(yield func(TreapNodeInterface[T], error) bool) {
+		mode := t.getIterationMode()
 
-	go func() {
-		defer close(nodeCh)
-		defer close(errCh)
-
-		mode := treap.getIterationMode()
-		err := treap.Iterate(mode, func(node *PersistentTreapNode[T]) error {
+		callback := func(node *PersistentTreapNode[T]) error {
 			select {
-			case <-done:
-				return errWalkCanceled
-			case nodeCh <- node:
-				return nil
+			case <-ctx.Done():
+				return ctx.Err()
+			default:
 			}
-		})
+
+			if !yield(node, nil) {
+				return errWalkCanceled
+			}
+			return nil
+		}
+
+		var err error
+		switch mode {
+		case IterateInMemoryOnly:
+			err = t.iterateInMemory(t.root, callback)
+		case IterateOnDiskTransient:
+			rootNode, ok := t.root.(*PersistentTreapNode[T])
+			if !ok {
+				err = fmt.Errorf("root is not a PersistentTreapNode")
+				break
+			}
+			objId, objErr := rootNode.ObjectId()
+			if objErr != nil {
+				err = fmt.Errorf("failed to get root object ID: %w", objErr)
+				break
+			}
+			if !store.IsValidObjectId(objId) {
+				err = t.iterateInMemory(t.root, callback)
+				break
+			}
+			err = t.iterateOnDiskTransient(objId, callback)
+		case IterateOnDiskAndLoad:
+			rootNode, ok := t.root.(*PersistentTreapNode[T])
+			if !ok {
+				err = fmt.Errorf("root is not a PersistentTreapNode")
+				break
+			}
+			objId, objErr := rootNode.ObjectId()
+			if objErr != nil {
+				err = fmt.Errorf("failed to get root object ID: %w", objErr)
+				break
+			}
+			if !store.IsValidObjectId(objId) {
+				err = t.iterateInMemory(t.root, callback)
+				break
+			}
+			err = t.iterateOnDiskAndLoad(objId, callback)
+		default:
+			err = fmt.Errorf("unknown iteration mode: %d", mode)
+		}
 
 		if err == errWalkCanceled {
 			err = nil
 		}
 
-		errCh <- err
-	}()
-
-	cancel := func() { close(done) }
-	return nodeCh, errCh, cancel
+		if err != nil {
+			_ = yield(nil, err)
+		}
+	}
 }
 
 // getIterationMode determines which iteration mode to use for this tree.
