@@ -26,7 +26,7 @@ func (n *PersistentPayloadTreapNode[K, P]) GetPayload() P {
 // SetPayload sets the payload of the node.
 func (n *PersistentPayloadTreapNode[K, P]) SetPayload(payload P) {
 	n.payload = payload
-	n.Store.DeleteObj(n.objectId) // Invalidate the stored object ID
+	_ = n.Store.DeleteObj(n.objectId) // Invalidate the stored object ID (best effort)
 	n.objectId = store.ObjNotAllocated
 }
 

@@ -59,10 +59,10 @@ type AllocatedRegion struct {
 // BasicAllocator is a struct to manage the allocation of space in the file
 // It tracks both free gaps and allocated regions to support reverse lookups.
 type BasicAllocator struct {
-	mu           sync.Mutex
-	freeList     GapHeap
-	end          int64
-	allocations  map[ObjectId]AllocatedRegion // Tracks allocated regions for reverse lookup
+	mu          sync.Mutex
+	freeList    GapHeap
+	end         int64
+	allocations map[ObjectId]AllocatedRegion // Tracks allocated regions for reverse lookup
 }
 
 // NewBasicAllocator creates a new BasicAllocator for the given file.
@@ -131,7 +131,7 @@ func (a *BasicAllocator) Free(fileOffset FileOffset, size int) error {
 	// Remove from allocations tracking
 	objId := ObjectId(fileOffset)
 	delete(a.allocations, objId)
-	
+
 	heap.Push(&a.freeList, Gap{int64(fileOffset), int64(fileOffset) + int64(size)})
 	return nil
 }

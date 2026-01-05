@@ -915,7 +915,7 @@ func OpenVault(filename string, specs ...CollectionSpec) (*VaultSession, []any, 
 	// Load vault (works for both new and existing)
 	vault, err := LoadVault(s)
 	if err != nil {
-		s.Close()
+		_ = s.Close() // Best effort cleanup
 		return nil, nil, fmt.Errorf("failed to load vault: %w", err)
 	}
 
@@ -939,7 +939,7 @@ func OpenVault(filename string, specs ...CollectionSpec) (*VaultSession, []any, 
 	for i, spec := range specs {
 		coll, err := spec.openCollection(vault)
 		if err != nil {
-			session.Close()
+			_ = session.Close() // Best effort cleanup
 			return nil, nil, fmt.Errorf("failed to open collection %s: %w", spec.getName(), err)
 		}
 		collections[i] = coll
@@ -964,7 +964,7 @@ func OpenVaultWithIdentity[I comparable](filename string, specs ...IdentitySpec[
 
 	// Ensure identity map exists
 	if _, err := session.Vault.ensureIdentityMap(); err != nil {
-		session.Close()
+		_ = session.Close() // Best effort cleanup
 		return nil, nil, fmt.Errorf("failed to ensure identity map: %w", err)
 	}
 
@@ -974,7 +974,7 @@ func OpenVaultWithIdentity[I comparable](filename string, specs ...IdentitySpec[
 		result[id] = colls[i]
 		idStr := fmt.Sprint(id)
 		if err := session.Vault.setIdentityMapping(idStr, spec.getName()); err != nil {
-			session.Close()
+			_ = session.Close() // Best effort cleanup
 			return nil, nil, fmt.Errorf("failed to set identity mapping for %s: %w", idStr, err)
 		}
 	}

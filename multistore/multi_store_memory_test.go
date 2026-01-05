@@ -22,9 +22,9 @@ func TestMultiStoreObjectMapMemoryUsage(t *testing.T) {
 	}
 
 	const (
-		numObjects     = 100_000 // 100k objects to test reasonable scaling
-		objectSize     = 64       // Small, fixed-size objects
-		heapCeiling    = 20 * 1024 * 1024 // 20 MB - reasonable for 100k tracked objects
+		numObjects  = 100_000          // 100k objects to test reasonable scaling
+		objectSize  = 64               // Small, fixed-size objects
+		heapCeiling = 20 * 1024 * 1024 // 20 MB - reasonable for 100k tracked objects
 	)
 
 	// Capture baseline heap usage

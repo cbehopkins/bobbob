@@ -10,7 +10,7 @@ func BenchmarkAllocatorAllocation(b *testing.B) {
 	b.Run("BasicAllocator/Sequential", func(b *testing.B) {
 		alloc := NewEmptyBasicAllocator()
 		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
+		for range b.N {
 			alloc.Allocate(256)
 		}
 	})
@@ -18,7 +18,7 @@ func BenchmarkAllocatorAllocation(b *testing.B) {
 	b.Run("BlockAllocator/FixedSize64", func(b *testing.B) {
 		alloc := NewBlockAllocator(64, 10000, 0, ObjectId(1))
 		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
+		for range b.N {
 			alloc.Allocate(64)
 		}
 	})
@@ -26,7 +26,7 @@ func BenchmarkAllocatorAllocation(b *testing.B) {
 	b.Run("BlockAllocator/FixedSize256", func(b *testing.B) {
 		alloc := NewBlockAllocator(256, 10000, 0, ObjectId(1))
 		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
+		for range b.N {
 			alloc.Allocate(256)
 		}
 	})
@@ -39,13 +39,13 @@ func BenchmarkAllocatorGetObjectInfo(b *testing.B) {
 		alloc := NewEmptyBasicAllocator()
 		// Pre-allocate some objects
 		var lastObjId ObjectId
-		for i := 0; i < 100; i++ {
+		for range 100 {
 			objId, _, _ := alloc.Allocate(256)
 			lastObjId = objId
 		}
 
 		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
+		for range b.N {
 			alloc.GetObjectInfo(lastObjId)
 		}
 	})
@@ -54,13 +54,13 @@ func BenchmarkAllocatorGetObjectInfo(b *testing.B) {
 		blockAlloc := NewBlockAllocator(256, 10000, 0, ObjectId(1))
 		// Pre-allocate some objects
 		var lastObjId ObjectId
-		for i := 0; i < 100; i++ {
+		for range 100 {
 			objId, _, _ := blockAlloc.Allocate(256)
 			lastObjId = objId
 		}
 
 		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
+		for range b.N {
 			blockAlloc.GetFileOffset(lastObjId)
 		}
 	})
@@ -75,7 +75,7 @@ func BenchmarkAllocatorFree(b *testing.B) {
 			size   int
 		}, 100)
 
-		for i := 0; i < 100; i++ {
+		for i := range 100 {
 			alloc := NewEmptyBasicAllocator()
 			_, offset, _ := alloc.Allocate(256)
 			allocations[i] = struct {
@@ -85,10 +85,10 @@ func BenchmarkAllocatorFree(b *testing.B) {
 		}
 
 		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
+		for range b.N {
 			alloc := NewEmptyBasicAllocator()
-			for j := 0; j < 100; j++ {
-				alloc.Free(allocations[j].offset, allocations[j].size)
+			for _, alloc_item := range allocations {
+				alloc.Free(alloc_item.offset, alloc_item.size)
 			}
 		}
 	})
@@ -101,7 +101,7 @@ func BenchmarkAllocatorFree(b *testing.B) {
 			size   int
 		}, 100)
 
-		for i := 0; i < 100; i++ {
+		for i := range 100 {
 			_, offset, _ := blockAlloc.Allocate(256)
 			allocations[i] = struct {
 				offset FileOffset
@@ -110,9 +110,9 @@ func BenchmarkAllocatorFree(b *testing.B) {
 		}
 
 		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
-			for j := 0; j < 100; j++ {
-				blockAlloc.Free(allocations[j].offset, allocations[j].size)
+		for range b.N {
+			for _, alloc_item := range allocations {
+				blockAlloc.Free(alloc_item.offset, alloc_item.size)
 			}
 		}
 	})
@@ -122,24 +122,24 @@ func BenchmarkAllocatorFree(b *testing.B) {
 func BenchmarkAllocatorMarshal(b *testing.B) {
 	b.Run("BasicAllocator/Marshal", func(b *testing.B) {
 		alloc := NewEmptyBasicAllocator()
-		for i := 0; i < 1000; i++ {
+		for range 1000 {
 			alloc.Allocate(256)
 		}
 
 		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
+		for range b.N {
 			alloc.Marshal()
 		}
 	})
 
 	b.Run("BlockAllocator/Marshal", func(b *testing.B) {
 		blockAlloc := NewBlockAllocator(256, 1000, 0, ObjectId(1))
-		for i := 0; i < 500; i++ {
+		for range 500 {
 			blockAlloc.Allocate(256)
 		}
 
 		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
+		for range b.N {
 			blockAlloc.Marshal()
 		}
 	})
@@ -151,13 +151,13 @@ func BenchmarkAllocatorScaling(b *testing.B) {
 	b.Run("BasicAllocator/ScalingLookup/1k", func(b *testing.B) {
 		alloc := NewEmptyBasicAllocator()
 		allocations := make([]ObjectId, 1000)
-		for i := 0; i < 1000; i++ {
+		for i := range 1000 {
 			objId, _, _ := alloc.Allocate(256)
 			allocations[i] = objId
 		}
 
 		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
+		for i := range b.N {
 			idx := i % len(allocations)
 			alloc.GetObjectInfo(allocations[idx])
 		}
@@ -166,13 +166,13 @@ func BenchmarkAllocatorScaling(b *testing.B) {
 	b.Run("BasicAllocator/ScalingLookup/10k", func(b *testing.B) {
 		alloc := NewEmptyBasicAllocator()
 		allocations := make([]ObjectId, 10000)
-		for i := 0; i < 10000; i++ {
+		for i := range 10000 {
 			objId, _, _ := alloc.Allocate(256)
 			allocations[i] = objId
 		}
 
 		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
+		for i := range b.N {
 			idx := i % len(allocations)
 			alloc.GetObjectInfo(allocations[idx])
 		}
@@ -181,13 +181,13 @@ func BenchmarkAllocatorScaling(b *testing.B) {
 	b.Run("BlockAllocator/ScalingLookup/1k", func(b *testing.B) {
 		blockAlloc := NewBlockAllocator(256, 10000, 0, ObjectId(1))
 		allocations := make([]ObjectId, 1000)
-		for i := 0; i < 1000; i++ {
+		for i := range 1000 {
 			objId, _, _ := blockAlloc.Allocate(256)
 			allocations[i] = objId
 		}
 
 		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
+		for i := range b.N {
 			idx := i % len(allocations)
 			blockAlloc.GetFileOffset(allocations[idx])
 		}

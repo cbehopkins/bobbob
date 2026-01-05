@@ -1,3 +1,4 @@
+//nolint:errcheck
 package vault
 
 import (
@@ -50,7 +51,7 @@ func TestMemorySavingsWithoutObjectMap(t *testing.T) {
 
 	// Insert items and track memory
 	t.Logf("Inserting %d items...", itemCount)
-	for i := 0; i < itemCount; i++ {
+	for i := range itemCount {
 		key := types.IntKey(i)
 		collection.Insert(&key, types.JsonPayload[int]{Value: i})
 
@@ -136,7 +137,7 @@ func TestMemorySavingsScalingAnalysis(t *testing.T) {
 		var memBefore runtime.MemStats
 		runtime.ReadMemStats(&memBefore)
 
-		for i := 0; i < tc.count; i++ {
+		for i := range tc.count {
 			key := types.IntKey(i)
 			collection.Insert(&key, types.JsonPayload[int]{Value: i})
 		}

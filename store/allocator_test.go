@@ -11,7 +11,9 @@ func TestNewAllocator(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp file: %v", err)
 	}
-	defer os.Remove(file.Name())
+	defer func() {
+		_ = os.Remove(file.Name())
+	}()
 
 	allocator, err := NewBasicAllocator(file)
 	if err != nil {
@@ -32,7 +34,9 @@ func TestAllocate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp file: %v", err)
 	}
-	defer os.Remove(file.Name())
+	defer func() {
+		_ = os.Remove(file.Name())
+	}()
 
 	allocator, err := NewBasicAllocator(file)
 	if err != nil {

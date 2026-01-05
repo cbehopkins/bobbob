@@ -16,9 +16,9 @@ func TestBlockAllocatorMemoryOverhead(t *testing.T) {
 
 	// Calculate expected memory usage
 	structSize := int(unsafe.Sizeof(*ba))
-	sliceHeaderSize := 24 // slice header (ptr, len, cap)
+	sliceHeaderSize := 24           // slice header (ptr, len, cap)
 	boolArraySize := blockCount * 1 // 1 byte per bool
-	
+
 	expectedTotalBytes := structSize + boolArraySize
 	bytesPerItem := float64(boolArraySize) / float64(blockCount)
 
@@ -42,13 +42,13 @@ func TestBlockAllocatorMemoryOverhead(t *testing.T) {
 	}
 
 	// Allocate all blocks to verify the structure works
-	for i := 0; i < blockCount; i++ {
+	for i := range blockCount {
 		_, _, err := ba.Allocate(blockSize)
 		if err != nil {
 			t.Fatalf("Failed to allocate block %d: %v", i, err)
 		}
 	}
-	
+
 	t.Logf("✓ Successfully allocated all %d blocks", blockCount)
 }
 
@@ -105,7 +105,7 @@ func TestOmniBlockAllocatorMemoryOverhead(t *testing.T) {
 	// Calculate expected memory for each BlockAllocator
 	structSize := 64 // approximate blockAllocator struct size
 	totalMemory := 0
-	
+
 	t.Logf("=== OmniBlockAllocator Memory Overhead ===")
 	t.Logf("Block sizes supported: %v", blockSizes)
 	t.Logf("Blocks per allocator: %d\n", itemsPerBlock)
@@ -122,18 +122,18 @@ func TestOmniBlockAllocatorMemoryOverhead(t *testing.T) {
 
 	omniStructSize := int(unsafe.Sizeof(*omni))
 	totalMemory += omniStructSize
-	
+
 	t.Logf("\nOmniBlockAllocator struct: %d bytes", omniStructSize)
 	t.Logf("Total memory: %d bytes (%.2f KB)", totalMemory, float64(totalMemory)/1024)
-	
+
 	// Per-item overhead assuming items are evenly distributed
 	itemsPerSize := itemCount / len(blockSizes)
-	bytesPerItem := float64(itemsPerBlock * len(blockSizes)) / float64(itemsPerBlock * len(blockSizes))
+	bytesPerItem := float64(itemsPerBlock*len(blockSizes)) / float64(itemsPerBlock*len(blockSizes))
 	t.Logf("Per-item tracking overhead: %.2f bytes\n", bytesPerItem)
 
 	// Allocate items of various fixed sizes
 	for _, blockSize := range blockSizes {
-		for i := 0; i < itemsPerSize; i++ {
+		for i := range itemsPerSize {
 			_, _, err := omni.Allocate(blockSize)
 			if err != nil {
 				t.Fatalf("Failed to allocate size %d (item %d/%d): %v", blockSize, i, itemsPerSize, err)
@@ -151,7 +151,7 @@ func TestOmniBlockAllocatorMemoryOverhead(t *testing.T) {
 	} else {
 		t.Logf("✓ One BlockAllocator per block size as expected")
 	}
-	
+
 	t.Logf("✓ Successfully allocated %d items across %d block sizes", itemCount, len(blockSizes))
 }
 
@@ -167,10 +167,10 @@ func TestMemoryComparisonObjectMapVsBlockAllocator(t *testing.T) {
 	// Each map entry is approximately 48 bytes (key + value + map overhead)
 	objectMapBytesPerItem := 48
 	objectMapTotalBytes := itemCount * objectMapBytesPerItem
-	
+
 	t.Logf("ObjectMap approach (old):")
 	t.Logf("  Per-item overhead: %d bytes", objectMapBytesPerItem)
-	t.Logf("  Total for %d items: %d bytes (%.2f MB)", 
+	t.Logf("  Total for %d items: %d bytes (%.2f MB)",
 		itemCount, objectMapTotalBytes, float64(objectMapTotalBytes)/(1024*1024))
 	t.Logf("")
 
@@ -196,7 +196,7 @@ func TestMemoryComparisonObjectMapVsBlockAllocator(t *testing.T) {
 	t.Logf("Comparison:")
 	t.Logf("  Memory savings: %.1f%%", savings)
 	t.Logf("  Reduction factor: %.0fx", reduction)
-	t.Logf("  Saved: %d bytes (%.2f MB)", 
+	t.Logf("  Saved: %d bytes (%.2f MB)",
 		objectMapTotalBytes-blockAllocatorTotalBytes,
 		float64(objectMapTotalBytes-blockAllocatorTotalBytes)/(1024*1024))
 	t.Logf("")
@@ -213,9 +213,9 @@ func TestMemoryComparisonObjectMapVsBlockAllocator(t *testing.T) {
 	} else {
 		t.Logf("✓ BlockAllocator uses ~1 byte per item as expected")
 	}
-	
+
 	// Verify the allocator works
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		_, _, err := ba.Allocate(1024)
 		if err != nil {
 			t.Fatalf("Failed to allocate: %v", err)

@@ -3,8 +3,8 @@ package chain
 import (
 	"testing"
 
-	"github.com/cbehopkins/bobbob/store"
 	"github.com/cbehopkins/bobbob/internal/testutil"
+	"github.com/cbehopkins/bobbob/store"
 )
 
 func TestChainAndLink(t *testing.T) {

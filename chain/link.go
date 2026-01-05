@@ -146,7 +146,9 @@ func (c *Chain) InsertElement(element any) error {
 	if c.head == nil {
 		// If the chain is empty, create a new link and add the element.
 		newLink := c.createLink()
-		newLink.AddElement(element)
+		if err := newLink.AddElement(element); err != nil {
+			return err
+		}
 		c.AddLink(newLink)
 		return nil
 	}
@@ -243,7 +245,10 @@ func (l *Link) markStale() {
 		return
 	}
 	if l.chain.store != nil {
-		l.chain.store.DeleteObj(*l.objectId)
+		if err := l.chain.store.DeleteObj(*l.objectId); err != nil {
+			// Log or handle error, but don't fail the cleanup
+			_ = err
+		}
 	}
 	l.objectId = nil
 }
@@ -261,7 +266,9 @@ func (l *Link) AddElementAndObj(element any, objId store.ObjectId) error {
 	l.markStale()
 	if len(l.elements) >= l.maxSize {
 		newLink := l.chain.createLink()
-		newLink.AddElement(element)
+		if err := newLink.AddElement(element); err != nil {
+			return err
+		}
 		l.next = newLink
 		newLink.prev = l
 		l.chain.AddLink(newLink)
@@ -284,11 +291,16 @@ func (l *Link) DeleteElement(index int) error {
 	}
 	l.elements = slices.Delete(l.elements, index, index+1)
 	if l.chain.store != nil {
-		l.chain.store.DeleteObj(l.elementsFileObjIds[index])
+		if err := l.chain.store.DeleteObj(l.elementsFileObjIds[index]); err != nil {
+			// Log or handle error, but don't fail the delete operation
+			_ = err
+		}
 	}
 	l.elementsFileObjIds = slices.Delete(l.elementsFileObjIds, index, index+1)
 	if len(l.elements) == 0 {
-		l.chain.DeleteLink(l)
+		if err := l.chain.DeleteLink(l); err != nil {
+			return err
+		}
 	}
 	return nil
 }

@@ -1,0 +1,8 @@
+ignore=os:(Close|Remove|RemoveAll)
+ignore=github.com/bobbob/.*:Close
+ignore=github.com/bobbob/.*:DeleteObj
+ignore=github.com/bobbob/.*:DeleteLink
+ignore=github.com/bobbob/.*:AddElement
+ignore=github.com/bobbob/.*:DeleteElement
+ignore=github.com/bobbob/.*:AddElementAndObj
+ignore=github.com/bobbob/.*:InsertElement

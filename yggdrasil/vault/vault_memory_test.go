@@ -48,7 +48,7 @@ func TestVaultMemoryStats(t *testing.T) {
 	}
 
 	// Insert some data
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		key := types.IntKey(i)
 		users.Insert(&key, types.JsonPayload[UserData]{
 			Value: UserData{Username: "user", Email: "user@example.com", Age: 25},
@@ -93,7 +93,7 @@ func TestVaultFlushOlderThan(t *testing.T) {
 	}
 
 	// Insert data
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		key := types.IntKey(i)
 		users.Insert(&key, types.JsonPayload[UserData]{
 			Value: UserData{Username: "user", Email: "user@example.com", Age: 25},
@@ -172,7 +172,7 @@ func TestEnableMemoryMonitoring(t *testing.T) {
 	v.SetCheckInterval(5)
 
 	// Insert data - should trigger flush after 5 operations
-	for i := 0; i < 15; i++ {
+	for i := range 15 {
 		key := types.IntKey(i)
 		users.Insert(&key, types.JsonPayload[UserData]{
 			Value: UserData{Username: "user", Email: "user@example.com", Age: 25},
@@ -220,7 +220,7 @@ func TestSetMemoryBudget(t *testing.T) {
 	v.SetCheckInterval(5)
 
 	// Insert data
-	for i := 0; i < 30; i++ {
+	for i := range 30 {
 		key := types.IntKey(i)
 		users.Insert(&key, types.JsonPayload[UserData]{
 			Value: UserData{Username: "user", Email: "user@example.com", Age: 25},
@@ -274,7 +274,7 @@ func TestMemoryStatsMultipleCollections(t *testing.T) {
 	}
 
 	// Insert into users
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		key := types.IntKey(i)
 		users.Insert(&key, types.JsonPayload[UserData]{
 			Value: UserData{Username: "user", Email: "user@example.com", Age: 25},
@@ -282,7 +282,7 @@ func TestMemoryStatsMultipleCollections(t *testing.T) {
 	}
 
 	// Insert into products
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		key := types.StringKey("product" + string(rune(i)))
 		products.Insert(&key, types.JsonPayload[ProductData]{
 			Value: ProductData{Name: "Product", Price: 10.0, Stock: 100},
@@ -334,7 +334,7 @@ func TestMemoryMonitoringWithNoMonitor(t *testing.T) {
 	}
 
 	// Insert data without monitoring
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		key := types.IntKey(i)
 		users.Insert(&key, types.JsonPayload[UserData]{
 			Value: UserData{Username: "user", Email: "user@example.com", Age: 25},
@@ -385,7 +385,7 @@ func TestSetMemoryBudgetWithPercentile(t *testing.T) {
 	v.SetCheckInterval(1) // Check after every operation
 
 	// Insert 60 nodes to exceed the limit
-	for i := 0; i < 60; i++ {
+	for i := range 60 {
 		key := types.IntKey(i)
 		users.Insert(&key, types.JsonPayload[UserData]{
 			Value: UserData{Username: "user", Email: "user@example.com", Age: 25},
@@ -404,7 +404,7 @@ func TestSetMemoryBudgetWithPercentile(t *testing.T) {
 	}
 
 	// Verify we can still access all nodes (they'll be loaded from disk if needed)
-	for i := 0; i < 60; i++ {
+	for i := range 60 {
 		key := types.IntKey(i)
 		node := users.Search(&key)
 		if node == nil || node.IsNil() {
@@ -459,7 +459,7 @@ func TestSetMemoryBudgetWithPercentile_LargeDataset(t *testing.T) {
 	baselineAlloc := ms.Alloc
 
 	// Insert a large dataset; force periodic checks to trigger flushing.
-	for i := 0; i < totalItems; i++ {
+	for i := range totalItems {
 		key := types.IntKey(i)
 		users.Insert(&key, types.JsonPayload[int]{Value: i})
 

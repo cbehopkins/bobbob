@@ -18,7 +18,11 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to create store: %v", err)
 	}
-	defer s.Close()
+	defer func() {
+		if err := s.Close(); err != nil {
+			log.Printf("Failed to close store: %v", err)
+		}
+	}()
 
 	fmt.Printf("Store created at: %s\n", filePath)
 
@@ -33,7 +37,9 @@ func main() {
 		log.Fatalf("Failed to write data: %v", err)
 	}
 	if finisher != nil {
-		finisher()
+		if err := finisher(); err != nil {
+			log.Fatalf("Failed to finalize write: %v", err)
+		}
 	}
 	fmt.Printf("Data written at offset: %d\n", offset)
 
@@ -46,7 +52,11 @@ func main() {
 		log.Fatalf("Failed to read data: %v", err)
 	}
 	if finisher != nil {
-		defer finisher()
+		defer func() {
+			if err := finisher(); err != nil {
+				log.Printf("Failed to finalize read: %v", err)
+			}
+		}()
 	}
 
 	fmt.Printf("Data read: %s\n", string(readData))

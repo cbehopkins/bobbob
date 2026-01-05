@@ -25,7 +25,7 @@ func SetupMultiStoreWith(tb testing.TB, creator MultiStoreCreator) (dir string, 
 
 	cleanup = func() {
 		if s != nil {
-			s.Close()
+			_ = s.Close()
 		}
 	}
 

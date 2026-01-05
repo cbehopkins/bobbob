@@ -190,7 +190,9 @@ func (s *baseStore) NewObj(size int) (ObjectId, error) {
 		return 0, err
 	}
 	if finisher != nil {
-		finisher() // Close immediately since we're not using the writer
+		if err := finisher(); err != nil {
+			return 0, err
+		}
 	}
 	return objId, nil
 }
@@ -336,11 +338,15 @@ func (s *baseStore) DeleteObj(objId ObjectId) error {
 		return err
 	}
 
+	var freeErr error
 	_, found := s.objectMap.GetAndDelete(objId, func(obj ObjectInfo) {
-		s.allocator.Free(obj.Offset, obj.Size)
+		freeErr = s.allocator.Free(obj.Offset, obj.Size)
 	})
 	if !found {
 		return errors.New("object not found")
+	}
+	if freeErr != nil {
+		return freeErr
 	}
 
 	return nil

@@ -242,5 +242,3 @@ A: No. Once assigned, ObjectIds are stable. They encode the allocator type and s
 2. Run the tests - see how different sizes are allocated
 3. Check [store/allocator_memory_test.go](store/allocator_memory_test.go) - watch the memory savings happen
 4. Explore [multistore/multi_store.go](multistore/multi_store.go) - see it in real use
-
-Good luck exploring!

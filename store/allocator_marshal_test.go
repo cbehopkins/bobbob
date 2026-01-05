@@ -11,8 +11,12 @@ func TestBasicAllocatorMarshal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp file: %v", err)
 	}
-	defer os.Remove(file.Name())
-	defer file.Close()
+	defer func() {
+		_ = os.Remove(file.Name())
+	}()
+	defer func() {
+		_ = file.Close()
+	}()
 
 	// Create allocator and make some allocations
 	allocator, err := NewBasicAllocator(file)

@@ -51,7 +51,7 @@ func TestVaultConcurrentReaders(t *testing.T) {
 
 	// Insert 100 items
 	itemCount := 100
-	for i := 0; i < itemCount; i++ {
+	for i := range itemCount {
 		key := types.IntKey(i)
 		payload := types.JsonPayload[TestData]{
 			Value: TestData{
@@ -70,11 +70,11 @@ func TestVaultConcurrentReaders(t *testing.T) {
 	var successCount atomic.Int32
 
 	wg.Add(readerCount)
-	for i := 0; i < readerCount; i++ {
+	for i := range readerCount {
 		go func(readerID int) {
 			defer wg.Done()
 
-			for j := 0; j < readsPerReader; j++ {
+			for j := range readsPerReader {
 				// Read random items
 				keyID := (readerID*readsPerReader + j) % itemCount
 				key := types.IntKey(keyID)
@@ -146,7 +146,7 @@ func TestVaultSingleWriterMultipleReaders(t *testing.T) {
 
 	// Pre-populate with some data
 	initialCount := 100
-	for i := 0; i < initialCount; i++ {
+	for i := range initialCount {
 		key := types.IntKey(i)
 		payload := types.JsonPayload[TestData]{
 			Value: TestData{
@@ -170,7 +170,7 @@ func TestVaultSingleWriterMultipleReaders(t *testing.T) {
 	// Start multiple concurrent readers
 	readerCount := 5
 	wg.Add(readerCount)
-	for i := 0; i < readerCount; i++ {
+	for i := range readerCount {
 		go func(readerID int) {
 			defer wg.Done()
 
@@ -207,7 +207,7 @@ func TestVaultSingleWriterMultipleReaders(t *testing.T) {
 	go func() {
 		defer wg.Done()
 
-		for i := 0; i < 100; i++ {
+		for i := range 100 {
 			// Use keys from the writer range (50-99)
 			keyID := readerKeyRange + (i % readerKeyRange)
 			key := types.IntKey(keyID)
@@ -288,7 +288,7 @@ func TestVaultConcurrentReadersMultipleCollections(t *testing.T) {
 	}
 
 	// Populate both collections
-	for i := 0; i < 50; i++ {
+	for i := range 50 {
 		key := types.IntKey(i)
 		payload1 := types.JsonPayload[TestData]{
 			Value: TestData{ID: i, Value: fmt.Sprintf("coll1-%d", i)},
@@ -306,10 +306,10 @@ func TestVaultConcurrentReadersMultipleCollections(t *testing.T) {
 
 	// Readers for collection1
 	wg.Add(3)
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		go func(id int) {
 			defer wg.Done()
-			for j := 0; j < 100; j++ {
+			for j := range 100 {
 				keyID := (id*100 + j) % 50
 				key := types.IntKey(keyID)
 				node := coll1.Search(&key)
@@ -329,10 +329,10 @@ func TestVaultConcurrentReadersMultipleCollections(t *testing.T) {
 
 	// Readers for collection2
 	wg.Add(3)
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		go func(id int) {
 			defer wg.Done()
-			for j := 0; j < 100; j++ {
+			for j := range 100 {
 				keyID := (id*100 + j) % 50
 				key := types.IntKey(keyID)
 				node := coll2.Search(&key)
@@ -388,7 +388,7 @@ func TestVaultSequentialWritersWithReaders(t *testing.T) {
 	}
 
 	// Pre-populate
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		key := types.IntKey(i)
 		payload := types.JsonPayload[TestData]{
 			Value: TestData{ID: i, Value: fmt.Sprintf("initial-%d", i)},
@@ -407,7 +407,7 @@ func TestVaultSequentialWritersWithReaders(t *testing.T) {
 	// Start readers
 	readerCount := 5
 	wg.Add(readerCount)
-	for i := 0; i < readerCount; i++ {
+	for i := range readerCount {
 		go func(readerID int) {
 			defer wg.Done()
 			localReads := 0

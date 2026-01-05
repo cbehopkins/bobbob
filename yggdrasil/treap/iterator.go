@@ -100,7 +100,7 @@ func (t *PersistentTreap[K]) WalkInOrder(opts IteratorOptions, callback func(nod
 
 		// Move to right subtree
 		state.current = state.current.GetRight()
-		
+
 		// If we're not moving to a right child (it's nil), and we just visited a node,
 		// flush the right child of that node since we're done with the right subtree too
 		if state.current == nil && state.lastVisited != nil && !state.opts.KeepInMemory {
@@ -206,7 +206,7 @@ func (t *PersistentPayloadTreap[K, P]) WalkInOrder(opts IteratorOptions, callbac
 
 		// Move to right subtree
 		state.current = state.current.GetRight()
-		
+
 		// If we're not moving to a right child (it's nil), and we just visited a node,
 		// flush the right child of that node since we're done with the right subtree too
 		if state.current == nil && state.lastVisited != nil && !state.opts.KeepInMemory {

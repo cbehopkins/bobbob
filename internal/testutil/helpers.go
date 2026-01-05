@@ -18,7 +18,11 @@ func WriteObject(tb testing.TB, s store.Storer, data []byte) store.ObjectId {
 		tb.Fatalf("failed to write object: %v", err)
 	}
 	if finisher != nil {
-		defer finisher()
+		defer func() {
+			if err := finisher(); err != nil {
+				tb.Errorf("failed to finalize write: %v", err)
+			}
+		}()
 	}
 
 	n, err := writer.Write(data)
@@ -42,7 +46,11 @@ func ReadObject(tb testing.TB, s store.Storer, objId store.ObjectId) []byte {
 		tb.Fatalf("failed to read object %v: %v", objId, err)
 	}
 	if finisher != nil {
-		defer finisher()
+		defer func() {
+			if err := finisher(); err != nil {
+				tb.Errorf("failed to finalize read: %v", err)
+			}
+		}()
 	}
 
 	data, err := io.ReadAll(reader)
@@ -85,7 +93,11 @@ func UpdateObject(tb testing.TB, s store.Storer, objId store.ObjectId, data []by
 		tb.Fatalf("failed to get writer for object %v: %v", objId, err)
 	}
 	if finisher != nil {
-		defer finisher()
+		defer func() {
+			if err := finisher(); err != nil {
+				tb.Errorf("failed to finalize write: %v", err)
+			}
+		}()
 	}
 
 	n, err := writer.Write(data)

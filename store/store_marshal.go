@@ -271,7 +271,11 @@ func unmarshalComplexObj(s Storer, obj UnmarshalComplex, objId ObjectId) error {
 	if err != nil {
 		return err
 	}
-	defer finisher()
+	defer func() {
+		if err := finisher(); err != nil {
+			// Log error but continue - unmarshaling may still succeed
+		}
+	}()
 	return obj.UnmarshalMultiple(objReader, s)
 }
 

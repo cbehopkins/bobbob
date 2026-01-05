@@ -75,13 +75,13 @@ func NewMultiStore(filePath string) (*multiStore, error) {
 	// Check if file is new (empty)
 	fileInfo, err := file.Stat()
 	if err != nil {
-		file.Close()
+		_ = file.Close()
 		return nil, err
 	}
 
 	rootAllocator, err := store.NewBasicAllocator(file)
 	if err != nil {
-		file.Close()
+		_ = file.Close()
 		return nil, err
 	}
 
@@ -89,7 +89,7 @@ func NewMultiStore(filePath string) (*multiStore, error) {
 	if fileInfo.Size() == 0 {
 		_, _, err = rootAllocator.Allocate(8)
 		if err != nil {
-			file.Close()
+			_ = file.Close()
 			return nil, err
 		}
 	}
@@ -117,21 +117,21 @@ func LoadMultiStore(filePath string) (*multiStore, error) {
 	// Read metadata offset from header
 	metadataOffset, err := readHeader(file)
 	if err != nil {
-		file.Close()
+		_ = file.Close()
 		return nil, err
 	}
 
 	// Read and parse metadata
 	omniData, rootData, err := readMetadata(file, metadataOffset)
 	if err != nil {
-		file.Close()
+		_ = file.Close()
 		return nil, err
 	}
 
 	// Restore allocators (allocations tracked internally by allocators)
 	rootAllocator, omniAllocator, err := unmarshalComponents(rootData, omniData)
 	if err != nil {
-		file.Close()
+		_ = file.Close()
 		return nil, err
 	}
 
@@ -197,7 +197,7 @@ func unmarshalComponents(rootData, omniData []byte) (*store.BasicAllocator, stor
 	// Create and unmarshal rootAllocator
 	rootAllocator := store.NewEmptyBasicAllocator()
 
-	rootUnmarshaler, ok := interface{}(rootAllocator).(unmarshaler)
+	rootUnmarshaler, ok := any(rootAllocator).(unmarshaler)
 	if !ok {
 		return nil, nil, errors.New("rootAllocator does not support unmarshaling")
 	}
@@ -211,7 +211,7 @@ func unmarshalComponents(rootData, omniData []byte) (*store.BasicAllocator, stor
 	blockSizes := deduplicateBlockSizes(treap.PersistentTreapObjectSizes())
 	omniAllocator := store.NewOmniBlockAllocator(blockSizes, blockCount, rootAllocator)
 
-	omniUnmarshaler, ok := interface{}(omniAllocator).(unmarshaler)
+	omniUnmarshaler, ok := any(omniAllocator).(unmarshaler)
 	if !ok {
 		return nil, nil, errors.New("omniAllocator does not support unmarshaling")
 	}
@@ -394,7 +394,10 @@ func (s *multiStore) DeleteObj(objId store.ObjectId) error {
 	}
 
 	// Free the space in the allocator
-	s.allocators[1].Free(objectInfo.Offset, objectInfo.Size)
+	if err := s.allocators[1].Free(objectInfo.Offset, objectInfo.Size); err != nil {
+		// Log error but continue
+		_ = err
+	}
 	return nil
 }
 

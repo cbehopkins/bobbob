@@ -106,4 +106,3 @@ func (t *PayloadTreap[K, P]) InsertComplex(value K, priority Priority, payload P
 func (t *PayloadTreap[K, P]) Insert(value K, payload P) {
 	t.InsertComplex(value, randomPriority(), payload)
 }
-

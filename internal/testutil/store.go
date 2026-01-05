@@ -22,15 +22,15 @@ func SetupTestStore(tb testing.TB) (dir string, s store.Storer, cleanup func()) 
 	filePath := filepath.Join(dir, "testfile.bin")
 	s, err = store.NewBasicStore(filePath)
 	if err != nil {
-		os.RemoveAll(dir)
+		_ = os.RemoveAll(dir)
 		tb.Fatalf("failed to create store: %v", err)
 	}
 
 	cleanup = func() {
 		if s != nil {
-			s.Close()
+			_ = s.Close()
 		}
-		os.RemoveAll(dir)
+		_ = os.RemoveAll(dir)
 	}
 
 	return dir, s, cleanup
@@ -49,15 +49,15 @@ func SetupConcurrentStore(tb testing.TB) (dir string, s store.Storer, cleanup fu
 	filePath := filepath.Join(dir, "testfile.bin")
 	s, err = store.NewConcurrentStore(filePath)
 	if err != nil {
-		os.RemoveAll(dir)
+		_ = os.RemoveAll(dir)
 		tb.Fatalf("failed to create concurrent store: %v", err)
 	}
 
 	cleanup = func() {
 		if s != nil {
-			s.Close()
+			_ = s.Close()
 		}
-		os.RemoveAll(dir)
+		_ = os.RemoveAll(dir)
 	}
 
 	return dir, s, cleanup
@@ -76,7 +76,7 @@ func CreateTempFile(tb testing.TB, pattern string) (filePath string, cleanup fun
 	filePath = filepath.Join(dir, pattern)
 
 	cleanup = func() {
-		os.RemoveAll(dir)
+		_ = os.RemoveAll(dir)
 	}
 
 	return filePath, cleanup

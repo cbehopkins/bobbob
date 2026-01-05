@@ -166,16 +166,24 @@ func WriteNewObjFromBytes(s Storer, data []byte) (ObjectId, error) {
 		return 0, err
 	}
 	if finisher != nil {
-		defer finisher()
+		defer func() {
+			if err := finisher(); err != nil {
+				// Log error but continue - write may still be partially successful
+			}
+		}()
 	}
 
 	n, err := writer.Write(data)
 	if err != nil {
-		s.DeleteObj(objId) // Clean up allocated object on write error
+		if err := s.DeleteObj(objId); err != nil {
+			// Clean up allocated object on write error (best effort)
+		}
 		return 0, err
 	}
 	if n != size {
-		s.DeleteObj(objId) // Clean up allocated object on incomplete write
+		if err := s.DeleteObj(objId); err != nil {
+			// Clean up allocated object on incomplete write (best effort)
+		}
 		return 0, errors.New("did not write all the data")
 	}
 
@@ -192,7 +200,11 @@ func WriteBytesToObj(s Storer, data []byte, objectId ObjectId) error {
 	if err != nil {
 		return err
 	}
-	defer closer()
+	defer func() {
+		if err := closer(); err != nil {
+			// Log error but continue - write may still be partially successful
+		}
+	}()
 
 	n, err := writer.Write(data)
 	if err != nil {
@@ -216,7 +228,11 @@ func ReadBytesFromObj(s Storer, objId ObjectId) ([]byte, error) {
 		return nil, err
 	}
 	if finisher != nil {
-		defer finisher()
+		defer func() {
+			if err := finisher(); err != nil {
+				// Log error but continue - read already succeeded
+			}
+		}()
 	}
 
 	return io.ReadAll(objReader)
