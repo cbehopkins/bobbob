@@ -50,11 +50,19 @@ func (h *GapHeap) Pop() any {
 	return x
 }
 
+// AllocatedRegion tracks metadata for an allocated region.
+type AllocatedRegion struct {
+	FileOffset FileOffset
+	Size       int
+}
+
 // BasicAllocator is a struct to manage the allocation of space in the file
+// It tracks both free gaps and allocated regions to support reverse lookups.
 type BasicAllocator struct {
-	mu       sync.Mutex
-	freeList GapHeap
-	end      int64
+	mu           sync.Mutex
+	freeList     GapHeap
+	end          int64
+	allocations  map[ObjectId]AllocatedRegion // Tracks allocated regions for reverse lookup
 }
 
 // NewBasicAllocator creates a new BasicAllocator for the given file.
@@ -65,13 +73,20 @@ func NewBasicAllocator(file *os.File) (*BasicAllocator, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &BasicAllocator{end: offset, freeList: make(GapHeap, 0)}, nil
+	return &BasicAllocator{
+		end:         offset,
+		freeList:    make(GapHeap, 0),
+		allocations: make(map[ObjectId]AllocatedRegion),
+	}, nil
 }
 
 // NewEmptyBasicAllocator creates an uninitialized BasicAllocator.
 // This is used when loading from a serialized state.
 func NewEmptyBasicAllocator() *BasicAllocator {
-	return &BasicAllocator{freeList: make(GapHeap, 0)}
+	return &BasicAllocator{
+		freeList:    make(GapHeap, 0),
+		allocations: make(map[ObjectId]AllocatedRegion),
+	}
 }
 
 // RefreshFreeList to refresh the free list
@@ -95,12 +110,16 @@ func (a *BasicAllocator) Allocate(size int) (ObjectId, FileOffset, error) {
 			if gap.End-gap.Start > int64(size) {
 				heap.Push(&a.freeList, Gap{gap.Start + int64(size), gap.End})
 			}
+			// Record the allocation
+			a.allocations[objId] = AllocatedRegion{FileOffset: fileOffset, Size: size}
 			return objId, fileOffset, nil
 		}
 	}
 	objId := ObjectId(a.end)
 	fileOffset := FileOffset(a.end)
 	a.end += int64(size)
+	// Record the allocation
+	a.allocations[objId] = AllocatedRegion{FileOffset: fileOffset, Size: size}
 	return objId, fileOffset, nil
 }
 
@@ -109,22 +128,42 @@ func (a *BasicAllocator) Free(fileOffset FileOffset, size int) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
+	// Remove from allocations tracking
+	objId := ObjectId(fileOffset)
+	delete(a.allocations, objId)
+	
 	heap.Push(&a.freeList, Gap{int64(fileOffset), int64(fileOffset) + int64(size)})
 	return nil
 }
 
+// GetObjectInfo returns the FileOffset and Size for an allocated ObjectId.
+// Returns an error if the ObjectId is not allocated or invalid.
+func (a *BasicAllocator) GetObjectInfo(objId ObjectId) (FileOffset, int, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	region, found := a.allocations[objId]
+	if !found {
+		return 0, 0, errors.New("object not allocated")
+	}
+	return region.FileOffset, region.Size, nil
+}
+
 // Marshal serializes the BasicAllocator's state to a byte slice.
-// Format: [end:8 bytes][freeListCount:8 bytes][gap1.Start:8][gap1.End:8]...
+// Format: [end:8][freeListCount:8][gaps...][allocCount:8][allocations...]
 func (a *BasicAllocator) Marshal() ([]byte, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	// Calculate size: 8 bytes for end, 8 bytes for count, 16 bytes per gap
-	size := 16 + len(a.freeList)*16
+	// Calculate size: 8 (end) + 8 (freeList count) + 16*gaps + 8 (alloc count) + 24*allocs
+	// Each allocation: 8 (ObjectId) + 8 (FileOffset) + 4 (Size) = 20 bytes, but align to 24
+	allocSize := len(a.allocations) * 24 // 8 bytes ObjectId + 8 bytes FileOffset + 4 bytes Size + 4 bytes padding
+	size := 16 + len(a.freeList)*16 + 8 + allocSize
 	data := make([]byte, size)
 
-	// Marshal end offset
 	offset := 0
+
+	// Marshal end offset
 	data[offset] = byte(a.end >> 56)
 	data[offset+1] = byte(a.end >> 48)
 	data[offset+2] = byte(a.end >> 40)
@@ -170,6 +209,70 @@ func (a *BasicAllocator) Marshal() ([]byte, error) {
 		offset += 8
 	}
 
+	// Marshal allocation count
+	allocCount := int64(len(a.allocations))
+	data[offset] = byte(allocCount >> 56)
+	data[offset+1] = byte(allocCount >> 48)
+	data[offset+2] = byte(allocCount >> 40)
+	data[offset+3] = byte(allocCount >> 32)
+	data[offset+4] = byte(allocCount >> 24)
+	data[offset+5] = byte(allocCount >> 16)
+	data[offset+6] = byte(allocCount >> 8)
+	data[offset+7] = byte(allocCount)
+	offset += 8
+
+	// Marshal each allocation (in arbitrary order, but deterministic is better)
+	// Create a sorted slice for deterministic ordering
+	ids := make([]ObjectId, 0, len(a.allocations))
+	for id := range a.allocations {
+		ids = append(ids, id)
+	}
+	// Simple insertion sort for small maps
+	for i := 1; i < len(ids); i++ {
+		key := ids[i]
+		j := i - 1
+		for j >= 0 && ids[j] > key {
+			ids[j+1] = ids[j]
+			j--
+		}
+		ids[j+1] = key
+	}
+
+	for _, id := range ids {
+		region := a.allocations[id]
+		// ObjectId
+		data[offset] = byte(id >> 56)
+		data[offset+1] = byte(id >> 48)
+		data[offset+2] = byte(id >> 40)
+		data[offset+3] = byte(id >> 32)
+		data[offset+4] = byte(id >> 24)
+		data[offset+5] = byte(id >> 16)
+		data[offset+6] = byte(id >> 8)
+		data[offset+7] = byte(id)
+		offset += 8
+
+		// FileOffset
+		data[offset] = byte(region.FileOffset >> 56)
+		data[offset+1] = byte(region.FileOffset >> 48)
+		data[offset+2] = byte(region.FileOffset >> 40)
+		data[offset+3] = byte(region.FileOffset >> 32)
+		data[offset+4] = byte(region.FileOffset >> 24)
+		data[offset+5] = byte(region.FileOffset >> 16)
+		data[offset+6] = byte(region.FileOffset >> 8)
+		data[offset+7] = byte(region.FileOffset)
+		offset += 8
+
+		// Size
+		data[offset] = byte(region.Size >> 24)
+		data[offset+1] = byte(region.Size >> 16)
+		data[offset+2] = byte(region.Size >> 8)
+		data[offset+3] = byte(region.Size)
+		offset += 4
+
+		// Padding (4 bytes)
+		offset += 4
+	}
+
 	return data, nil
 }
 
@@ -198,9 +301,13 @@ func (a *BasicAllocator) Unmarshal(data []byte) error {
 		int64(data[offset+6])<<8 | int64(data[offset+7]))
 	offset += 8
 
-	// Verify we have enough data
-	expectedLen := 16 + freeListCount*16
-	if len(data) != expectedLen {
+	// Verify we have enough data for gaps
+	minLen := 16 + freeListCount*16 + 8 // end + gap count + gaps + alloc count
+	if len(data) < minLen {
+		// Initialize allocations map for backward compatibility with old data
+		if a.allocations == nil {
+			a.allocations = make(map[ObjectId]AllocatedRegion)
+		}
 		return errors.New("invalid data length for freeList")
 	}
 
@@ -224,6 +331,51 @@ func (a *BasicAllocator) Unmarshal(data []byte) error {
 
 	// Rebuild the heap
 	heap.Init(&a.freeList)
+
+	// Unmarshal allocation count
+	allocCount := int(int64(data[offset])<<56 | int64(data[offset+1])<<48 |
+		int64(data[offset+2])<<40 | int64(data[offset+3])<<32 |
+		int64(data[offset+4])<<24 | int64(data[offset+5])<<16 |
+		int64(data[offset+6])<<8 | int64(data[offset+7]))
+	offset += 8
+
+	// Verify we have enough data for allocations
+	expectedLen := 16 + freeListCount*16 + 8 + allocCount*24
+	if len(data) != expectedLen {
+		// Initialize allocations map for backward compatibility with old data
+		if a.allocations == nil {
+			a.allocations = make(map[ObjectId]AllocatedRegion)
+		}
+		return errors.New("invalid data length for allocations")
+	}
+
+	// Unmarshal allocations
+	a.allocations = make(map[ObjectId]AllocatedRegion, allocCount)
+	for i := 0; i < allocCount; i++ {
+		// ObjectId
+		objId := ObjectId(int64(data[offset])<<56 | int64(data[offset+1])<<48 |
+			int64(data[offset+2])<<40 | int64(data[offset+3])<<32 |
+			int64(data[offset+4])<<24 | int64(data[offset+5])<<16 |
+			int64(data[offset+6])<<8 | int64(data[offset+7]))
+		offset += 8
+
+		// FileOffset
+		fileOffset := FileOffset(int64(data[offset])<<56 | int64(data[offset+1])<<48 |
+			int64(data[offset+2])<<40 | int64(data[offset+3])<<32 |
+			int64(data[offset+4])<<24 | int64(data[offset+5])<<16 |
+			int64(data[offset+6])<<8 | int64(data[offset+7]))
+		offset += 8
+
+		// Size
+		size := int(int(data[offset])<<24 | int(data[offset+1])<<16 |
+			int(data[offset+2])<<8 | int(data[offset+3]))
+		offset += 4
+
+		// Skip padding
+		offset += 4
+
+		a.allocations[objId] = AllocatedRegion{FileOffset: fileOffset, Size: size}
+	}
 
 	return nil
 }

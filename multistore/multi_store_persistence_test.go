@@ -55,7 +55,7 @@ func TestMultiStorePersistence(t *testing.T) {
 		}
 	}
 
-	// Close the store (this should marshal allocators and objectMap)
+	// Close the store (this should marshal allocators only)
 	if err := ms1.Close(); err != nil {
 		t.Fatalf("Failed to close multiStore: %v", err)
 	}

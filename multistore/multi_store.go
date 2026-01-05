@@ -60,7 +60,6 @@ func deduplicateBlockSizes(sizes []int) []int {
 type multiStore struct {
 	filePath   string
 	file       *os.File
-	objectMap  *store.ObjectMap
 	allocators []store.Allocator
 }
 
@@ -102,14 +101,13 @@ func NewMultiStore(filePath string) (*multiStore, error) {
 	ms := &multiStore{
 		filePath:   filePath,
 		file:       file,
-		objectMap:  store.NewObjectMap(),
 		allocators: []store.Allocator{rootAllocator, omniAllocator},
 	}
 	return ms, nil
 }
 
 // LoadMultiStore loads an existing multiStore from the given file path.
-// It reads the metadata from the file and reconstructs the allocators and objectMap.
+// It reads the metadata from the file and reconstructs the allocators.
 func LoadMultiStore(filePath string) (*multiStore, error) {
 	file, err := os.OpenFile(filePath, os.O_RDWR, 0o666)
 	if err != nil {
@@ -124,14 +122,14 @@ func LoadMultiStore(filePath string) (*multiStore, error) {
 	}
 
 	// Read and parse metadata
-	omniData, rootData, mapData, err := readMetadata(file, metadataOffset)
+	omniData, rootData, err := readMetadata(file, metadataOffset)
 	if err != nil {
 		file.Close()
 		return nil, err
 	}
 
-	// Restore allocators and objectMap
-	rootAllocator, omniAllocator, objectMap, err := unmarshalComponents(rootData, omniData, mapData)
+	// Restore allocators (allocations tracked internally by allocators)
+	rootAllocator, omniAllocator, err := unmarshalComponents(rootData, omniData)
 	if err != nil {
 		file.Close()
 		return nil, err
@@ -140,7 +138,6 @@ func LoadMultiStore(filePath string) (*multiStore, error) {
 	ms := &multiStore{
 		filePath:   filePath,
 		file:       file,
-		objectMap:  objectMap,
 		allocators: []store.Allocator{rootAllocator, omniAllocator},
 	}
 
@@ -164,51 +161,49 @@ func readHeader(file *os.File) (int64, error) {
 }
 
 // readMetadata reads and parses the metadata block from the file.
-func readMetadata(file *os.File, metadataOffset int64) (omniData, rootData, mapData []byte, err error) {
-	// Read length headers (12 bytes: 3 x 4-byte lengths)
-	lengthHeader := make([]byte, 12)
+func readMetadata(file *os.File, metadataOffset int64) (omniData, rootData []byte, err error) {
+	// Read length headers (8 bytes: 2 x 4-byte lengths)
+	lengthHeader := make([]byte, 8)
 	_, err = file.ReadAt(lengthHeader, metadataOffset)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, err
 	}
 
 	offset := 0
 	omniLen, offset := readInt32(lengthHeader, offset)
-	rootLen, offset := readInt32(lengthHeader, offset)
-	mapLen, _ := readInt32(lengthHeader, offset)
+	rootLen, _ := readInt32(lengthHeader, offset)
 
 	// Read all metadata
-	totalLen := omniLen + rootLen + mapLen
+	totalLen := omniLen + rootLen
 	metadata := make([]byte, totalLen)
-	_, err = file.ReadAt(metadata, metadataOffset+12)
+	_, err = file.ReadAt(metadata, metadataOffset+8)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, err
 	}
 
 	// Extract individual components
 	omniData = metadata[0:omniLen]
 	rootData = metadata[omniLen : omniLen+rootLen]
-	mapData = metadata[omniLen+rootLen : omniLen+rootLen+mapLen]
 
-	return omniData, rootData, mapData, nil
+	return omniData, rootData, nil
 }
 
-// unmarshalComponents deserializes the allocators and objectMap from their byte representations.
-func unmarshalComponents(rootData, omniData, mapData []byte) (*store.BasicAllocator, store.Allocator, *store.ObjectMap, error) {
+// unmarshalComponents deserializes the allocators from their byte representations.
+func unmarshalComponents(rootData, omniData []byte) (*store.BasicAllocator, store.Allocator, error) {
 	type unmarshaler interface {
 		Unmarshal([]byte) error
 	}
 
-	// Create and unmarshal rootAllocator (don't seek to end, we'll restore state)
+	// Create and unmarshal rootAllocator
 	rootAllocator := store.NewEmptyBasicAllocator()
 
 	rootUnmarshaler, ok := interface{}(rootAllocator).(unmarshaler)
 	if !ok {
-		return nil, nil, nil, errors.New("rootAllocator does not support unmarshaling")
+		return nil, nil, errors.New("rootAllocator does not support unmarshaling")
 	}
 
 	if err := rootUnmarshaler.Unmarshal(rootData); err != nil {
-		return nil, nil, nil, err
+		return nil, nil, err
 	}
 
 	// Create and unmarshal omniAllocator
@@ -218,20 +213,14 @@ func unmarshalComponents(rootData, omniData, mapData []byte) (*store.BasicAlloca
 
 	omniUnmarshaler, ok := interface{}(omniAllocator).(unmarshaler)
 	if !ok {
-		return nil, nil, nil, errors.New("omniAllocator does not support unmarshaling")
+		return nil, nil, errors.New("omniAllocator does not support unmarshaling")
 	}
 
 	if err := omniUnmarshaler.Unmarshal(omniData); err != nil {
-		return nil, nil, nil, err
+		return nil, nil, err
 	}
 
-	// Unmarshal objectMap
-	objectMap := store.NewObjectMap()
-	if err := objectMap.Unmarshal(mapData); err != nil {
-		return nil, nil, nil, err
-	}
-
-	return rootAllocator, omniAllocator, objectMap, nil
+	return rootAllocator, omniAllocator, nil
 }
 
 // readInt32 reads a 32-bit integer from the buffer at the given offset.
@@ -243,26 +232,25 @@ func readInt32(buf []byte, offset int) (int, int) {
 }
 
 // Close closes the multiStore and releases the file handle.
-// It marshals the allocators and objectMap to the file for persistence.
+// It marshals the allocators to the file for persistence.
 // The layout is:
 // - First 8 bytes: offset to metadata object (allocated by root allocator)
 // - Metadata object contains:
 //   - omniAllocator marshaled state
 //   - rootAllocator marshaled state
-//   - objectMap marshaled state
 func (s *multiStore) Close() error {
 	if s.file == nil {
 		return nil
 	}
 
-	// Marshal all components
-	omniData, rootData, mapData, err := s.marshalComponents()
+	// Marshal allocators only
+	omniData, rootData, err := s.marshalComponents()
 	if err != nil {
 		return err
 	}
 
 	// Create combined metadata block
-	metadata := s.buildMetadata(omniData, rootData, mapData)
+	metadata := s.buildMetadata(omniData, rootData)
 
 	// Write metadata to file and update header
 	if err := s.writeMetadataToFile(metadata); err != nil {
@@ -279,8 +267,8 @@ func (s *multiStore) Close() error {
 	return nil
 }
 
-// marshalComponents marshals all store components (allocators and objectMap).
-func (s *multiStore) marshalComponents() (omniData, rootData, mapData []byte, err error) {
+// marshalComponents marshals all store components (allocators only).
+func (s *multiStore) marshalComponents() (omniData, rootData []byte, err error) {
 	type marshaler interface {
 		Marshal() ([]byte, error)
 	}
@@ -288,36 +276,30 @@ func (s *multiStore) marshalComponents() (omniData, rootData, mapData []byte, er
 	// Marshal omniAllocator
 	omniMarshaler, ok := s.allocators[1].(marshaler)
 	if !ok {
-		return nil, nil, nil, errors.New("omniAllocator does not support marshaling")
+		return nil, nil, errors.New("omniAllocator does not support marshaling")
 	}
 	omniData, err = omniMarshaler.Marshal()
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, err
 	}
 
 	// Marshal rootAllocator
 	rootMarshaler, ok := s.allocators[0].(marshaler)
 	if !ok {
-		return nil, nil, nil, errors.New("rootAllocator does not support marshaling")
+		return nil, nil, errors.New("rootAllocator does not support marshaling")
 	}
 	rootData, err = rootMarshaler.Marshal()
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, err
 	}
 
-	// Marshal objectMap
-	mapData, err = s.objectMap.Marshal()
-	if err != nil {
-		return nil, nil, nil, err
-	}
-
-	return omniData, rootData, mapData, nil
+	return omniData, rootData, nil
 }
 
 // buildMetadata creates a combined metadata block with length prefixes.
-// Format: [omniLen:4][rootLen:4][mapLen:4][omniData][rootData][mapData]
-func (s *multiStore) buildMetadata(omniData, rootData, mapData []byte) []byte {
-	metadataSize := 12 + len(omniData) + len(rootData) + len(mapData)
+// Format: [omniLen:4][rootLen:4][omniData][rootData]
+func (s *multiStore) buildMetadata(omniData, rootData []byte) []byte {
+	metadataSize := 8 + len(omniData) + len(rootData)
 	metadata := make([]byte, metadataSize)
 
 	offset := 0
@@ -325,15 +307,11 @@ func (s *multiStore) buildMetadata(omniData, rootData, mapData []byte) []byte {
 	offset = writeInt32(metadata, offset, len(omniData))
 	// Write root length
 	offset = writeInt32(metadata, offset, len(rootData))
-	// Write map length
-	offset = writeInt32(metadata, offset, len(mapData))
 
 	// Copy data
 	copy(metadata[offset:], omniData)
 	offset += len(omniData)
 	copy(metadata[offset:], rootData)
-	offset += len(rootData)
-	copy(metadata[offset:], mapData)
 
 	return metadata
 }
@@ -382,23 +360,41 @@ func writeInt32(buf []byte, offset, value int) int {
 	return offset + 4
 }
 
+// getObjectInfo retrieves object metadata using the allocator hierarchy.
+// It queries the OmniBlockAllocator (which will check BlockAllocators and fall back to BasicAllocator).
+func (s *multiStore) getObjectInfo(objId store.ObjectId) (store.ObjectInfo, error) {
+	type objectInfoGetter interface {
+		GetObjectInfo(store.ObjectId) (store.FileOffset, int, error)
+	}
+
+	allocator, ok := s.allocators[1].(objectInfoGetter)
+	if !ok {
+		return store.ObjectInfo{}, errors.New("allocator does not support GetObjectInfo")
+	}
+
+	offset, size, err := allocator.GetObjectInfo(objId)
+	if err != nil {
+		return store.ObjectInfo{}, err
+	}
+
+	return store.ObjectInfo{Offset: offset, Size: size}, nil
+}
+
 // DeleteObj removes an object from the store and frees its space.
-// It atomically retrieves the object info and marks the space as free.
+// It retrieves object metadata from the allocator and frees its space.
 func (s *multiStore) DeleteObj(objId store.ObjectId) error {
 	if !store.IsValidObjectId(objId) {
 		return nil
 	}
-	objectInfo, found := s.objectMap.GetAndDelete(objId, func(info store.ObjectInfo) {
-		// Free the space in the allocator using the stored info
-		s.allocators[1].Free(info.Offset, info.Size)
-	})
 
-	if !found {
+	// Retrieve object info from allocator
+	objectInfo, err := s.getObjectInfo(objId)
+	if err != nil {
 		return nil // Object not found, nothing to delete
 	}
 
-	// The callback already freed the space
-	_ = objectInfo
+	// Free the space in the allocator
+	s.allocators[1].Free(objectInfo.Offset, objectInfo.Size)
 	return nil
 }
 
@@ -417,9 +413,10 @@ func (s *multiStore) PrimeObject(size int) (store.ObjectId, error) {
 	const headerSize = 8
 	const primeObjectId = store.ObjectId(headerSize)
 
-	// Check if the prime object already exists
-	_, found := s.objectMap.Get(primeObjectId)
-	if found {
+	// Check if the prime object already exists using the allocator
+	_, err := s.getObjectInfo(primeObjectId)
+	if err == nil {
+		// Object exists
 		return primeObjectId, nil
 	}
 
@@ -433,13 +430,6 @@ func (s *multiStore) PrimeObject(size int) (store.ObjectId, error) {
 	if objId != primeObjectId {
 		return store.ObjNotAllocated, errors.New("expected prime object to be first allocation")
 	}
-
-	// Store the object info in the object map
-	objectInfo := store.ObjectInfo{
-		Offset: fileOffset,
-		Size:   size,
-	}
-	s.objectMap.Set(objId, objectInfo)
 
 	// Initialize the object with zeros
 	zeros := make([]byte, size)
@@ -455,19 +445,12 @@ func (s *multiStore) PrimeObject(size int) (store.ObjectId, error) {
 }
 
 // NewObj allocates a new object of the given size.
-// It uses the block allocator to find space and records the object in the object map.
+// It uses the block allocator to find space. The allocator records the allocation internally.
 func (s *multiStore) NewObj(size int) (store.ObjectId, error) {
-	objId, fileOffset, err := s.allocators[1].Allocate(size)
+	objId, _, err := s.allocators[1].Allocate(size)
 	if err != nil {
 		return store.ObjNotAllocated, err
 	}
-
-	// Store the object info in the object map
-	objectInfo := store.ObjectInfo{
-		Offset: fileOffset,
-		Size:   size,
-	}
-	s.objectMap.Set(objId, objectInfo)
 
 	return objId, nil
 }
@@ -475,8 +458,8 @@ func (s *multiStore) NewObj(size int) (store.ObjectId, error) {
 // LateReadObj returns a reader for the object with the given ID.
 // Returns an error if the object is not found.
 func (s *multiStore) LateReadObj(id store.ObjectId) (io.Reader, store.Finisher, error) {
-	obj, found := s.objectMap.Get(id)
-	if !found {
+	obj, err := s.getObjectInfo(id)
+	if err != nil {
 		return nil, nil, io.ErrUnexpectedEOF
 	}
 
@@ -490,19 +473,12 @@ func (s *multiStore) LateReadObj(id store.ObjectId) (io.Reader, store.Finisher, 
 }
 
 // LateWriteNewObj allocates a new object and returns a writer for it.
-// The object is allocated from the block allocator and recorded in the object map.
+// The object is allocated from the block allocator. The allocator records the allocation internally.
 func (s *multiStore) LateWriteNewObj(size int) (store.ObjectId, io.Writer, store.Finisher, error) {
 	objId, fileOffset, err := s.allocators[1].Allocate(size)
 	if err != nil {
 		return store.ObjNotAllocated, nil, nil, err
 	}
-
-	// Store the object info in the object map
-	objectInfo := store.ObjectInfo{
-		Offset: fileOffset,
-		Size:   size,
-	}
-	s.objectMap.Set(objId, objectInfo)
 
 	// Create a section writer that writes to the correct offset in the file
 	writer := store.NewSectionWriter(s.file, int64(fileOffset), int64(size))
@@ -516,8 +492,8 @@ func (s *multiStore) LateWriteNewObj(size int) (store.ObjectId, io.Writer, store
 // WriteToObj returns a writer for an existing object.
 // Returns an error if the object is not found.
 func (s *multiStore) WriteToObj(objectId store.ObjectId) (io.Writer, store.Finisher, error) {
-	obj, found := s.objectMap.Get(objectId)
-	if !found {
+	obj, err := s.getObjectInfo(objectId)
+	if err != nil {
 		return nil, nil, io.ErrUnexpectedEOF
 	}
 
@@ -547,8 +523,8 @@ func (s *multiStore) WriteBatchedObjs(objIds []store.ObjectId, data []byte, size
 	expectedOffset := store.FileOffset(0)
 
 	for i, objId := range objIds {
-		obj, found := s.objectMap.Get(objId)
-		if !found {
+		obj, err := s.getObjectInfo(objId)
+		if err != nil {
 			return io.ErrUnexpectedEOF
 		}
 
@@ -578,5 +554,9 @@ func (s *multiStore) WriteBatchedObjs(objIds []store.ObjectId, data []byte, size
 // GetObjectInfo returns the ObjectInfo for a given ObjectId.
 // This is used internally for optimization decisions like batched writes.
 func (s *multiStore) GetObjectInfo(objId store.ObjectId) (store.ObjectInfo, bool) {
-	return s.objectMap.Get(objId)
+	info, err := s.getObjectInfo(objId)
+	if err != nil {
+		return store.ObjectInfo{}, false
+	}
+	return info, true
 }

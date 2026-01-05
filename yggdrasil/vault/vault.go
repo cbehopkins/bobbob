@@ -71,6 +71,34 @@ type MemoryStats struct {
 
 	// OperationsSinceLastFlush tracks operations since the last flush
 	OperationsSinceLastFlush int
+
+	// MemoryBreakdown provides detailed memory usage estimates
+	MemoryBreakdown MemoryBreakdown
+}
+
+// MemoryBreakdown provides detailed memory usage estimates by component.
+type MemoryBreakdown struct {
+	// NodeStructSize is the size of a PersistentTreapNode[T] in bytes (approximate)
+	NodeStructSize int
+
+	// EstimatedNodeMemory is NodeStructSize * TotalInMemoryNodes
+	EstimatedNodeMemory int64
+
+	// NumCollections is the number of active collections
+	NumCollections int
+
+	// NumObjectsInStore is the total number of objects tracked by the store's ObjectMap
+	NumObjectsInStore int
+
+	// EstimatedObjectMapMemory is the memory used by the store's ObjectMap
+	// (map overhead + entries)
+	EstimatedObjectMapMemory int64
+
+	// VaultOverhead estimates the Vault struct and maps overhead
+	VaultOverhead int64
+
+	// TotalEstimated is the sum of all estimated memory usage
+	TotalEstimated int64
 }
 
 // MemoryMonitor tracks memory usage and triggers cleanup when thresholds are exceeded.
@@ -578,7 +606,53 @@ func (v *Vault) GetMemoryStats() MemoryStats {
 		stats.OperationsSinceLastFlush = v.memoryMonitor.operationCount
 	}
 
+	// Calculate memory breakdown
+	stats.MemoryBreakdown = v.calculateMemoryBreakdown(stats.TotalInMemoryNodes, len(v.activeCollections))
+
 	return stats
+}
+
+// calculateMemoryBreakdown estimates memory usage by component.
+// This provides a theoretical calculation based on struct sizes to compare
+// against actual heap usage reported by runtime.MemStats.
+func (v *Vault) calculateMemoryBreakdown(totalNodes int, numCollections int) MemoryBreakdown {
+	breakdown := MemoryBreakdown{
+		NumCollections: numCollections,
+	}
+
+	// Estimate node size:
+	// PersistentTreapNode[T] contains:
+	// - TreapNode[T]: key (interface), priority (uint32), left/right (pointers) ~ 32-48 bytes
+	// - objectId, leftObjectId, rightObjectId: 3 * 8 bytes = 24 bytes
+	// - Store (interface): 2 * 8 bytes = 16 bytes
+	// - parent (pointer): 8 bytes
+	// - lastAccessTime (int64): 8 bytes
+	// Plus payload: varies by type, assume ~64 bytes average
+	// Plus Go runtime overhead: ~32 bytes per allocation
+	// Approximate: 200 bytes per node (conservative estimate)
+	breakdown.NodeStructSize = 200
+
+	breakdown.EstimatedNodeMemory = int64(totalNodes) * int64(breakdown.NodeStructSize)
+
+	// Get store ObjectMap size
+	if bs, ok := v.Store.(interface{ GetObjectCount() int }); ok {
+		breakdown.NumObjectsInStore = bs.GetObjectCount()
+		// ObjectMap overhead:
+		// - map header: ~48 bytes
+		// - per entry: ObjectId (8 bytes) + ObjectInfo (16 bytes) + overhead (~24 bytes) = ~48 bytes
+		breakdown.EstimatedObjectMapMemory = 48 + int64(breakdown.NumObjectsInStore)*48
+	}
+
+	// Vault overhead:
+	// - Vault struct itself: ~128 bytes
+	// - activeCollections map: ~48 bytes + entries
+	// - Map entries: numCollections * (key string + value interface) ~ 80 bytes each
+	// - PersistentTreap structs: numCollections * ~200 bytes
+	breakdown.VaultOverhead = 128 + 48 + int64(numCollections)*(80+200)
+
+	breakdown.TotalEstimated = breakdown.EstimatedNodeMemory + breakdown.EstimatedObjectMapMemory + breakdown.VaultOverhead
+
+	return breakdown
 }
 
 // FlushOlderThan flushes nodes older than the given timestamp across all collections.
@@ -603,6 +677,12 @@ func (v *Vault) FlushOlderThan(cutoffTime int64) (int, error) {
 		}
 		totalFlushed += flushed
 	}
+
+	// Release the collections slice to help GC
+	for i := range collections {
+		collections[i] = nil
+	}
+	collections = nil
 
 	if v.memoryMonitor != nil {
 		v.memoryMonitor.operationCount = 0
@@ -640,6 +720,12 @@ func (v *Vault) FlushOldestPercentile(percentage int) (int, error) {
 		}
 		totalFlushed += flushed
 	}
+
+	// Release the collections slice to help GC
+	for i := range collections {
+		collections[i] = nil
+	}
+	collections = nil
 
 	if v.memoryMonitor != nil {
 		v.memoryMonitor.operationCount = 0

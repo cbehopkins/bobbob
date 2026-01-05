@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/cbehopkins/bobbob/store"
 	"github.com/cbehopkins/bobbob/internal/testutil"
+	"github.com/cbehopkins/bobbob/store"
 	"github.com/cbehopkins/bobbob/yggdrasil/treap"
 )
 
@@ -44,10 +44,10 @@ func TestMultiStoreDeleteObjFreesAllocation(t *testing.T) {
 		t.Fatalf("Expected valid ObjectId, got: %v", objId)
 	}
 
-	// Verify the object exists in the object map
-	objInfo, found := ms.objectMap.Get(objId)
+	// Verify the object exists using GetObjectInfo
+	objInfo, found := ms.GetObjectInfo(objId)
 	if !found {
-		t.Fatalf("Expected object %v to exist in object map", objId)
+		t.Fatalf("Expected object %v to exist in allocator", objId)
 	}
 	t.Logf("Object info: offset=%d, size=%d", objInfo.Offset, objInfo.Size)
 
@@ -57,21 +57,17 @@ func TestMultiStoreDeleteObjFreesAllocation(t *testing.T) {
 		t.Fatalf("Failed to delete object: %v", err)
 	}
 
-	// Verify the object is no longer in the object map
-	_, found = ms.objectMap.Get(objId)
+	// Verify the object is no longer in the allocator
+	_, found = ms.GetObjectInfo(objId)
 	if found {
-		t.Errorf("Expected object %v to be deleted from object map, but it still exists", objId)
+		t.Errorf("Expected object %v to be deleted from allocator, but it still exists", objId)
 	}
 
-	// Note: The current implementation removes from the object map
-	// To fully test free list integration, we need to enhance the design to:
-	// 1. Store ObjectInfo (with FileOffset and Size) as payload in the treap
-	// 2. Call allocator.Free() with the correct FileOffset and size in DeleteObj
-	//
-	// For now, this test verifies that:
+	// Note: Objects are tracked by the allocator
+	// This test verifies that:
 	// - Objects can be allocated via NewObj
-	// - Objects appear in the object map after allocation
-	// - DeleteObj removes objects from the object map
+	// - Objects appear in the allocator after allocation
+	// - DeleteObj removes objects from the allocator
 }
 
 func TestMultiStoreAllocateAndDelete(t *testing.T) {
@@ -102,11 +98,11 @@ func TestMultiStoreAllocateAndDelete(t *testing.T) {
 		objectIds[i] = objId
 	}
 
-	// Verify all objects exist in the object map
+	// Verify all objects exist in the allocator
 	for i, objId := range objectIds {
-		_, found := ms.objectMap.Get(objId)
+		_, found := ms.GetObjectInfo(objId)
 		if !found {
-			t.Errorf("Object %d (id=%v) not found in object map", i, objId)
+			t.Errorf("Object %d (id=%v) not found in allocator", i, objId)
 		}
 	}
 
@@ -120,7 +116,7 @@ func TestMultiStoreAllocateAndDelete(t *testing.T) {
 
 	// Verify deleted objects are gone
 	for i := 0; i < numObjects/2; i++ {
-		_, found := ms.objectMap.Get(objectIds[i])
+		_, found := ms.GetObjectInfo(objectIds[i])
 		if found {
 			t.Errorf("Object %d (id=%v) should be deleted but still exists", i, objectIds[i])
 		}
@@ -128,7 +124,7 @@ func TestMultiStoreAllocateAndDelete(t *testing.T) {
 
 	// Verify remaining objects still exist
 	for i := numObjects / 2; i < numObjects; i++ {
-		_, found := ms.objectMap.Get(objectIds[i])
+		_, found := ms.GetObjectInfo(objectIds[i])
 		if !found {
 			t.Errorf("Object %d (id=%v) should still exist but was not found", i, objectIds[i])
 		}
@@ -159,9 +155,9 @@ func TestMultiStoreDeleteAddsToFreeList(t *testing.T) {
 	t.Logf("Allocated first object with ID: %d", objId1)
 
 	// Get the ObjectInfo for the first object
-	objInfo1, found := ms.objectMap.Get(objId1)
+	objInfo1, found := ms.GetObjectInfo(objId1)
 	if !found {
-		t.Fatalf("Expected to find first object in map")
+		t.Fatalf("Expected to find first object in allocator")
 	}
 	firstOffset := objInfo1.Offset
 	t.Logf("First object at offset: %d, size: %d", firstOffset, objInfo1.Size)
@@ -180,10 +176,10 @@ func TestMultiStoreDeleteAddsToFreeList(t *testing.T) {
 	}
 	t.Logf("Deleted first object")
 
-	// Verify it's gone from the map
-	_, found = ms.objectMap.Get(objId1)
+	// Verify it's gone from the allocator
+	_, found = ms.GetObjectInfo(objId1)
 	if found {
-		t.Errorf("Expected first object to be deleted from map")
+		t.Errorf("Expected first object to be deleted from allocator")
 	}
 
 	// Allocate a third object of the same size
@@ -195,9 +191,9 @@ func TestMultiStoreDeleteAddsToFreeList(t *testing.T) {
 	t.Logf("Allocated third object with ID: %d", objId3)
 
 	// Get the ObjectInfo for the third object
-	objInfo3, found := ms.objectMap.Get(objId3)
+	objInfo3, found := ms.GetObjectInfo(objId3)
 	if !found {
-		t.Fatalf("Expected to find third object in map")
+		t.Fatalf("Expected to find third object in allocator")
 	}
 	t.Logf("Third object at offset: %d, size: %d", objInfo3.Offset, objInfo3.Size)
 

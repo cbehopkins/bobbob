@@ -2,6 +2,7 @@ package vault
 
 import (
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -23,6 +24,10 @@ func TestVaultMemoryStats(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to load vault: %v", err)
 	}
+	t.Cleanup(func() {
+		_ = v.Close()
+		_ = stre.Close()
+	})
 
 	// Register types
 	v.RegisterType((*types.IntKey)(new(int32)))
@@ -408,6 +413,125 @@ func TestSetMemoryBudgetWithPercentile(t *testing.T) {
 	}
 
 	v.Close()
+}
+
+// TestSetMemoryBudgetWithPercentile_LargeDataset simulates a large write load and
+// asserts that the in-memory footprint stays bounded by the configured budget.
+// The dataset size is kept moderate for test runtime, but large enough to exercise
+// flushing behavior and catch regressions where nodes accumulate unchecked.
+func TestSetMemoryBudgetWithPercentile_LargeDataset(t *testing.T) {
+	tempDir := t.TempDir()
+	storePath := filepath.Join(tempDir, "percentile_large.db")
+	stre, err := store.NewBasicStore(storePath)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+
+	v, err := LoadVault(stre)
+	if err != nil {
+		t.Fatalf("Failed to load vault: %v", err)
+	}
+
+	v.RegisterType((*types.IntKey)(new(int32)))
+	v.RegisterType(types.JsonPayload[int]{})
+
+	users, err := GetOrCreateCollection[types.IntKey, types.JsonPayload[int]](
+		v, "users", types.IntLess, (*types.IntKey)(new(int32)),
+	)
+	if err != nil {
+		t.Fatalf("Failed to create users collection: %v", err)
+	}
+
+	const (
+		totalItems   = 100_000
+		budgetNodes  = 2_000
+		heapCeiling  = 250 * 1024 * 1024 // 250 MB ceiling; allocator tracking is now distributed across allocators
+		flushPercent = 50
+	)
+
+	v.SetMemoryBudgetWithPercentile(budgetNodes, flushPercent)
+	v.SetCheckInterval(1)
+
+	// Capture baseline heap usage.
+	runtime.GC()
+	var ms runtime.MemStats
+	runtime.ReadMemStats(&ms)
+	baselineAlloc := ms.Alloc
+
+	// Insert a large dataset; force periodic checks to trigger flushing.
+	for i := 0; i < totalItems; i++ {
+		key := types.IntKey(i)
+		users.Insert(&key, types.JsonPayload[int]{Value: i})
+
+		if i%1_000 == 0 {
+			if err := v.checkMemoryAndFlush(); err != nil {
+				t.Fatalf("checkMemoryAndFlush failed at %d: %v", i, err)
+			}
+		}
+	}
+
+	if err := v.checkMemoryAndFlush(); err != nil {
+		t.Fatalf("final checkMemoryAndFlush failed: %v", err)
+	}
+
+	// Reclaim any garbage before measuring.
+	runtime.GC()
+	runtime.ReadMemStats(&ms)
+	heapUsed := int64(ms.Alloc - baselineAlloc)
+
+	stats := v.GetMemoryStats()
+
+	// Print detailed memory breakdown for analysis
+	t.Logf("=== Memory Analysis ===")
+	t.Logf("In-memory nodes: %d (budget: %d)", stats.TotalInMemoryNodes, budgetNodes)
+	t.Logf("Heap used (runtime.MemStats.Alloc): %d bytes (%.2f MB)", heapUsed, float64(heapUsed)/(1024*1024))
+	t.Logf("")
+	t.Logf("Memory Breakdown (theoretical calculation):")
+	t.Logf("  Node struct size (estimated): %d bytes", stats.MemoryBreakdown.NodeStructSize)
+	t.Logf("  Estimated node memory: %d bytes (%.2f MB)",
+		stats.MemoryBreakdown.EstimatedNodeMemory,
+		float64(stats.MemoryBreakdown.EstimatedNodeMemory)/(1024*1024))
+	t.Logf("  Number of collections: %d", stats.MemoryBreakdown.NumCollections)
+	t.Logf("  Number of objects in store: %d", stats.MemoryBreakdown.NumObjectsInStore)
+	t.Logf("  Estimated ObjectMap memory: %d bytes (%.2f KB)",
+		stats.MemoryBreakdown.EstimatedObjectMapMemory,
+		float64(stats.MemoryBreakdown.EstimatedObjectMapMemory)/1024)
+	t.Logf("  Vault overhead: %d bytes (%.2f KB)",
+		stats.MemoryBreakdown.VaultOverhead,
+		float64(stats.MemoryBreakdown.VaultOverhead)/1024)
+	t.Logf("  Total estimated: %d bytes (%.2f MB)",
+		stats.MemoryBreakdown.TotalEstimated,
+		float64(stats.MemoryBreakdown.TotalEstimated)/(1024*1024))
+	t.Logf("")
+	t.Logf("Comparison:")
+	ratio := float64(heapUsed) / float64(stats.MemoryBreakdown.TotalEstimated)
+	t.Logf("  Actual heap / Estimated: %.2fx", ratio)
+	t.Logf("  Difference: %d bytes (%.2f MB)",
+		heapUsed-stats.MemoryBreakdown.TotalEstimated,
+		float64(heapUsed-stats.MemoryBreakdown.TotalEstimated)/(1024*1024))
+	t.Logf("")
+	t.Logf("Per-object heap overhead (from difference): %.2f bytes",
+		float64(heapUsed-stats.MemoryBreakdown.TotalEstimated)/float64(stats.MemoryBreakdown.NumObjectsInStore))
+
+	if stats.TotalInMemoryNodes > budgetNodes+budgetNodes/2 {
+		t.Fatalf("in-memory nodes exceeded budget: %d (budget %d)", stats.TotalInMemoryNodes, budgetNodes)
+	}
+
+	if heapUsed > heapCeiling {
+		t.Fatalf("heap usage too high: %d bytes (ceiling %d)", heapUsed, heapCeiling)
+	}
+
+	// Spot-check a few keys to ensure data is still readable (may load from disk).
+	for _, probe := range []int{0, totalItems / 2, totalItems - 1} {
+		key := types.IntKey(probe)
+		node := users.Search(&key)
+		if node == nil || node.IsNil() || node.GetPayload().Value != probe {
+			t.Fatalf("probe key %d missing or incorrect", probe)
+		}
+	}
+
+	_ = v.Close()
+	_ = stre.Close()
 }
 
 // TestFlushOldestPercentile verifies that FlushOldestPercentile correctly

@@ -81,7 +81,9 @@ func LoadBaseStore(filePath string) (*baseStore, error) {
 		return nil, fmt.Errorf("failed to deserialize object map from %q: %w", filePath, err)
 	}
 	allocator := &BasicAllocator{
-		end: initialOffset,
+		end:         initialOffset,
+		freeList:    make(GapHeap, 0),
+		allocations: make(map[ObjectId]AllocatedRegion),
 	}
 	// Initialize the Store
 	store := &baseStore{
@@ -390,4 +392,9 @@ func (s *baseStore) Close() error {
 		return fmt.Errorf("failed to sync file to disk: %w", err)
 	}
 	return s.file.Close()
+}
+
+// GetObjectCount returns the number of objects tracked in the store's ObjectMap.
+func (s *baseStore) GetObjectCount() int {
+	return s.objectMap.Len()
 }

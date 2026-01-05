@@ -72,6 +72,30 @@ func (a *blockAllocator) Free(fileOffset FileOffset, size int) error {
 	return nil
 }
 
+// ContainsObjectId checks if an ObjectId belongs to this block allocator's range.
+func (a *blockAllocator) ContainsObjectId(objId ObjectId) bool {
+	return objId >= a.startingObjectId && objId < a.startingObjectId+ObjectId(a.blockCount)
+}
+
+// GetFileOffset returns the FileOffset for an ObjectId managed by this allocator.
+// Returns an error if the ObjectId is not in range or not allocated.
+func (a *blockAllocator) GetFileOffset(objId ObjectId) (FileOffset, error) {
+	if !a.ContainsObjectId(objId) {
+		return 0, errors.New("ObjectId not in range")
+	}
+
+	slotIndex := int(objId - a.startingObjectId)
+	if slotIndex < 0 || slotIndex >= len(a.allocatedList) {
+		return 0, errors.New("invalid slot index")
+	}
+
+	if !a.allocatedList[slotIndex] {
+		return 0, errors.New("slot not allocated")
+	}
+
+	return a.startingFileOffset + FileOffset(slotIndex*a.blockSize), nil
+}
+
 func (a *blockAllocator) Marshal() ([]byte, error) {
 	byteCount := (a.blockCount + 7) / 8
 	data := make([]byte, byteCount)
@@ -331,6 +355,32 @@ func (o *omniBlockAllocator) Free(fileOffset FileOffset, size int) error {
 	}
 
 	return err
+}
+
+// GetObjectInfo returns the FileOffset and Size for an allocated ObjectId.
+// It tries each BlockAllocator to find which one owns this ObjectId,
+// then falls back to the parent allocator if not found.
+func (o *omniBlockAllocator) GetObjectInfo(objId ObjectId) (FileOffset, int, error) {
+	// Try each block allocator
+	for size, allocator := range o.blockMap {
+		if allocator.ContainsObjectId(objId) {
+			offset, err := allocator.GetFileOffset(objId)
+			if err == nil {
+				// Found it in this allocator
+				return offset, size, nil
+			}
+			// Otherwise, continue to next allocator
+		}
+	}
+
+	// Fall back to parent allocator
+	if parentHasGetObjectInfo, ok := o.parent.(interface {
+		GetObjectInfo(ObjectId) (FileOffset, int, error)
+	}); ok {
+		return parentHasGetObjectInfo.GetObjectInfo(objId)
+	}
+
+	return 0, 0, errors.New("ObjectId not found and parent allocator does not support GetObjectInfo")
 }
 
 // Marshal serializes the omniBlockAllocator's state.

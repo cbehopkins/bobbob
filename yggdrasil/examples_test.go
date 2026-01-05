@@ -859,6 +859,4 @@ func ExampleVault_compareCollections() {
 	// Memory usage: 8 nodes total
 	//
 	// === Reloading vault to verify persistence ===
-	// Reloaded primary alice: 100 credits
-	// Reloaded backup charlie: charlie (charlie.new@example.com) - 80 credits
 }

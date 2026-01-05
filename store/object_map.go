@@ -121,6 +121,13 @@ func (om *ObjectMap) Delete(id ObjectId) {
 	delete(om.store, id)
 }
 
+// Len returns the number of objects in the map.
+func (om *ObjectMap) Len() int {
+	om.mu.RLock()
+	defer om.mu.RUnlock()
+	return len(om.store)
+}
+
 // GetAndDelete atomically retrieves and removes an object.
 // The callback is invoked with the ObjectInfo before deletion.
 // Returns the info and a boolean indicating whether the object was found.

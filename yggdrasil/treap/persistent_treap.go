@@ -1248,6 +1248,12 @@ func (t *PersistentTreap[T]) FlushOldestPercentile(percentage int) (int, error) 
 		}
 	}
 
+	// Release the nodes slice to help GC
+	for i := range nodes {
+		nodes[i] = nil
+	}
+	nodes = nil
+
 	return flushedCount, nil
 }
 
