@@ -7,11 +7,12 @@ import (
 
 // AllocatorRange represents a contiguous range of ObjectIds managed by a single allocator.
 // This is used for caching which allocator is responsible for which ObjectId range.
+// Contains all information needed to calculate FileOffset from ObjectId.
 type AllocatorRange struct {
-	StartObjectId int64 // inclusive
-	EndObjectId   int64 // exclusive
-	BlockSize     int
-	Allocator     interface{} // *blockAllocator (avoid circular import)
+	StartObjectId      int64      // inclusive
+	EndObjectId        int64      // exclusive
+	BlockSize          int        // size of each block in bytes
+	StartingFileOffset FileOffset // file offset where the first block begins
 }
 
 // ObjectIdLookupCache is a runtime cache for fast ObjectId -> Allocator lookups.
@@ -31,7 +32,7 @@ func NewObjectIdLookupCache() *ObjectIdLookupCache {
 // AddRange adds a new allocator range to the cache.
 // This should be called when a new allocator is created.
 // Panics if ranges would overlap (defensive check for bugs).
-func (c *ObjectIdLookupCache) AddRange(startObjectId int64, blockSize int, allocator interface{}) error {
+func (c *ObjectIdLookupCache) AddRange(startObjectId int64, blockSize int, startingFileOffset FileOffset) error {
 	endObjectId := startObjectId // Will be updated when we know the allocator's block count
 	
 	// Check for overlaps
@@ -42,10 +43,10 @@ func (c *ObjectIdLookupCache) AddRange(startObjectId int64, blockSize int, alloc
 	}
 
 	newRange := &AllocatorRange{
-		StartObjectId: startObjectId,
-		EndObjectId:   endObjectId,
-		BlockSize:     blockSize,
-		Allocator:     allocator,
+		StartObjectId:      startObjectId,
+		EndObjectId:        endObjectId,
+		BlockSize:          blockSize,
+		StartingFileOffset: startingFileOffset,
 	}
 
 	c.ranges = append(c.ranges, newRange)
@@ -75,9 +76,9 @@ func (c *ObjectIdLookupCache) UpdateRangeEnd(startObjectId int64, endObjectId in
 	return errors.New("range with startObjectId not found")
 }
 
-// Lookup performs a binary search to find the allocator responsible for the given ObjectId.
-// Returns the allocator (cast to *blockAllocator) and blockSize, or an error if not found.
-func (c *ObjectIdLookupCache) Lookup(objectId int64) (interface{}, int, error) {
+// Lookup performs a binary search to find the range information for the given ObjectId.
+// Returns the AllocatorRange containing all information needed to calculate FileOffset.
+func (c *ObjectIdLookupCache) Lookup(objectId int64) (*AllocatorRange, error) {
 	// Binary search for the range containing this ObjectId
 	idx := sort.Search(len(c.ranges), func(i int) bool {
 		return c.ranges[i].StartObjectId > objectId
@@ -88,11 +89,11 @@ func (c *ObjectIdLookupCache) Lookup(objectId int64) (interface{}, int, error) {
 		idx--
 		r := c.ranges[idx]
 		if objectId >= r.StartObjectId && objectId < r.EndObjectId {
-			return r.Allocator, r.BlockSize, nil
+			return r, nil
 		}
 	}
 
-	return nil, 0, errors.New("ObjectId not found in cache")
+	return nil, errors.New("ObjectId not found in cache")
 }
 
 // Clear removes all ranges from the cache.

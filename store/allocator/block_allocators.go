@@ -239,7 +239,7 @@ func (m *multiBlockAllocator) Unmarshal(data []byte) error {
 
 	// Deserialize each blockAllocator
 	m.allocators = make([]*blockAllocator, numAllocators)
-	for i := 0; i < numAllocators; i++ {
+	for i := range numAllocators {
 		allocator := &blockAllocator{
 			blockSize:          m.blockSize,
 			blockCount:         m.blockCount,
@@ -318,7 +318,7 @@ func NewOmniBlockAllocator(blockSize []int, blockCount int, parent Allocator) *o
 		blockMap[size] = ba
 
 		// Populate the cache with the allocator range
-		_ = cache.AddRange(int64(baseObjId), size, ba)
+		_ = cache.AddRange(int64(baseObjId), size, fileOffset)
 		_ = cache.UpdateRangeEnd(int64(baseObjId), int64(endObjId))
 	}
 
@@ -387,16 +387,13 @@ func (o *omniBlockAllocator) Free(FileOffset FileOffset, size int) error {
 // Falls back to parent allocator if ObjectId not found in local allocators.
 func (o *omniBlockAllocator) GetObjectInfo(objId ObjectId) (FileOffset, int, error) {
 	// Try the cache first for O(log n) lookup
-	allocatorIface, blockSize, err := o.lookupCache.Lookup(int64(objId))
+	rangeInfo, err := o.lookupCache.Lookup(int64(objId))
 	if err == nil {
-		// Found in cache - delegate to the allocator
-		allocator := allocatorIface.(*blockAllocator)
-		offset, err := allocator.GetFileOffset(objId)
-		if err == nil {
-			return offset, blockSize, nil
-		}
-		// If the allocator itself says it's not allocated, return the error
-		return 0, 0, err
+		// Calculate the offset directly using the range information
+		// offset = startingFileOffset + (objId - startObjectId) * blockSize
+		slotIndex := int64(objId) - rangeInfo.StartObjectId
+		offset := rangeInfo.StartingFileOffset + FileOffset(slotIndex*int64(rangeInfo.BlockSize))
+		return offset, rangeInfo.BlockSize, nil
 	}
 
 	// Not in cache, fall back to parent allocator
