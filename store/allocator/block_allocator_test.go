@@ -14,6 +14,22 @@ func (m *MockAllocator) Free(fileOffset FileOffset, size int) error {
 	return nil
 }
 
+// trackingAllocator records allocations for behavior checks.
+type trackingAllocator struct {
+	nextOffset  FileOffset
+	allocations []int
+}
+
+func (t *trackingAllocator) Allocate(size int) (ObjectId, FileOffset, error) {
+	obj := ObjectId(t.nextOffset)
+	off := t.nextOffset
+	t.allocations = append(t.allocations, size)
+	t.nextOffset += FileOffset(size)
+	return obj, off, nil
+}
+
+func (t *trackingAllocator) Free(fileOffset FileOffset, size int) error { return nil }
+
 func TestMultiBlockAllocator(t *testing.T) {
 	parentAllocator := &MockAllocator{}
 	blockSize := 1024
@@ -266,6 +282,7 @@ func TestMultiBlockAllocatorReusesDeallocatedSegmentsAcrossBlocks(t *testing.T) 
 		t.Fatalf("expected preParentAllocate to have been called %d times, but it was called %d times", numBlocks+1, preParentAllocateCallCount)
 	}
 }
+
 // TestOmniBlockAllocatorWithCache verifies that the lookup cache is properly initialized
 // and used for GetObjectInfo lookups.
 func TestOmniBlockAllocatorWithCache(t *testing.T) {
@@ -274,11 +291,18 @@ func TestOmniBlockAllocatorWithCache(t *testing.T) {
 
 	blockSizes := []int{256, 512, 1024}
 	blockCount := 10
-	omni := NewOmniBlockAllocator(blockSizes, blockCount, parentAllocator)
+	omni, err := NewOmniBlockAllocator(blockSizes, blockCount, parentAllocator)
+	if err != nil {
+		t.Fatalf("NewOmniBlockAllocator failed: %v", err)
+	}
 
-	// Verify the cache is initialized
-	if omni.lookupCache.Len() != len(blockSizes) {
-		t.Errorf("Expected cache to have %d ranges, got %d", len(blockSizes), omni.lookupCache.Len())
+	// With the new best-fit strategy, we now have default sizes (64, 128, 256, 512, 1024, 2048, 4096)
+	// plus the provided sizes. After deduplication, we should have more ranges.
+	// The exact count depends on overlap: 256, 512, 1024 are already in defaults.
+	// So we expect: 64, 128, 256, 512, 1024, 2048, 4096 = 7 sizes
+	expectedRanges := 7
+	if omni.lookupCache.Len() != expectedRanges {
+		t.Errorf("Expected cache to have %d ranges, got %d", expectedRanges, omni.lookupCache.Len())
 	}
 
 	// Allocate some objects from each size
@@ -310,6 +334,55 @@ func TestOmniBlockAllocatorWithCache(t *testing.T) {
 	}
 }
 
+// Ensure that using WithoutPreallocation defers parent allocations until the
+// first real Allocate call and lazily provisions block allocators.
+func TestOmniBlockAllocatorWithoutPreallocation(t *testing.T) {
+	parent := &trackingAllocator{}
+	blockSizes := []int{256}
+	blockCount := 4
+
+	omni, err := NewOmniBlockAllocator(blockSizes, blockCount, parent, WithoutPreallocation())
+	if err != nil {
+		t.Fatalf("NewOmniBlockAllocator failed: %v", err)
+	}
+
+	// Nothing should have been allocated up front.
+	if len(parent.allocations) != 0 {
+		t.Fatalf("expected no parent allocations before use, got %v", parent.allocations)
+	}
+	if len(omni.blockMap) != 0 {
+		t.Fatalf("expected empty blockMap before first Allocate")
+	}
+
+	// First allocation should provision a block allocator of the best-fit size (256).
+	objId, _, err := omni.Allocate(256)
+	if err != nil {
+		t.Fatalf("allocate failed: %v", err)
+	}
+	if len(parent.allocations) != 1 {
+		t.Fatalf("expected one parent allocation, got %v", parent.allocations)
+	}
+	expectedSize := blockCount * 256
+	if parent.allocations[0] != expectedSize {
+		t.Fatalf("parent allocation size mismatch: got %d want %d", parent.allocations[0], expectedSize)
+	}
+	if len(omni.blockMap) != 1 {
+		t.Fatalf("expected one block allocator provisioned")
+	}
+
+	// Subsequent allocations of the same size should not trigger new parent allocations.
+	if _, _, err := omni.Allocate(200); err != nil {
+		t.Fatalf("second allocate failed: %v", err)
+	}
+	if len(parent.allocations) != 1 {
+		t.Fatalf("expected still one parent allocation, got %v", parent.allocations)
+	}
+
+	// The recorded ObjectId should come from the parent's starting offset (0) plus slot index.
+	if objId != 0 {
+		t.Fatalf("expected first ObjectId to originate at parent offset 0, got %d", objId)
+	}
+}
 
 // TestOmniBlockAllocatorCachePerformance verifies that the cache provides
 // significantly faster lookups for GetObjectInfo.
@@ -320,7 +393,10 @@ func TestOmniBlockAllocatorCachePerformance(t *testing.T) {
 	// Create omni allocator with many different block sizes to increase cache complexity
 	blockSizes := []int{64, 128, 256, 512, 1024, 2048, 4096}
 	blockCount := 5
-	omni := NewOmniBlockAllocator(blockSizes, blockCount, parentAllocator)
+	omni, err := NewOmniBlockAllocator(blockSizes, blockCount, parentAllocator)
+	if err != nil {
+		t.Fatalf("NewOmniBlockAllocator failed: %v", err)
+	}
 
 	// Allocate one object from each size
 	objectIds := make([]ObjectId, 0)
@@ -344,17 +420,20 @@ func TestOmniBlockAllocatorCachePerformance(t *testing.T) {
 }
 
 // TestOmniBlockAllocatorCacheFallback verifies that cache properly falls back to
-// parent allocator for objects allocated from parent.
+// parent allocator for objects allocated from parent (sizes > 4KB or full allocators).
 func TestOmniBlockAllocatorCacheFallback(t *testing.T) {
 	parentAllocator := NewEmptyBasicAllocator()
 	parentAllocator.End = 100000
 
 	blockSizes := []int{256}
 	blockCount := 2
-	omni := NewOmniBlockAllocator(blockSizes, blockCount, parentAllocator)
+	omni, err := NewOmniBlockAllocator(blockSizes, blockCount, parentAllocator)
+	if err != nil {
+		t.Fatalf("NewOmniBlockAllocator failed: %v", err)
+	}
 
-	// Allocate with a size not in blockSizes - should go to parent
-	objId, _, err := omni.Allocate(1000)
+	// Allocate with a size > 4KB - should go to parent directly
+	objId, _, err := omni.Allocate(8192)
 	if err != nil {
 		t.Fatalf("Failed to allocate from parent: %v", err)
 	}
@@ -364,8 +443,8 @@ func TestOmniBlockAllocatorCacheFallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetObjectInfo failed for parent-allocated object: %v", err)
 	}
-	if size != 1000 {
-		t.Errorf("Expected size 1000, got %d", size)
+	if size != 8192 {
+		t.Errorf("Expected size 8192, got %d", size)
 	}
 	if offset == 0 {
 		t.Errorf("Got zero offset")

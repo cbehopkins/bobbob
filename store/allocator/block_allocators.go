@@ -1,13 +1,17 @@
 package allocator
 
 import (
+	"encoding/binary"
 	"errors"
+	"fmt"
+	"sort"
 )
 
 type blockAllocator struct {
 	blockSize          int
 	blockCount         int
 	allocatedList      []bool
+	requestedSizes     []int
 	startingFileOffset FileOffset
 	startingObjectId   ObjectId
 	allAllocated       bool
@@ -22,10 +26,12 @@ type blockAllocator struct {
 // startingObjectId is the ObjectId for the first block.
 func NewBlockAllocator(blockSize, blockCount int, startingFileOffset FileOffset, startingObjectId ObjectId) *blockAllocator {
 	allocatedList := make([]bool, blockCount)
+	requestedSizes := make([]int, blockCount)
 	return &blockAllocator{
 		blockSize:          blockSize,
 		blockCount:         blockCount,
 		allocatedList:      allocatedList,
+		requestedSizes:     requestedSizes,
 		startingFileOffset: startingFileOffset,
 		startingObjectId:   startingObjectId,
 	}
@@ -67,7 +73,52 @@ func (a *blockAllocator) Free(fileOffset FileOffset, size int) error {
 		return errors.New("invalid file offset")
 	}
 	a.allocatedList[blockIndex] = false
+	a.requestedSizes[blockIndex] = 0
 	return nil
+}
+
+// setRequestedSize records the caller-requested size for an allocated slot.
+func (a *blockAllocator) setRequestedSize(objId ObjectId, size int) {
+	if !a.ContainsObjectId(objId) {
+		return
+	}
+	slot := objId - a.startingObjectId
+	if slot < 0 || int(slot) >= len(a.requestedSizes) {
+		return
+	}
+	a.requestedSizes[slot] = size
+}
+
+// requestedSize returns the caller-requested size for an allocated slot if available.
+func (a *blockAllocator) requestedSize(objId ObjectId) (int, bool) {
+	if !a.ContainsObjectId(objId) {
+		return 0, false
+	}
+	slot := objId - a.startingObjectId
+	if slot < 0 || int(slot) >= len(a.requestedSizes) {
+		return 0, false
+	}
+	size := a.requestedSizes[slot]
+	if size == 0 {
+		return 0, false
+	}
+	return size, true
+}
+
+// objectIdForOffset derives the objectId from a file offset if it belongs to this allocator.
+func (a *blockAllocator) objectIdForOffset(fileOffset FileOffset) (ObjectId, bool) {
+	if fileOffset < a.startingFileOffset {
+		return 0, false
+	}
+	maxOffset := a.startingFileOffset + FileOffset(a.blockCount*a.blockSize)
+	if fileOffset >= maxOffset {
+		return 0, false
+	}
+	slot := (fileOffset - a.startingFileOffset) / FileOffset(a.blockSize)
+	if slot < 0 || int(slot) >= len(a.allocatedList) {
+		return 0, false
+	}
+	return a.startingObjectId + ObjectId(slot), true
 }
 
 // ContainsObjectId checks if an ObjectId belongs to this block allocator's range.
@@ -95,22 +146,37 @@ func (a *blockAllocator) GetFileOffset(objId ObjectId) (FileOffset, error) {
 }
 
 func (a *blockAllocator) Marshal() ([]byte, error) {
-	byteCount := (a.blockCount + 7) / 8
-	data := make([]byte, byteCount)
+	bitCount := (a.blockCount + 7) / 8
+	data := make([]byte, 8+bitCount+2*a.blockCount)
+	// startingFileOffset
+	binary.LittleEndian.PutUint64(data[0:8], uint64(a.startingFileOffset))
+	// allocation bitmap
 	for i, allocated := range a.allocatedList {
 		if allocated {
-			data[i/8] |= 1 << (i % 8)
+			data[8+i/8] |= 1 << (i % 8)
 		}
+	}
+	offset := 8 + bitCount
+	for i, size := range a.requestedSizes {
+		binary.LittleEndian.PutUint16(data[offset+2*i:], uint16(size))
 	}
 	return data, nil
 }
 
 func (a *blockAllocator) Unmarshal(data []byte) error {
-	if len(data) != (a.blockCount+7)/8 {
+	bitCount := (a.blockCount + 7) / 8
+	expected := 8 + bitCount + 2*a.blockCount
+	if len(data) != expected {
 		return errors.New("invalid data length")
 	}
+	a.startingFileOffset = FileOffset(binary.LittleEndian.Uint64(data[0:8]))
+	a.startingObjectId = ObjectId(a.startingFileOffset)
 	for i := range a.allocatedList {
-		a.allocatedList[i] = (data[i/8] & (1 << (i % 8))) != 0
+		a.allocatedList[i] = (data[8+i/8] & (1 << (i % 8))) != 0
+	}
+	offset := 8 + bitCount
+	for i := range a.requestedSizes {
+		a.requestedSizes[i] = int(binary.LittleEndian.Uint16(data[offset+2*i:]))
 	}
 	return nil
 }
@@ -244,10 +310,12 @@ func (m *multiBlockAllocator) Unmarshal(data []byte) error {
 			blockSize:          m.blockSize,
 			blockCount:         m.blockCount,
 			allocatedList:      make([]bool, m.blockCount), // Properly initialize allocatedList
+			requestedSizes:     make([]int, m.blockCount),  // Track requested sizes per slot
 			startingFileOffset: 0,                          // Placeholder, will be set later
 			startingObjectId:   0,                          // Placeholder, will be set later
 		}
-		allocatorDataSize := (m.blockCount + 7) / 8
+		bitCount := (m.blockCount + 7) / 8
+		allocatorDataSize := 8 + bitCount + 2*m.blockCount
 		if len(data) < allocatorDataSize {
 			return errors.New("invalid data length")
 		}
@@ -267,16 +335,32 @@ func (m *multiBlockAllocator) Unmarshal(data []byte) error {
 		offset := FileOffset(data[0])<<56 | FileOffset(data[1])<<48 | FileOffset(data[2])<<40 | FileOffset(data[3])<<32 |
 			FileOffset(data[4])<<24 | FileOffset(data[5])<<16 | FileOffset(data[6])<<8 | FileOffset(data[7])
 		m.startOffsets[i] = offset
-		m.allocators[i].startingFileOffset = offset                   // Set startingFileOffset for each allocator
-		m.allocators[i].startingObjectId = ObjectId(i * m.blockCount) // Set startingObjectId for each allocator
+		m.allocators[i].startingFileOffset = offset         // Set startingFileOffset for each allocator
+		m.allocators[i].startingObjectId = ObjectId(offset) // Align object IDs to parent allocator offsets
 		data = data[8:]
 	}
 
 	return nil
 }
 
+// defaultBlockSizes returns the default block sizes used by omniBlockAllocator.
+// These provide sensible defaults for small to medium objects (64 bytes to 4KB).
+// Larger objects are handled by the parent BasicAllocator.
+func defaultBlockSizes() []int {
+	return []int{
+		64,   // 64 bytes
+		128,  // 128 bytes
+		256,  // 256 bytes
+		512,  // 512 bytes
+		1024, // 1 KB
+		2048, // 2 KB
+		4096, // 4 KB
+	}
+}
+
 type omniBlockAllocator struct {
 	blockMap     map[int]*blockAllocator
+	sortedSizes  []int // sorted block sizes for best-fit allocation
 	blockCount   int
 	parent       Allocator
 	preAllocate  func(size int) error
@@ -284,50 +368,87 @@ type omniBlockAllocator struct {
 	preFree      func(FileOffset FileOffset, size int) error
 	postFree     func(FileOffset FileOffset, size int) error
 	lookupCache  *ObjectIdLookupCache
+	maxBlockSize int // largest block size, objects larger than this use parent
+}
+
+type omniBlockAllocatorOptions struct {
+	preallocate bool
+}
+
+// OmniBlockAllocatorOption configures optional behaviors for NewOmniBlockAllocator.
+type OmniBlockAllocatorOption func(*omniBlockAllocatorOptions)
+
+// WithoutPreallocation builds the allocator metadata without reserving space from the parent.
+// Useful when immediately calling Unmarshal on persisted data to avoid mutating the parent state.
+func WithoutPreallocation() OmniBlockAllocatorOption {
+	return func(o *omniBlockAllocatorOptions) { o.preallocate = false }
 }
 
 // NewOmniBlockAllocator creates an allocator that manages multiple block sizes.
-// It maintains a separate block allocator for each requested size.
-// blockSize is a slice of different block sizes to support.
+// It combines default block sizes (64B-4KB) with any additional provided sizes.
+// The allocator uses a best-fit strategy: for allocation requests, it finds the
+// smallest block size that fits. Objects larger than the maximum block size are
+// delegated to the parent allocator.
+//
+// blockSize is a slice of additional block sizes to support beyond the defaults.
 // blockCount is the number of blocks in each sub-allocator.
-// parent is the fallback allocator for sizes not in the blockSize slice.
-func NewOmniBlockAllocator(blockSize []int, blockCount int, parent Allocator) *omniBlockAllocator {
+// parent is the fallback allocator for sizes not in the block allocator range.
+// opts can be used to disable upfront parent allocations (e.g., when unmarshaling persisted data).
+func NewOmniBlockAllocator(blockSize []int, blockCount int, parent Allocator, opts ...OmniBlockAllocatorOption) (*omniBlockAllocator, error) {
+	config := omniBlockAllocatorOptions{preallocate: true}
+	for _, opt := range opts {
+		opt(&config)
+	}
+
+	// Combine default sizes with provided sizes
+	allSizes := append(defaultBlockSizes(), blockSize...)
+
+	// Deduplicate and sort sizes
+	seen := make(map[int]bool)
+	var uniqueSizes []int
+	for _, size := range allSizes {
+		if !seen[size] {
+			seen[size] = true
+			uniqueSizes = append(uniqueSizes, size)
+		}
+	}
+
+	// Sort sizes for binary search during allocation
+	sort.Ints(uniqueSizes)
+
 	blockMap := make(map[int]*blockAllocator)
 	cache := NewObjectIdLookupCache()
+	var maxBlockSize int
+	if len(uniqueSizes) > 0 {
+		maxBlockSize = uniqueSizes[len(uniqueSizes)-1]
+	}
 
-	// Assign non-overlapping ObjectId ranges to each block allocator.
-	// Each allocator gets a range of [baseId, baseId + blockCount)
-	for i, size := range blockSize {
-		// Calculate a base ObjectId that won't overlap with other allocators.
-		// Since each allocator manages blockCount ObjectIds, we can multiply by blockCount.
-		// Add 1 to skip ObjectId 0 which is reserved.
-		baseObjId := ObjectId(i*blockCount + 1)
-		endObjId := baseObjId + ObjectId(blockCount)
+	if config.preallocate {
+		// Assign non-overlapping ObjectId ranges to each block allocator using the parent allocator.
+		for _, size := range uniqueSizes {
+			totalSize := blockCount * size
+			baseObjId, fileOffset, err := parent.Allocate(totalSize)
+			if err != nil {
+				return nil, fmt.Errorf("prealloc block size %d: %w", size, err)
+			}
 
-		// Pre-allocate file space for this block allocator from the parent.
-		// Each block allocator needs blockCount * size bytes of file space.
-		totalSize := blockCount * size
-		_, fileOffset, err := parent.Allocate(totalSize)
-		if err != nil {
-			// If allocation fails, continue with a fallback offset.
-			// This allows graceful degradation, though it may cause collisions.
-			fileOffset = 0
+			ba := NewBlockAllocator(size, blockCount, fileOffset, baseObjId)
+			blockMap[size] = ba
+
+			// Populate the cache with the allocator range
+			_ = cache.AddRange(int64(baseObjId), size, fileOffset)
+			_ = cache.UpdateRangeEnd(int64(baseObjId), int64(baseObjId)+int64(blockCount))
 		}
-
-		ba := NewBlockAllocator(size, blockCount, fileOffset, baseObjId)
-		blockMap[size] = ba
-
-		// Populate the cache with the allocator range
-		_ = cache.AddRange(int64(baseObjId), size, fileOffset)
-		_ = cache.UpdateRangeEnd(int64(baseObjId), int64(endObjId))
 	}
 
 	return &omniBlockAllocator{
-		blockMap:    blockMap,
-		blockCount:  blockCount,
-		parent:      parent,
-		lookupCache: cache,
-	}
+		blockMap:     blockMap,
+		sortedSizes:  uniqueSizes,
+		blockCount:   blockCount,
+		parent:       parent,
+		lookupCache:  cache,
+		maxBlockSize: maxBlockSize,
+	}, nil
 }
 
 func (o *omniBlockAllocator) Allocate(size int) (ObjectId, FileOffset, error) {
@@ -337,16 +458,51 @@ func (o *omniBlockAllocator) Allocate(size int) (ObjectId, FileOffset, error) {
 		}
 	}
 
-	allocator, ok := o.blockMap[size]
 	var ObjectId ObjectId
 	var FileOffset FileOffset
 	var err error
-	if ok {
-		ObjectId, FileOffset, err = allocator.Allocate(size)
-	} else {
-		// Defer to the parent allocator if size is not found
-		ObjectId, FileOffset, err = o.parent.Allocate(size)
+
+	// Try best-fit: find the smallest block size that can hold this object
+	if size <= o.maxBlockSize {
+		// Binary search for the first block size >= requested size
+		idx := sort.SearchInts(o.sortedSizes, size)
+
+		if idx < len(o.sortedSizes) {
+			// Found a suitable block size; lazily provision allocator if absent (e.g., after unmarshaling without preallocation)
+			blockSize := o.sortedSizes[idx]
+			allocator, ok := o.blockMap[blockSize]
+			if !ok || allocator == nil {
+				baseObjId, fileOffset, allocErr := o.parent.Allocate(blockSize * o.blockCount)
+				if allocErr != nil {
+					return 0, 0, fmt.Errorf("parent allocate for block size %d failed: %w", blockSize, allocErr)
+				}
+				allocator = NewBlockAllocator(blockSize, o.blockCount, fileOffset, baseObjId)
+				o.blockMap[blockSize] = allocator
+				if o.lookupCache != nil {
+					_ = o.lookupCache.AddRange(int64(baseObjId), blockSize, fileOffset)
+					_ = o.lookupCache.UpdateRangeEnd(int64(baseObjId), int64(baseObjId)+int64(o.blockCount))
+				}
+			}
+			if allocator != nil {
+				ObjectId, FileOffset, err = allocator.Allocate(blockSize)
+				if err == nil {
+					// Record the caller-requested size (may be <= blockSize)
+					allocator.setRequestedSize(ObjectId, size)
+					if o.postAllocate != nil {
+						if postErr := o.postAllocate(ObjectId, FileOffset); postErr != nil {
+							return 0, 0, postErr
+						}
+					}
+					return ObjectId, FileOffset, nil
+				}
+			}
+			// If this block allocator is missing or full, fall through to parent
+		}
 	}
+
+	// Object too large or all suitable block allocators are full:
+	// Defer to the parent allocator
+	ObjectId, FileOffset, err = o.parent.Allocate(size)
 
 	if o.postAllocate != nil {
 		if postErr := o.postAllocate(ObjectId, FileOffset); postErr != nil {
@@ -364,14 +520,34 @@ func (o *omniBlockAllocator) Free(FileOffset FileOffset, size int) error {
 		}
 	}
 
-	allocator, ok := o.blockMap[size]
 	var err error
-	if ok {
-		err = allocator.Free(FileOffset, size)
-	} else {
-		// Defer to the parent allocator if size is not found
-		err = o.parent.Free(FileOffset, size)
+
+	// Try best-fit: find the smallest block size that would have held this object
+	if size <= o.maxBlockSize {
+		idx := sort.SearchInts(o.sortedSizes, size)
+
+		if idx < len(o.sortedSizes) {
+			blockSize := o.sortedSizes[idx]
+			allocator, ok := o.blockMap[blockSize]
+			if ok && allocator != nil {
+				if objId, ok := allocator.objectIdForOffset(FileOffset); ok {
+					allocator.setRequestedSize(objId, 0)
+				}
+				err = allocator.Free(FileOffset, blockSize)
+				if err == nil {
+					if o.postFree != nil {
+						if postErr := o.postFree(FileOffset, blockSize); postErr != nil {
+							return postErr
+						}
+					}
+					return nil
+				}
+			}
+		}
 	}
+
+	// Object too large or not in block allocators: defer to parent
+	err = o.parent.Free(FileOffset, size)
 
 	if o.postFree != nil {
 		if postErr := o.postFree(FileOffset, size); postErr != nil {
@@ -389,11 +565,22 @@ func (o *omniBlockAllocator) GetObjectInfo(objId ObjectId) (FileOffset, int, err
 	// Try the cache first for O(log n) lookup
 	rangeInfo, err := o.lookupCache.Lookup(int64(objId))
 	if err == nil {
-		// Calculate the offset directly using the range information
-		// offset = startingFileOffset + (objId - startObjectId) * blockSize
-		slotIndex := int64(objId) - rangeInfo.StartObjectId
-		offset := rangeInfo.StartingFileOffset + FileOffset(slotIndex*int64(rangeInfo.BlockSize))
-		return offset, rangeInfo.BlockSize, nil
+		// Validate against the backing allocator to ensure the slot is allocated
+		allocator, ok := o.blockMap[rangeInfo.BlockSize]
+		if ok && allocator != nil {
+			if !allocator.ContainsObjectId(objId) {
+				return 0, 0, errors.New("ObjectId not managed by block allocator")
+			}
+			offset, allocErr := allocator.GetFileOffset(objId)
+			if allocErr != nil {
+				return 0, 0, allocErr
+			}
+			size := rangeInfo.BlockSize
+			if requested, ok := allocator.requestedSize(objId); ok {
+				size = requested
+			}
+			return offset, size, nil
+		}
 	}
 
 	// Not in cache, fall back to parent allocator
@@ -494,16 +681,27 @@ func (o *omniBlockAllocator) Unmarshal(data []byte) error {
 	o.blockMap = make(map[int]*blockAllocator)
 
 	// Deserialize each allocator
-	for i, size := range sizes {
+	bitCount := (o.blockCount + 7) / 8
+	allocatorDataSize := 8 + bitCount + 2*o.blockCount
+
+	o.sortedSizes = make([]int, len(sizes))
+	copy(o.sortedSizes, sizes)
+	sort.Ints(o.sortedSizes)
+	if len(o.sortedSizes) > 0 {
+		o.maxBlockSize = o.sortedSizes[len(o.sortedSizes)-1]
+	}
+	o.lookupCache = NewObjectIdLookupCache()
+
+	for _, size := range sizes {
 		allocator := &blockAllocator{
 			blockSize:          size,
 			blockCount:         o.blockCount,
 			allocatedList:      make([]bool, o.blockCount),
+			requestedSizes:     make([]int, o.blockCount),
 			startingFileOffset: 0,
-			startingObjectId:   ObjectId(i),
+			startingObjectId:   0,
 		}
 
-		allocatorDataSize := (o.blockCount + 7) / 8
 		if len(data) < offset+allocatorDataSize {
 			return errors.New("invalid data length for allocator")
 		}
@@ -513,6 +711,8 @@ func (o *omniBlockAllocator) Unmarshal(data []byte) error {
 		}
 
 		o.blockMap[size] = allocator
+		_ = o.lookupCache.AddRange(int64(allocator.startingObjectId), size, allocator.startingFileOffset)
+		_ = o.lookupCache.UpdateRangeEnd(int64(allocator.startingObjectId), int64(allocator.startingObjectId)+int64(o.blockCount))
 		offset += allocatorDataSize
 	}
 

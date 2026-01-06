@@ -35,27 +35,6 @@ import (
 	"github.com/cbehopkins/bobbob/yggdrasil/treap"
 )
 
-// deduplicateBlockSizes removes duplicate values from a slice of block sizes.
-// This ensures that the omniBlockAllocator doesn't create redundant allocators
-// for the same block size.
-func deduplicateBlockSizes(sizes []int) []int {
-	if len(sizes) == 0 {
-		return sizes
-	}
-
-	seen := make(map[int]bool)
-	result := make([]int, 0, len(sizes))
-
-	for _, size := range sizes {
-		if !seen[size] {
-			seen[size] = true
-			result = append(result, size)
-		}
-	}
-
-	return result
-}
-
 // multiStore implements a store with multiple allocators for different object sizes.
 // It uses a root allocator and a block allocator optimized for persistent treap nodes.
 type multiStore struct {
@@ -96,8 +75,16 @@ func NewMultiStore(filePath string) (*multiStore, error) {
 	}
 
 	blockCount := 1024
-	blockSizes := deduplicateBlockSizes(treap.PersistentTreapObjectSizes())
-	omniAllocator := allocator.NewOmniBlockAllocator(blockSizes, blockCount, rootAllocator)
+	omniAllocator, err := allocator.NewOmniBlockAllocator(
+		treap.PersistentTreapObjectSizes(),
+		blockCount,
+		rootAllocator,
+		allocator.WithoutPreallocation(),
+	)
+	if err != nil {
+		_ = file.Close()
+		return nil, err
+	}
 
 	ms := &multiStore{
 		filePath:   filePath,
@@ -209,8 +196,15 @@ func unmarshalComponents(rootData, omniData []byte) (*allocator.BasicAllocator, 
 
 	// Create and unmarshal omniAllocator
 	blockCount := 1024
-	blockSizes := deduplicateBlockSizes(treap.PersistentTreapObjectSizes())
-	omniAllocator := allocator.NewOmniBlockAllocator(blockSizes, blockCount, rootAllocator)
+	omniAllocator, err := allocator.NewOmniBlockAllocator(
+		treap.PersistentTreapObjectSizes(),
+		blockCount,
+		rootAllocator,
+		allocator.WithoutPreallocation(),
+	)
+	if err != nil {
+		return nil, nil, err
+	}
 
 	omniUnmarshaler, ok := any(omniAllocator).(unmarshaler)
 	if !ok {
@@ -405,7 +399,9 @@ func (s *multiStore) DeleteObj(objId store.ObjectId) error {
 // PrimeObject returns a dedicated ObjectId for application metadata.
 // For multiStore, this is the first object after the 8-byte header at ObjectId 0.
 // If it doesn't exist yet, it allocates it with the specified size.
-// This provides a stable, known location for storing top-level metadata.
+// This provides a stable, known location for storing top-level metadata. This must
+// be the first allocation in the file; MultiStore disables omni preallocation
+// specifically so this ID is predictable and stable across reloads.
 func (s *multiStore) PrimeObject(size int) (store.ObjectId, error) {
 	// Sanity check: prevent unreasonably large prime objects
 	const maxPrimeObjectSize = 1024 * 1024 // 1MB should be plenty for metadata

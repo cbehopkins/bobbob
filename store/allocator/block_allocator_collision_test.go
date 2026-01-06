@@ -61,7 +61,10 @@ func TestOmniBlockAllocatorFileOffsetIsolation(t *testing.T) {
 	// Create an omniBlockAllocator with multiple block sizes
 	blockSizes := []int{64, 128, 256}
 	blockCount := 10
-	omni := NewOmniBlockAllocator(blockSizes, blockCount, parent)
+	omni, err := NewOmniBlockAllocator(blockSizes, blockCount, parent)
+	if err != nil {
+		t.Fatalf("NewOmniBlockAllocator failed: %v", err)
+	}
 
 	// Allocate from different block sizes
 	objId1, fileOffset1, err := omni.Allocate(64)

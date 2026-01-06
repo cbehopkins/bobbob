@@ -450,7 +450,7 @@ func ExampleVault() {
 // ExampleVault_memoryManagement demonstrates using memory monitoring to automatically
 // control memory usage by flushing old nodes.
 func ExampleVault_memoryManagement() {
-	tmpFile := filepath.Join(os.TempDir(), "example_memory.db")
+	tmpFile := filepath.Join(os.TempDir(), "example_memory_"+fmt.Sprintf("%d", time.Now().UnixNano())+".db")
 	defer os.Remove(tmpFile)
 
 	session, colls, _ := vault.OpenVault(
@@ -565,7 +565,7 @@ func ExampleVault_memoryManagementPercentile() {
 // the same key multiple times. This shows whether payloads are overwritten,
 // ignored, or if some other behavior occurs.
 func ExampleVault_updateExistingKey() {
-	tmpFile := filepath.Join(os.TempDir(), "example_update.db")
+	tmpFile := filepath.Join(os.TempDir(), "example_update_"+fmt.Sprintf("%d", time.Now().UnixNano())+".db")
 	defer os.Remove(tmpFile)
 
 	session, colls, _ := vault.OpenVault(
@@ -638,7 +638,7 @@ func ExampleVault_updateExistingKey() {
 // ExampleVault_dynamicCollections demonstrates adding collections on-demand using identities.
 // Each identity (IntKey) maps to a collection of MD5Key -> []string payloads, created lazily.
 func ExampleVault_dynamicCollections() {
-	tmpFile := filepath.Join(os.TempDir(), "example_dynamic_vault.db")
+	tmpFile := filepath.Join(os.TempDir(), "example_dynamic_vault_"+fmt.Sprintf("%d", time.Now().UnixNano())+".db")
 	defer os.Remove(tmpFile)
 
 	// Open with no predefined collections; we'll create them dynamically.
@@ -698,7 +698,7 @@ func ExampleVault_dynamicCollections() {
 // 2. Setting up FlushOldestPercentile for memory management
 // 3. Using Compare to find differences between collections
 func ExampleVault_compareCollections() {
-	tmpFile := filepath.Join(os.TempDir(), "example_compare_vault.db")
+	tmpFile := filepath.Join(os.TempDir(), "example_compare_vault_"+fmt.Sprintf("%d", time.Now().UnixNano())+".db")
 	defer os.Remove(tmpFile)
 
 	// 1. Create a vault with two collections using identity-based lookup (no positional indexing)
@@ -859,4 +859,6 @@ func ExampleVault_compareCollections() {
 	// Memory usage: 8 nodes total
 	//
 	// === Reloading vault to verify persistence ===
+	// Reloaded primary alice: 100 credits
+	// Reloaded backup charlie: charlie (charlie.new@example.com) - 80 credits
 }

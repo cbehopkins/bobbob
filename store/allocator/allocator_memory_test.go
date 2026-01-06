@@ -100,7 +100,10 @@ func TestOmniBlockAllocatorMemoryOverhead(t *testing.T) {
 	// Create an OmniBlockAllocator
 	parent := &MockAllocator{}
 	blockSizes := []int{64, 128, 256, 512, 1024}
-	omni := NewOmniBlockAllocator(blockSizes, itemsPerBlock, parent)
+	omni, err := NewOmniBlockAllocator(blockSizes, itemsPerBlock, parent)
+	if err != nil {
+		t.Fatalf("NewOmniBlockAllocator failed: %v", err)
+	}
 
 	// Calculate expected memory for each BlockAllocator
 	structSize := 64 // approximate blockAllocator struct size
@@ -142,14 +145,19 @@ func TestOmniBlockAllocatorMemoryOverhead(t *testing.T) {
 	}
 
 	// Verify number of BlockAllocators created
+	// With the new best-fit strategy, we now combine provided sizes with defaults.
+	// Defaults are [64, 128, 256, 512, 1024, 2048, 4096]
+	// Provided are [64, 128, 256, 512, 1024]
+	// After deduplication, we get: 64, 128, 256, 512, 1024, 2048, 4096 = 7 allocators
 	allocatorCount := len(omni.blockMap)
 	t.Logf("Number of BlockAllocators created: %d", allocatorCount)
 
-	if allocatorCount != len(blockSizes) {
-		t.Errorf("Expected %d BlockAllocators (one per size), got %d",
-			len(blockSizes), allocatorCount)
+	expectedAllocators := 7 // 5 provided + 2 additional defaults (2048, 4096) not in original list
+	if allocatorCount != expectedAllocators {
+		t.Errorf("Expected %d BlockAllocators (provided + defaults with deduplication), got %d",
+			expectedAllocators, allocatorCount)
 	} else {
-		t.Logf("✓ One BlockAllocator per block size as expected")
+		t.Logf("✓ BlockAllocators include defaults plus provided sizes")
 	}
 
 	t.Logf("✓ Successfully allocated %d items across %d block sizes", itemCount, len(blockSizes))

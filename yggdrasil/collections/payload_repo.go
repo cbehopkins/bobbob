@@ -14,6 +14,7 @@ type PayloadRepo struct {
 }
 
 func NewPayloadRepo(tm *types.TypeMap, store store.Storer) *PayloadRepo {
+	// FIXME dead code? Only used in tests...
 	keyTemplate := types.ShortCodeType(0)
 	ppt := treap.NewPersistentPayloadTreap[types.ShortCodeType, treap.UntypedPersistentPayload](types.ShortCodeLess, &keyTemplate, store)
 	return &PayloadRepo{
