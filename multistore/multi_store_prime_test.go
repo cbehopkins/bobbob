@@ -15,7 +15,7 @@ func TestPrimeObjectIsFirstAllocation(t *testing.T) {
 	tempDir := t.TempDir()
 	filePath := filepath.Join(tempDir, "prime_first.bin")
 
-	ms, err := NewMultiStore(filePath)
+	ms, err := NewMultiStore(filePath, 0)
 	if err != nil {
 		t.Fatalf("failed to create multistore: %v", err)
 	}
@@ -54,7 +54,7 @@ func TestPrimeObjectIsFirstAllocation(t *testing.T) {
 		t.Fatalf("close failed: %v", err)
 	}
 
-	ms2, err := LoadMultiStore(filePath)
+	ms2, err := LoadMultiStore(filePath, 0)
 	if err != nil {
 		t.Fatalf("reload failed: %v", err)
 	}

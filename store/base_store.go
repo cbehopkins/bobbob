@@ -168,8 +168,7 @@ func (s *baseStore) PrimeObject(size int) (ObjectId, error) {
 	})
 
 	// Initialize the object with zeros
-	zeros := make([]byte, size)
-	n, err := s.file.WriteAt(zeros, int64(fileOffset))
+	n, err := WriteZeros(s.file, fileOffset, size)
 	if err != nil {
 		return ObjNotAllocated, fmt.Errorf("failed to initialize prime object: %w", err)
 	}
@@ -209,11 +208,35 @@ func (s *baseStore) LateWriteNewObj(size int) (ObjectId, io.Writer, Finisher, er
 		return ObjNotAllocated, nil, nil, err
 	}
 	// Create a section writer that writes to the correct offset in the file
-	writer := NewSectionWriter(s.file, int64(fileOffset), int64(size))
+	writer := CreateSectionWriter(s.file, fileOffset, size)
 
 	s.objectMap.Set(objId, ObjectInfo{Offset: fileOffset, Size: size})
 
 	return objId, writer, nil, nil
+}
+
+// AllocateRun attempts to reserve a contiguous run of objects of the given size.
+// Returns ErrAllocateRunUnsupported when the underlying allocator cannot guarantee contiguity.
+func (s *baseStore) AllocateRun(size int, count int) ([]ObjectId, []FileOffset, error) {
+	if err := s.checkFileInitialized(); err != nil {
+		return nil, nil, err
+	}
+
+	ra, ok := s.allocator.(allocator.RunAllocator)
+	if !ok {
+		return nil, nil, ErrAllocateRunUnsupported
+	}
+
+	objIds, offsets, err := ra.AllocateRun(size, count)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	for i, objId := range objIds {
+		s.objectMap.Set(objId, ObjectInfo{Offset: offsets[i], Size: size})
+	}
+
+	return objIds, offsets, nil
 }
 
 // WriteToObj is a Late method that returns a writer for an existing object.
@@ -227,7 +250,7 @@ func (s *baseStore) WriteToObj(objectId ObjectId) (io.Writer, Finisher, error) {
 	if !found {
 		return nil, nil, errors.New("object not found")
 	}
-	writer := NewSectionWriter(s.file, int64(obj.Offset), int64(obj.Size))
+	writer := CreateSectionWriter(s.file, obj.Offset, obj.Size)
 	return writer, s.createCloser(objectId), nil
 }
 
@@ -274,7 +297,7 @@ func (s *baseStore) WriteBatchedObjs(objIds []ObjectId, data []byte, sizes []int
 	// Write all data in one operation
 	// Note: We don't validate that sizes[i] matches obj.Size because the caller
 	// might write less than the allocated size (similar to WriteBytesToObj)
-	n, err := s.file.WriteAt(data, int64(firstOffset))
+	n, err := WriteBatchedSections(s.file, firstOffset, [][]byte{data})
 	if err != nil {
 		return fmt.Errorf("failed to write batched objects: %w", err)
 	}
@@ -320,7 +343,7 @@ func (s *baseStore) lateReadObj(objId ObjectId) (io.Reader, Finisher, error) {
 	}
 	// For now they are always the same but we will implement a mapping in the future
 	fileOffset := FileOffset(obj.Offset)
-	reader := io.NewSectionReader(s.file, int64(fileOffset), int64(obj.Size))
+	reader := CreateSectionReader(s.file, fileOffset, obj.Size)
 	return reader, s.createCloser(objId), nil
 }
 

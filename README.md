@@ -76,6 +76,42 @@ type Storer interface {
 }
 ```
 
+### Layered Architecture
+
+The store layer uses a composable architecture where different concerns are layered:
+
+**Base Store Types:**
+- **`baseStore`** - Single allocator (BasicAllocator) with ObjectMap for simple object storage
+- **`multiStore`** - Multi-allocator (OmniBlockAllocator) with size-based routing for efficient block management
+
+**Concurrent Wrapper:**
+- **`concurrentStore`** - Adds per-object locking and optional disk I/O rate limiting to any Storer
+
+**Creating Concurrent Multi-Allocator Stores:**
+
+```go
+// Option 1: Using convenience constructors (simplest)
+cs, err := multistore.NewConcurrentMultiStore(path, diskTokens)
+// or load existing
+cs, err := multistore.LoadConcurrentMultiStore(path, diskTokens)
+
+// Option 2: Manual composition (more control)
+ms, err := multistore.NewMultiStore(path, diskTokens)
+if err != nil {
+    return err
+}
+cs := store.NewConcurrentStoreWrapping(ms, diskTokens)
+```
+
+Both approaches give you concurrent + multi-allocator capabilities. Use `diskTokens > 0` to limit concurrent disk operations, or `0` for unlimited.
+
+**Architecture Note:** multiStore doesn't implement the optional `RunAllocator` interface (used for batch persistence with contiguous allocation). This is intentional - OmniBlockAllocator routes objects to different block allocators by size, making contiguous allocation across size classes infeasible.
+
+**Tested Examples (preferred over inline snippets):**
+- Concurrent multi-allocator usage and disk tokens: [multistore/concurrent_multi_store_test.go](multistore/concurrent_multi_store_test.go)
+- Concurrent wrapper behaviors and optional interfaces: [store/concurrent_store_test.go](store/concurrent_store_test.go)
+- Batch persistence with treaps (baseStore path): [yggdrasil/treap/persistent_treap_batch_external_test.go](yggdrasil/treap/persistent_treap_batch_external_test.go)
+
 ### Usage Examples
 
 **Streaming I/O (Late methods - for large objects):**

@@ -63,6 +63,48 @@ func (a *blockAllocator) Allocate(size int) (ObjectId, FileOffset, error) {
 	return 0, 0, AllAllocated
 }
 
+// AllocateRun reserves a contiguous run of free slots within this block allocator.
+// Returns ErrNoContiguousRange if sufficient contiguous slots are not available.
+func (a *blockAllocator) AllocateRun(size int, count int) ([]ObjectId, []FileOffset, error) {
+	if size != a.blockSize {
+		return nil, nil, errors.New("size must match block size")
+	}
+	if count <= 0 {
+		return nil, nil, errors.New("count must be positive")
+	}
+	if count > a.blockCount {
+		return nil, nil, ErrNoContiguousRange
+	}
+
+	runStart := -1
+	freeRun := 0
+	for i, allocated := range a.allocatedList {
+		if !allocated {
+			if runStart == -1 {
+				runStart = i
+			}
+			freeRun++
+			if freeRun == count {
+				objIds := make([]ObjectId, count)
+				offsets := make([]FileOffset, count)
+				for j := 0; j < count; j++ {
+					idx := runStart + j
+					a.allocatedList[idx] = true
+					objIds[j] = a.startingObjectId + ObjectId(idx)
+					offsets[j] = a.startingFileOffset + FileOffset(idx*a.blockSize)
+					a.requestedSizes[idx] = size
+				}
+				return objIds, offsets, nil
+			}
+			continue
+		}
+		runStart = -1
+		freeRun = 0
+	}
+
+	return nil, nil, ErrNoContiguousRange
+}
+
 func (a *blockAllocator) Free(fileOffset FileOffset, size int) error {
 	a.allAllocated = false
 	if size != a.blockSize {
@@ -244,6 +286,51 @@ func (m *multiBlockAllocator) Allocate(size int) (ObjectId, FileOffset, error) {
 	m.startOffsets = append(m.startOffsets, parentFileOffset)
 
 	return newAllocator.Allocate(m.blockSize)
+}
+
+// AllocateRun reserves a contiguous run of blocks within a single sub-allocator.
+// The run cannot span block allocator boundaries; the caller should ensure count
+// is less than or equal to blockCount. Returns ErrNoContiguousRange when no
+// contiguous run is available and ErrRunUnsupported for incompatible sizes.
+func (m *multiBlockAllocator) AllocateRun(size int, count int) ([]ObjectId, []FileOffset, error) {
+	if size != m.blockSize {
+		return nil, nil, ErrRunUnsupported
+	}
+	if count <= 0 || count > m.blockCount {
+		return nil, nil, ErrNoContiguousRange
+	}
+
+	for _, allocator := range m.allocators {
+		objIds, offsets, err := allocator.AllocateRun(size, count)
+		if err == nil {
+			return objIds, offsets, nil
+		}
+		if !errors.Is(err, ErrNoContiguousRange) && !errors.Is(err, AllAllocated) {
+			return nil, nil, err
+		}
+	}
+
+	// Need a new allocator segment
+	if m.preParentAllocate != nil {
+		if err := m.preParentAllocate(size); err != nil {
+			return nil, nil, err
+		}
+	}
+	parentObjectId, parentFileOffset, err := m.parent.Allocate(m.blockSize * m.blockCount)
+	if err != nil {
+		return nil, nil, err
+	}
+	if m.postParentAllocate != nil {
+		if err := m.postParentAllocate(parentObjectId, parentFileOffset); err != nil {
+			return nil, nil, err
+		}
+	}
+
+	newAllocator := NewBlockAllocator(m.blockSize, m.blockCount, parentFileOffset, parentObjectId)
+	m.allocators = append(m.allocators, newAllocator)
+	m.startOffsets = append(m.startOffsets, parentFileOffset)
+
+	return newAllocator.AllocateRun(size, count)
 }
 
 func (m *multiBlockAllocator) Free(fileOffset FileOffset, size int) error {
@@ -511,6 +598,55 @@ func (o *omniBlockAllocator) Allocate(size int) (ObjectId, FileOffset, error) {
 	}
 
 	return ObjectId, FileOffset, err
+}
+
+// AllocateRun attempts to reserve a contiguous run of blocks for the given size.
+// Only sizes that fit within the managed block sizes are supported; larger sizes
+// defer to the parent if it supports RunAllocator.
+func (o *omniBlockAllocator) AllocateRun(size int, count int) ([]ObjectId, []FileOffset, error) {
+	if count <= 0 {
+		return nil, nil, errors.New("count must be positive")
+	}
+
+	// Try best-fit block size for requested size
+	if size <= o.maxBlockSize {
+		idx := sort.SearchInts(o.sortedSizes, size)
+		if idx < len(o.sortedSizes) {
+			blockSize := o.sortedSizes[idx]
+			allocator, ok := o.blockMap[blockSize]
+			if !ok || allocator == nil {
+				baseObjId, fileOffset, allocErr := o.parent.Allocate(blockSize * o.blockCount)
+				if allocErr != nil {
+					return nil, nil, allocErr
+				}
+				allocator = NewBlockAllocator(blockSize, o.blockCount, fileOffset, baseObjId)
+				o.blockMap[blockSize] = allocator
+				if o.lookupCache != nil {
+					_ = o.lookupCache.AddRange(int64(baseObjId), blockSize, fileOffset)
+					_ = o.lookupCache.UpdateRangeEnd(int64(baseObjId), int64(baseObjId)+int64(o.blockCount))
+				}
+			}
+
+			objIds, offsets, err := allocator.AllocateRun(blockSize, count)
+			if err == nil {
+				// Record caller-requested size (may be smaller than blockSize)
+				for _, objId := range objIds {
+					allocator.setRequestedSize(objId, size)
+				}
+				return objIds, offsets, nil
+			}
+			if !errors.Is(err, ErrNoContiguousRange) && !errors.Is(err, AllAllocated) {
+				return nil, nil, err
+			}
+		}
+	}
+
+	// Fall back to parent if it supports run allocation
+	if ra, ok := o.parent.(RunAllocator); ok {
+		return ra.AllocateRun(size, count)
+	}
+
+	return nil, nil, ErrRunUnsupported
 }
 
 func (o *omniBlockAllocator) Free(FileOffset FileOffset, size int) error {

@@ -15,7 +15,7 @@ func TestMultiStoreDeleteObjFreesAllocation(t *testing.T) {
 	tempDir := t.TempDir()
 	tempFile := filepath.Join(tempDir, "test_multi_store.bin")
 
-	ms, err := NewMultiStore(tempFile)
+	ms, err := NewMultiStore(tempFile, 0)
 	if err != nil {
 		t.Fatalf("Failed to create multi store: %v", err)
 	}
@@ -74,7 +74,7 @@ func TestMultiStoreAllocateAndDelete(t *testing.T) {
 	tempDir := t.TempDir()
 	tempFile := filepath.Join(tempDir, "test_multi_store2.bin")
 
-	ms, err := NewMultiStore(tempFile)
+	ms, err := NewMultiStore(tempFile, 0)
 	if err != nil {
 		t.Fatalf("Failed to create multi store: %v", err)
 	}
@@ -138,7 +138,7 @@ func TestMultiStoreDeleteAddsToFreeList(t *testing.T) {
 	tempDir := t.TempDir()
 	tempFile := filepath.Join(tempDir, "test_multi_store_freelist.bin")
 
-	ms, err := NewMultiStore(tempFile)
+	ms, err := NewMultiStore(tempFile, 0)
 	if err != nil {
 		t.Fatalf("Failed to create multi store: %v", err)
 	}
@@ -213,7 +213,7 @@ func TestMultiStoreLateWriteAndRead(t *testing.T) {
 	tempDir := t.TempDir()
 	tempFile := filepath.Join(tempDir, "test_late_io.bin")
 
-	ms, err := NewMultiStore(tempFile)
+	ms, err := NewMultiStore(tempFile, 0)
 	if err != nil {
 		t.Fatalf("Failed to create multi store: %v", err)
 	}
@@ -236,7 +236,7 @@ func TestMultiStoreWriteToObj(t *testing.T) {
 	tempDir := t.TempDir()
 	tempFile := filepath.Join(tempDir, "test_write_to_obj.bin")
 
-	ms, err := NewMultiStore(tempFile)
+	ms, err := NewMultiStore(tempFile, 0)
 	if err != nil {
 		t.Fatalf("Failed to create multi store: %v", err)
 	}
@@ -263,7 +263,7 @@ func TestMultiStoreMultipleObjects(t *testing.T) {
 	tempDir := t.TempDir()
 	tempFile := filepath.Join(tempDir, "test_multiple_objects.bin")
 
-	ms, err := NewMultiStore(tempFile)
+	ms, err := NewMultiStore(tempFile, 0)
 	if err != nil {
 		t.Fatalf("Failed to create multi store: %v", err)
 	}
@@ -296,7 +296,7 @@ func TestMultiStoreLateReadNonExistent(t *testing.T) {
 	tempDir := t.TempDir()
 	tempFile := filepath.Join(tempDir, "test_read_nonexistent.bin")
 
-	ms, err := NewMultiStore(tempFile)
+	ms, err := NewMultiStore(tempFile, 0)
 	if err != nil {
 		t.Fatalf("Failed to create multi store: %v", err)
 	}

@@ -16,7 +16,7 @@ func TestMultiStoreObjectMapMemoryUsage(t *testing.T) {
 	tempDir := t.TempDir()
 	storePath := filepath.Join(tempDir, "memory_test.db")
 
-	ms, err := NewMultiStore(storePath)
+	ms, err := NewMultiStore(storePath, 0)
 	if err != nil {
 		t.Fatalf("Failed to create multistore: %v", err)
 	}
@@ -94,7 +94,7 @@ func TestMultiStoreObjectMapScaling(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			storePath := filepath.Join(tempDir, tc.name+".db")
-			ms, err := NewMultiStore(storePath)
+			ms, err := NewMultiStore(storePath, 0)
 			if err != nil {
 				t.Fatalf("Failed to create multistore: %v", err)
 			}

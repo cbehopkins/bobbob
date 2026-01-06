@@ -23,7 +23,7 @@ func TestMultiStoreMultipleSessions(t *testing.T) {
 	}, 3)
 
 	{
-		ms, err := NewMultiStore(filePath)
+		ms, err := NewMultiStore(filePath, 0)
 		if err != nil {
 			t.Fatalf("Session 1: Failed to create store: %v", err)
 		}
@@ -62,7 +62,7 @@ func TestMultiStoreMultipleSessions(t *testing.T) {
 	}, 2)
 
 	{
-		ms, err := LoadMultiStore(filePath)
+		ms, err := LoadMultiStore(filePath, 0)
 		if err != nil {
 			t.Fatalf("Session 2: Failed to load store: %v", err)
 		}
@@ -114,7 +114,7 @@ func TestMultiStoreMultipleSessions(t *testing.T) {
 
 	// Session 3: Verify all objects and delete some
 	{
-		ms, err := LoadMultiStore(filePath)
+		ms, err := LoadMultiStore(filePath, 0)
 		if err != nil {
 			t.Fatalf("Session 3: Failed to load store: %v", err)
 		}
@@ -149,7 +149,7 @@ func TestMultiStoreMultipleSessions(t *testing.T) {
 
 	// Session 4: Verify deletions and remaining objects
 	{
-		ms, err := LoadMultiStore(filePath)
+		ms, err := LoadMultiStore(filePath, 0)
 		if err != nil {
 			t.Fatalf("Session 4: Failed to load store: %v", err)
 		}
@@ -205,7 +205,7 @@ func TestMultiStoreLargeObjects(t *testing.T) {
 	filePath := "test_large_objects.dat"
 	defer os.Remove(filePath)
 
-	ms, err := NewMultiStore(filePath)
+	ms, err := NewMultiStore(filePath, 0)
 	if err != nil {
 		t.Fatalf("Failed to create store: %v", err)
 	}
@@ -269,7 +269,7 @@ func TestMultiStoreUpdateObject(t *testing.T) {
 	filePath := "test_update_object.dat"
 	defer os.Remove(filePath)
 
-	ms, err := NewMultiStore(filePath)
+	ms, err := NewMultiStore(filePath, 0)
 	if err != nil {
 		t.Fatalf("Failed to create store: %v", err)
 	}
@@ -324,7 +324,7 @@ func TestMultiStoreSpaceReuse(t *testing.T) {
 	filePath := "test_space_reuse.dat"
 	defer os.Remove(filePath)
 
-	ms, err := NewMultiStore(filePath)
+	ms, err := NewMultiStore(filePath, 0)
 	if err != nil {
 		t.Fatalf("Failed to create store: %v", err)
 	}
@@ -408,7 +408,7 @@ func TestMultiStoreEmptyObjectHandling(t *testing.T) {
 	filePath := "test_empty_objects.dat"
 	defer os.Remove(filePath)
 
-	ms, err := NewMultiStore(filePath)
+	ms, err := NewMultiStore(filePath, 0)
 	if err != nil {
 		t.Fatalf("Failed to create store: %v", err)
 	}
@@ -471,7 +471,7 @@ func TestMultiStoreConcurrentUpdatesAndReads(t *testing.T) {
 	filePath := "test_concurrent_ops.dat"
 	defer os.Remove(filePath)
 
-	ms, err := NewMultiStore(filePath)
+	ms, err := NewMultiStore(filePath, 0)
 	if err != nil {
 		t.Fatalf("Failed to create store: %v", err)
 	}
@@ -560,7 +560,7 @@ func TestMultiStorePersistenceAcrossSessionsWithMixedOps(t *testing.T) {
 	// Session 1: Create initial state
 	var obj1, obj2, obj3 store.ObjectId
 	{
-		ms, err := NewMultiStore(filePath)
+		ms, err := NewMultiStore(filePath, 0)
 		if err != nil {
 			t.Fatalf("Session 1: Failed to create store: %v", err)
 		}
@@ -589,7 +589,7 @@ func TestMultiStorePersistenceAcrossSessionsWithMixedOps(t *testing.T) {
 
 	// Session 2: Delete middle object and update first
 	{
-		ms, err := LoadMultiStore(filePath)
+		ms, err := LoadMultiStore(filePath, 0)
 		if err != nil {
 			t.Fatalf("Session 2: Failed to load store: %v", err)
 		}
@@ -627,7 +627,7 @@ func TestMultiStorePersistenceAcrossSessionsWithMixedOps(t *testing.T) {
 	// Session 3: Verify state and create new object
 	var obj4 store.ObjectId
 	{
-		ms, err := LoadMultiStore(filePath)
+		ms, err := LoadMultiStore(filePath, 0)
 		if err != nil {
 			t.Fatalf("Session 3: Failed to load store: %v", err)
 		}
@@ -687,7 +687,7 @@ func TestMultiStorePersistenceAcrossSessionsWithMixedOps(t *testing.T) {
 
 	// Session 4: Final verification
 	{
-		ms, err := LoadMultiStore(filePath)
+		ms, err := LoadMultiStore(filePath, 0)
 		if err != nil {
 			t.Fatalf("Session 4: Failed to load store: %v", err)
 		}

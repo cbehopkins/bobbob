@@ -139,6 +139,15 @@ type ObjWriter interface {
 	WriteBatchedObjs(objIds []ObjectId, data []byte, sizes []int) error
 }
 
+// RunAllocator is an optional extension for stores that can allocate a
+// contiguous run of equally-sized objects in a single request.
+type RunAllocator interface {
+	AllocateRun(size int, count int) ([]ObjectId, []FileOffset, error)
+}
+
+// ErrAllocateRunUnsupported indicates the store cannot guarantee contiguous run allocation.
+var ErrAllocateRunUnsupported = errors.New("allocate run unsupported")
+
 // Storer is the primary interface for object storage.
 // It combines basic lifecycle management with streaming read/write operations.
 type Storer interface {
@@ -201,8 +210,10 @@ func WriteBytesToObj(s Storer, data []byte, objectId ObjectId) error {
 		return err
 	}
 	defer func() {
-		if err := closer(); err != nil {
-			// Log error but continue - write may still be partially successful
+		if closer != nil {
+			if err := closer(); err != nil {
+				// Log error but continue - write may still be partially successful
+			}
 		}
 	}()
 

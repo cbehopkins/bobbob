@@ -47,7 +47,7 @@ func SetupConcurrentStore(tb testing.TB) (dir string, s store.Storer, cleanup fu
 	}
 
 	filePath := filepath.Join(dir, "testfile.bin")
-	s, err = store.NewConcurrentStore(filePath)
+	s, err = store.NewConcurrentStore(filePath, 0)
 	if err != nil {
 		_ = os.RemoveAll(dir)
 		tb.Fatalf("failed to create concurrent store: %v", err)

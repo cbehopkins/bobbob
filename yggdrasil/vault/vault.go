@@ -903,9 +903,9 @@ func OpenVault(filename string, specs ...CollectionSpec) (*VaultSession, []any, 
 	var s store.Storer
 	var err error
 	// Prefer MultiStore for optimized allocator routing
-	ms, mErr := multistore.LoadMultiStore(filename)
+	ms, mErr := multistore.LoadMultiStore(filename, 0)
 	if mErr != nil {
-		ms, mErr = multistore.NewMultiStore(filename)
+		ms, mErr = multistore.NewMultiStore(filename, 0)
 		if mErr != nil {
 			return nil, nil, fmt.Errorf("failed to create MultiStore: %w", mErr)
 		}

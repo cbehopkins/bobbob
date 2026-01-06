@@ -58,6 +58,14 @@ type Allocator interface {
 	Free(fileOffset FileOffset, size int) error
 }
 
+// RunAllocator extends Allocator with the ability to reserve a contiguous run
+// of objects of the same size. Implementations should return ErrNoContiguousRange
+// when contiguous space cannot be found and ErrRunUnsupported if the allocator
+// cannot guarantee contiguity.
+type RunAllocator interface {
+	AllocateRun(size int, count int) ([]ObjectId, []FileOffset, error)
+}
+
 // Gap represents an unused region of file space between Start and End offsets.
 type Gap struct {
 	Start int64
@@ -427,3 +435,9 @@ func (a *BasicAllocator) Unmarshal(data []byte) error {
 }
 
 var AllAllocated = errors.New("no free blocks available")
+// ErrNoContiguousRange indicates the allocator has free space but cannot satisfy
+// the requested contiguous run length.
+var ErrNoContiguousRange = errors.New("no contiguous range available")
+
+// ErrRunUnsupported indicates the allocator cannot guarantee contiguity for run allocations.
+var ErrRunUnsupported = errors.New("run allocation unsupported")

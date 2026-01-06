@@ -13,7 +13,7 @@ func TestMultiStorePersistence(t *testing.T) {
 	defer os.Remove(filePath)
 
 	// Create a new multiStore and write some objects
-	ms1, err := NewMultiStore(filePath)
+	ms1, err := NewMultiStore(filePath, 0)
 	if err != nil {
 		t.Fatalf("Failed to create multiStore: %v", err)
 	}
@@ -61,7 +61,7 @@ func TestMultiStorePersistence(t *testing.T) {
 	}
 
 	// Load the store from disk
-	ms2, err := LoadMultiStore(filePath)
+	ms2, err := LoadMultiStore(filePath, 0)
 	if err != nil {
 		t.Fatalf("Failed to load multiStore: %v", err)
 	}
@@ -146,7 +146,7 @@ func TestMultiStorePersistenceWithDeletion(t *testing.T) {
 	defer os.Remove(filePath)
 
 	// Create a new multiStore
-	ms1, err := NewMultiStore(filePath)
+	ms1, err := NewMultiStore(filePath, 0)
 	if err != nil {
 		t.Fatalf("Failed to create multiStore: %v", err)
 	}
@@ -187,7 +187,7 @@ func TestMultiStorePersistenceWithDeletion(t *testing.T) {
 		t.Fatalf("Failed to close multiStore: %v", err)
 	}
 
-	ms2, err := LoadMultiStore(filePath)
+	ms2, err := LoadMultiStore(filePath, 0)
 	if err != nil {
 		t.Fatalf("Failed to load multiStore: %v", err)
 	}

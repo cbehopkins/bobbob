@@ -24,7 +24,7 @@ func TestVaultConcurrentReaders(t *testing.T) {
 	// Setup: Create a vault with concurrent store
 	tempDir := t.TempDir()
 	storePath := filepath.Join(tempDir, "concurrent_readers.db")
-	stre, err := store.NewConcurrentStore(storePath)
+	stre, err := store.NewConcurrentStore(storePath, 0)
 	if err != nil {
 		t.Fatalf("Failed to create concurrent store: %v", err)
 	}
@@ -121,7 +121,7 @@ func TestVaultConcurrentReaders(t *testing.T) {
 func TestVaultSingleWriterMultipleReaders(t *testing.T) {
 	tempDir := t.TempDir()
 	storePath := filepath.Join(tempDir, "single_writer_multi_readers.db")
-	stre, err := store.NewConcurrentStore(storePath)
+	stre, err := store.NewConcurrentStore(storePath, 0)
 	if err != nil {
 		t.Fatalf("Failed to create concurrent store: %v", err)
 	}
@@ -258,7 +258,7 @@ func TestVaultSingleWriterMultipleReaders(t *testing.T) {
 func TestVaultConcurrentReadersMultipleCollections(t *testing.T) {
 	tempDir := t.TempDir()
 	storePath := filepath.Join(tempDir, "multi_collection_concurrent.db")
-	stre, err := store.NewConcurrentStore(storePath)
+	stre, err := store.NewConcurrentStore(storePath, 0)
 	if err != nil {
 		t.Fatalf("Failed to create concurrent store: %v", err)
 	}
@@ -367,7 +367,7 @@ func TestVaultConcurrentReadersMultipleCollections(t *testing.T) {
 func TestVaultSequentialWritersWithReaders(t *testing.T) {
 	tempDir := t.TempDir()
 	storePath := filepath.Join(tempDir, "sequential_writers.db")
-	stre, err := store.NewConcurrentStore(storePath)
+	stre, err := store.NewConcurrentStore(storePath, 0)
 	if err != nil {
 		t.Fatalf("Failed to create concurrent store: %v", err)
 	}
@@ -485,7 +485,7 @@ func TestVaultSequentialWritersWithReaders(t *testing.T) {
 func TestVaultConcurrentCollectionCreation(t *testing.T) {
 	tempDir := t.TempDir()
 	storePath := filepath.Join(tempDir, "concurrent_collection_creation.db")
-	stre, err := store.NewConcurrentStore(storePath)
+	stre, err := store.NewConcurrentStore(storePath, 0)
 	if err != nil {
 		t.Fatalf("Failed to create concurrent store: %v", err)
 	}
@@ -544,7 +544,7 @@ func TestVaultConcurrentCollectionCreation(t *testing.T) {
 func TestVaultConcurrentSameCollectionCreation(t *testing.T) {
 	tempDir := t.TempDir()
 	storePath := filepath.Join(tempDir, "concurrent_same_collection.db")
-	stre, err := store.NewConcurrentStore(storePath)
+	stre, err := store.NewConcurrentStore(storePath, 0)
 	if err != nil {
 		t.Fatalf("Failed to create concurrent store: %v", err)
 	}

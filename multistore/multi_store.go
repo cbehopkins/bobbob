@@ -38,15 +38,18 @@ import (
 // multiStore implements a store with multiple allocators for different object sizes.
 // It uses a root allocator and a block allocator optimized for persistent treap nodes.
 type multiStore struct {
-	filePath   string
-	file       *os.File
-	allocators []allocator.Allocator
+	filePath       string
+	file           *os.File
+	allocators     []allocator.Allocator
+	tokenManager   *store.DiskTokenManager // nil for unlimited, otherwise limits concurrent disk ops
 }
 
 // NewMultiStore creates a new multiStore at the given file path.
 // It initializes a root allocator and an omni block allocator optimized
 // for the sizes used by persistent treap nodes.
-func NewMultiStore(filePath string) (*multiStore, error) {
+// If maxDiskTokens > 0, limits concurrent disk I/O operations to that count.
+// Pass 0 for unlimited concurrent disk operations.
+func NewMultiStore(filePath string, maxDiskTokens int) (*multiStore, error) {
 	file, err := os.OpenFile(filePath, os.O_RDWR|os.O_CREATE, 0o666)
 	if err != nil {
 		return nil, err
@@ -87,16 +90,18 @@ func NewMultiStore(filePath string) (*multiStore, error) {
 	}
 
 	ms := &multiStore{
-		filePath:   filePath,
-		file:       file,
-		allocators: []allocator.Allocator{rootAllocator, omniAllocator},
+		filePath:     filePath,
+		file:         file,
+		allocators:   []allocator.Allocator{rootAllocator, omniAllocator},
+		tokenManager: store.NewDiskTokenManager(maxDiskTokens),
 	}
 	return ms, nil
 }
 
 // LoadMultiStore loads an existing multiStore from the given file path.
 // It reads the metadata from the file and reconstructs the allocators.
-func LoadMultiStore(filePath string) (*multiStore, error) {
+// If maxDiskTokens > 0, limits concurrent disk I/O operations to that count.
+func LoadMultiStore(filePath string, maxDiskTokens int) (*multiStore, error) {
 	file, err := os.OpenFile(filePath, os.O_RDWR, 0o666)
 	if err != nil {
 		return nil, err
@@ -124,12 +129,45 @@ func LoadMultiStore(filePath string) (*multiStore, error) {
 	}
 
 	ms := &multiStore{
-		filePath:   filePath,
-		file:       file,
-		allocators: []allocator.Allocator{rootAllocator, omniAllocator},
+		filePath:     filePath,
+		file:         file,
+		allocators:   []allocator.Allocator{rootAllocator, omniAllocator},
+		tokenManager: store.NewDiskTokenManager(maxDiskTokens),
 	}
 
 	return ms, nil
+}
+
+// NewConcurrentMultiStore creates a multiStore wrapped with concurrent access support.
+// This provides thread-safe access to a multi-allocator store with optional disk I/O limiting.
+// If maxDiskTokens > 0, limits concurrent disk I/O operations to that count.
+// Pass 0 for unlimited concurrent disk operations.
+//
+// This is a convenience constructor equivalent to:
+//   ms, _ := NewMultiStore(filePath, 0)
+//   cs := store.NewConcurrentStoreWrapping(ms, maxDiskTokens)
+func NewConcurrentMultiStore(filePath string, maxDiskTokens int) (store.Storer, error) {
+	ms, err := NewMultiStore(filePath, 0)
+	if err != nil {
+		return nil, err
+	}
+	return store.NewConcurrentStoreWrapping(ms, maxDiskTokens), nil
+}
+
+// LoadConcurrentMultiStore loads an existing multiStore and wraps it with concurrent access support.
+// This provides thread-safe access to a persisted multi-allocator store with optional disk I/O limiting.
+// If maxDiskTokens > 0, limits concurrent disk I/O operations to that count.
+// Pass 0 for unlimited concurrent disk operations.
+//
+// This is a convenience constructor equivalent to:
+//   ms, _ := LoadMultiStore(filePath, 0)
+//   cs := store.NewConcurrentStoreWrapping(ms, maxDiskTokens)
+func LoadConcurrentMultiStore(filePath string, maxDiskTokens int) (store.Storer, error) {
+	ms, err := LoadMultiStore(filePath, 0)
+	if err != nil {
+		return nil, err
+	}
+	return store.NewConcurrentStoreWrapping(ms, maxDiskTokens), nil
 }
 
 // readHeader reads the metadata offset from the first 8 bytes of the file.
@@ -432,8 +470,7 @@ func (s *multiStore) PrimeObject(size int) (store.ObjectId, error) {
 	}
 
 	// Initialize the object with zeros
-	zeros := make([]byte, size)
-	n, err := s.file.WriteAt(zeros, int64(fileOffset))
+	n, err := store.WriteZeros(s.file, fileOffset, size)
 	if err != nil {
 		return store.ObjNotAllocated, err
 	}
@@ -458,52 +495,46 @@ func (s *multiStore) NewObj(size int) (store.ObjectId, error) {
 // LateReadObj returns a reader for the object with the given ID.
 // Returns an error if the object is not found.
 func (s *multiStore) LateReadObj(id store.ObjectId) (io.Reader, store.Finisher, error) {
+	s.tokenManager.Acquire()
 	obj, err := s.getObjectInfo(id)
 	if err != nil {
+		s.tokenManager.Release()
 		return nil, nil, io.ErrUnexpectedEOF
 	}
 
 	// Create a section reader for this object
-	reader := io.NewSectionReader(s.file, int64(obj.Offset), int64(obj.Size))
-
-	// Return a no-op finisher since we don't need cleanup for reads
-	finisher := func() error { return nil }
-
-	return reader, finisher, nil
+	reader := store.CreateSectionReader(s.file, obj.Offset, obj.Size)
+	return reader, store.CreateFinisherWithToken(s.tokenManager), nil
 }
 
 // LateWriteNewObj allocates a new object and returns a writer for it.
 // The object is allocated from the block allocator. The allocator records the allocation internally.
 func (s *multiStore) LateWriteNewObj(size int) (store.ObjectId, io.Writer, store.Finisher, error) {
+	s.tokenManager.Acquire()
 	objId, fileOffset, err := s.allocators[1].Allocate(size)
 	if err != nil {
+		s.tokenManager.Release()
 		return store.ObjNotAllocated, nil, nil, err
 	}
 
 	// Create a section writer that writes to the correct offset in the file
-	writer := store.NewSectionWriter(s.file, int64(fileOffset), int64(size))
-
-	// Return a no-op finisher
-	finisher := func() error { return nil }
-
-	return objId, writer, finisher, nil
+	writer := store.CreateSectionWriter(s.file, fileOffset, size)
+	return objId, writer, store.CreateFinisherWithToken(s.tokenManager), nil
 }
 
 // WriteToObj returns a writer for an existing object.
 // Returns an error if the object is not found.
 func (s *multiStore) WriteToObj(objectId store.ObjectId) (io.Writer, store.Finisher, error) {
+	s.tokenManager.Acquire()
 	obj, err := s.getObjectInfo(objectId)
 	if err != nil {
+		s.tokenManager.Release()
 		return nil, nil, io.ErrUnexpectedEOF
 	}
 
 	// Create a section writer for the existing object
-	writer := store.NewSectionWriter(s.file, int64(obj.Offset), int64(obj.Size))
-
-	// Return a no-op finisher
-	finisher := func() error { return nil }
-
-	return writer, finisher, nil
+	writer := store.CreateSectionWriter(s.file, obj.Offset, obj.Size)
+	return writer, store.CreateFinisherWithToken(s.tokenManager), nil
 }
 
 // WriteBatchedObjs writes data to multiple consecutive objects in a single operation.
@@ -540,7 +571,7 @@ func (s *multiStore) WriteBatchedObjs(objIds []store.ObjectId, data []byte, size
 	}
 
 	// Write all data in one operation
-	n, err := s.file.WriteAt(data, int64(firstOffset))
+	n, err := store.WriteBatchedSections(s.file, firstOffset, [][]byte{data})
 	if err != nil {
 		return err
 	}

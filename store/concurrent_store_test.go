@@ -13,7 +13,7 @@ func TestNewConcurrentStore(t *testing.T) {
 	tmpFile := filepath.Join(os.TempDir(), "test_concurrent_new.db")
 	defer os.Remove(tmpFile)
 
-	cs, err := NewConcurrentStore(tmpFile)
+	cs, err := NewConcurrentStore(tmpFile, 0)
 	if err != nil {
 		t.Fatalf("expected no error creating concurrent store, got %v", err)
 	}
@@ -22,11 +22,53 @@ func TestNewConcurrentStore(t *testing.T) {
 	if cs == nil {
 		t.Fatal("expected NewConcurrentStore to return non-nil store")
 	}
-	if cs.baseStore == nil {
-		t.Error("expected baseStore to be initialized")
+	if cs.innerStore == nil {
+		t.Error("expected innerStore to be initialized")
 	}
 	if cs.lockMap == nil {
 		t.Error("expected lockMap to be initialized")
+	}
+}
+
+func TestNewConcurrentStoreWrapping(t *testing.T) {
+	// Test wrapping a baseStore with concurrency
+	tmpFile := filepath.Join(os.TempDir(), "test_concurrent_wrapping.db")
+	defer os.Remove(tmpFile)
+
+	// Create a basic store
+	basicStore, err := NewBasicStore(tmpFile)
+	if err != nil {
+		t.Fatalf("failed to create basic store: %v", err)
+	}
+	defer basicStore.Close()
+
+	// Wrap it with concurrent store
+	concStore := NewConcurrentStoreWrapping(basicStore, 0)
+	defer concStore.Close()
+
+	if concStore.innerStore != basicStore {
+		t.Error("expected innerStore to be the wrapped basicStore")
+	}
+	if concStore.lockMap == nil {
+		t.Error("expected lockMap to be initialized")
+	}
+
+	// Test that operations work through the wrapped store
+	objId, err := concStore.NewObj(100)
+	if err != nil {
+		t.Fatalf("failed to create object: %v", err)
+	}
+	if objId == ObjNotAllocated {
+		t.Error("expected valid object ID")
+	}
+
+	// Verify GetObjectInfo works through type assertion
+	info, found := concStore.GetObjectInfo(objId)
+	if !found {
+		t.Error("expected to find object info")
+	}
+	if info.Size != 100 {
+		t.Errorf("expected size 100, got %d", info.Size)
 	}
 }
 
@@ -34,7 +76,7 @@ func TestConcurrentStoreNewObj(t *testing.T) {
 	tmpFile := filepath.Join(os.TempDir(), "test_concurrent_newobj.db")
 	defer os.Remove(tmpFile)
 
-	cs, err := NewConcurrentStore(tmpFile)
+	cs, err := NewConcurrentStore(tmpFile, 0)
 	if err != nil {
 		t.Fatalf("failed to create store: %v", err)
 	}
@@ -53,7 +95,7 @@ func TestConcurrentStorePrimeObject(t *testing.T) {
 	tmpFile := filepath.Join(os.TempDir(), "test_concurrent_prime.db")
 	defer os.Remove(tmpFile)
 
-	cs, err := NewConcurrentStore(tmpFile)
+	cs, err := NewConcurrentStore(tmpFile, 0)
 	if err != nil {
 		t.Fatalf("failed to create store: %v", err)
 	}
@@ -81,7 +123,7 @@ func TestConcurrentStoreLateWriteAndRead(t *testing.T) {
 	tmpFile := filepath.Join(os.TempDir(), "test_concurrent_writeread.db")
 	defer os.Remove(tmpFile)
 
-	cs, err := NewConcurrentStore(tmpFile)
+	cs, err := NewConcurrentStore(tmpFile, 0)
 	if err != nil {
 		t.Fatalf("failed to create store: %v", err)
 	}
@@ -140,7 +182,7 @@ func TestConcurrentStoreWriteToObj(t *testing.T) {
 	tmpFile := filepath.Join(os.TempDir(), "test_concurrent_writetoobj.db")
 	defer os.Remove(tmpFile)
 
-	cs, err := NewConcurrentStore(tmpFile)
+	cs, err := NewConcurrentStore(tmpFile, 0)
 	if err != nil {
 		t.Fatalf("failed to create store: %v", err)
 	}
@@ -199,7 +241,7 @@ func TestConcurrentStoreDeleteObj(t *testing.T) {
 	tmpFile := filepath.Join(os.TempDir(), "test_concurrent_delete.db")
 	defer os.Remove(tmpFile)
 
-	cs, err := NewConcurrentStore(tmpFile)
+	cs, err := NewConcurrentStore(tmpFile, 0)
 	if err != nil {
 		t.Fatalf("failed to create store: %v", err)
 	}
@@ -228,7 +270,7 @@ func TestConcurrentStoreGetObjectInfo(t *testing.T) {
 	tmpFile := filepath.Join(os.TempDir(), "test_concurrent_getinfo.db")
 	defer os.Remove(tmpFile)
 
-	cs, err := NewConcurrentStore(tmpFile)
+	cs, err := NewConcurrentStore(tmpFile, 0)
 	if err != nil {
 		t.Fatalf("failed to create store: %v", err)
 	}
@@ -252,7 +294,7 @@ func TestConcurrentStoreWriteBatchedObjs(t *testing.T) {
 	tmpFile := filepath.Join(os.TempDir(), "test_concurrent_batched.db")
 	defer os.Remove(tmpFile)
 
-	cs, err := NewConcurrentStore(tmpFile)
+	cs, err := NewConcurrentStore(tmpFile, 0)
 	if err != nil {
 		t.Fatalf("failed to create store: %v", err)
 	}
@@ -300,7 +342,7 @@ func TestConcurrentStoreConcurrentReadsDifferentObjects(t *testing.T) {
 	tmpFile := filepath.Join(os.TempDir(), "test_concurrent_reads.db")
 	defer os.Remove(tmpFile)
 
-	cs, err := NewConcurrentStore(tmpFile)
+	cs, err := NewConcurrentStore(tmpFile, 0)
 	if err != nil {
 		t.Fatalf("failed to create store: %v", err)
 	}
@@ -361,7 +403,7 @@ func TestConcurrentStoreConcurrentWritesDifferentObjects(t *testing.T) {
 	tmpFile := filepath.Join(os.TempDir(), "test_concurrent_writes.db")
 	defer os.Remove(tmpFile)
 
-	cs, err := NewConcurrentStore(tmpFile)
+	cs, err := NewConcurrentStore(tmpFile, 0)
 	if err != nil {
 		t.Fatalf("failed to create store: %v", err)
 	}
@@ -421,7 +463,7 @@ func TestConcurrentStoreConcurrentReadWriteSameObject(t *testing.T) {
 	tmpFile := filepath.Join(os.TempDir(), "test_concurrent_rw_same.db")
 	defer os.Remove(tmpFile)
 
-	cs, err := NewConcurrentStore(tmpFile)
+	cs, err := NewConcurrentStore(tmpFile, 0)
 	if err != nil {
 		t.Fatalf("failed to create store: %v", err)
 	}
@@ -484,7 +526,7 @@ func TestConcurrentStoreLookupObjectMutex(t *testing.T) {
 	tmpFile := filepath.Join(os.TempDir(), "test_concurrent_mutex.db")
 	defer os.Remove(tmpFile)
 
-	cs, err := NewConcurrentStore(tmpFile)
+	cs, err := NewConcurrentStore(tmpFile, 0)
 	if err != nil {
 		t.Fatalf("failed to create store: %v", err)
 	}
@@ -515,7 +557,7 @@ func TestConcurrentStoreFinisherUnlocksCorrectly(t *testing.T) {
 	tmpFile := filepath.Join(os.TempDir(), "test_concurrent_finisher.db")
 	defer os.Remove(tmpFile)
 
-	cs, err := NewConcurrentStore(tmpFile)
+	cs, err := NewConcurrentStore(tmpFile, 0)
 	if err != nil {
 		t.Fatalf("failed to create store: %v", err)
 	}
@@ -556,7 +598,7 @@ func TestConcurrentStoreClose(t *testing.T) {
 	tmpFile := filepath.Join(os.TempDir(), "test_concurrent_close.db")
 	defer os.Remove(tmpFile)
 
-	cs, err := NewConcurrentStore(tmpFile)
+	cs, err := NewConcurrentStore(tmpFile, 0)
 	if err != nil {
 		t.Fatalf("failed to create store: %v", err)
 	}
