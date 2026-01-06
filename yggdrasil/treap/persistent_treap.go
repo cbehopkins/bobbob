@@ -585,7 +585,15 @@ func (t *PersistentTreap[T]) delete(node TreapNodeInterface[T], key T) TreapNode
 		if ok {
 			objId, err := nodeCast.ObjectId()
 			if err == nil && objId > store.ObjNotAllocated {
-				_ = t.Store.DeleteObj(objId) // Best effort cleanup
+				// Best-effort cleanup of associated objects (key/payload) before freeing node.
+				if depProvider, ok := nodeCast.(interface{ DependentObjectIds() []store.ObjectId }); ok {
+					for _, dep := range depProvider.DependentObjectIds() {
+						if store.IsValidObjectId(dep) {
+							_ = t.Store.DeleteObj(dep)
+						}
+					}
+				}
+				_ = t.Store.DeleteObj(objId) // Best effort cleanup of the node itself
 			}
 			nodeCast.SetObjectId(store.ObjNotAllocated)
 		}

@@ -1,6 +1,7 @@
 package treap
 
 import (
+	"encoding/binary"
 	"fmt"
 	"path/filepath"
 	"testing"
@@ -24,6 +25,43 @@ func (p MockPayload) Unmarshal(data []byte) (UntypedPersistentPayload, error) {
 
 func (p MockPayload) SizeInBytes() int {
 	return len(p.Data)
+}
+
+// ComplexPayload tracks a child object allocation to ensure deletes free nested objects.
+type ComplexPayload struct {
+	Child store.ObjectId
+	Data  []byte
+}
+
+// DeleteDependents deletes the child allocation owned by this payload.
+func (p ComplexPayload) DeleteDependents(stre store.Storer) error {
+	if store.IsValidObjectId(p.Child) {
+		return stre.DeleteObj(p.Child)
+	}
+	return nil
+}
+
+func (p ComplexPayload) Marshal() ([]byte, error) {
+	childBytes, err := p.Child.Marshal()
+	if err != nil {
+		return nil, err
+	}
+	return append(childBytes, p.Data...), nil
+}
+
+func (p ComplexPayload) Unmarshal(data []byte) (UntypedPersistentPayload, error) {
+	if len(data) < 8 {
+		return nil, fmt.Errorf("data too short for ComplexPayload: %d", len(data))
+	}
+	var child store.ObjectId
+	if err := child.Unmarshal(data[:8]); err != nil {
+		return nil, err
+	}
+	return ComplexPayload{Child: child, Data: append([]byte(nil), data[8:]...)}, nil
+}
+
+func (p ComplexPayload) SizeInBytes() int {
+	return 8 + len(p.Data)
 }
 
 // TestPersistentPayloadTreapNodeMarshalUnmarshal verifies that payload treap nodes
@@ -983,5 +1021,87 @@ func TestPersistentPayloadTreapFlushNoneOlderThan(t *testing.T) {
 	inMemoryNodes := treap.GetInMemoryNodes()
 	if len(inMemoryNodes) != len(keys) {
 		t.Errorf("Expected %d nodes still in memory, got %d", len(keys), len(inMemoryNodes))
+	}
+}
+
+func TestPersistentPayloadDeleteFreesNestedObjects(t *testing.T) {
+	st := setupTestStore(t)
+	defer st.Close()
+
+	bs, ok := st.(interface {
+		GetObjectInfo(store.ObjectId) (store.ObjectInfo, bool)
+	})
+	if !ok {
+		t.Fatalf("store does not expose GetObjectInfo")
+	}
+
+	childID, err := store.WriteNewObjFromBytes(st, []byte("child-payload"))
+	if err != nil {
+		t.Fatalf("failed to allocate child object: %v", err)
+	}
+
+	treap := NewPersistentPayloadTreap[StringKey, ComplexPayload](StringLess, (*StringKey)(new(string)), st)
+	key := StringKey("parent")
+	treap.Insert(&key, ComplexPayload{Child: childID, Data: []byte("parent-payload")})
+
+	if err := treap.Persist(); err != nil {
+		t.Fatalf("persist failed: %v", err)
+	}
+
+	if _, found := bs.GetObjectInfo(childID); !found {
+		t.Fatalf("expected child object %d to exist before delete", childID)
+	}
+
+	treap.Delete(&key)
+
+	if _, found := bs.GetObjectInfo(childID); found {
+		t.Fatalf("expected child object %d to be freed when deleting payload", childID)
+	}
+}
+
+func TestPersistentPayloadDeleteFreesStringKeyBackingObject(t *testing.T) {
+	st := setupTestStore(t)
+	defer st.Close()
+
+	bs, ok := st.(interface {
+		GetObjectInfo(store.ObjectId) (store.ObjectInfo, bool)
+	})
+	if !ok {
+		t.Fatalf("store does not expose GetObjectInfo")
+	}
+
+	treap := NewPersistentPayloadTreap[StringKey, MockPayload](StringLess, (*StringKey)(new(string)), st)
+	key := StringKey("leaky-key")
+	treap.Insert(&key, MockPayload{Data: "value"})
+
+	if err := treap.Persist(); err != nil {
+		t.Fatalf("persist failed: %v", err)
+	}
+
+	rootID, err := treap.GetRootObjectId()
+	if err != nil {
+		t.Fatalf("get root object id failed: %v", err)
+	}
+	if !store.IsValidObjectId(rootID) {
+		t.Fatalf("invalid root object id: %d", rootID)
+	}
+
+	nodeBytes, err := store.ReadBytesFromObj(st, rootID)
+	if err != nil {
+		t.Fatalf("failed to read root object %d: %v", rootID, err)
+	}
+	if len(nodeBytes) < 8 {
+		t.Fatalf("root object too small to contain key object id: %d bytes", len(nodeBytes))
+	}
+	keyObjId := store.ObjectId(binary.LittleEndian.Uint64(nodeBytes[:8]))
+
+	if _, found := bs.GetObjectInfo(keyObjId); !found {
+		t.Fatalf("expected key backing object %d to exist before delete", keyObjId)
+	}
+
+	treap.Delete(&key)
+
+	if _, found := bs.GetObjectInfo(keyObjId); found {
+		t.Fatalf("expected backing key object %d to be freed when deleting node", keyObjId)
 	}
 }

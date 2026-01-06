@@ -18,6 +18,13 @@ type PersistentPayloadTreapNode[K any, P PersistentPayload[P]] struct {
 	payload P
 }
 
+// payloadDeleter is an optional interface payloads can implement to clean up
+// any dependent ObjectIds they own before the treap frees the node itself.
+// Implementors should delete any child objects they allocated.
+type payloadDeleter interface {
+	DeleteDependents(store.Storer) error
+}
+
 // GetPayload returns the payload of the node.
 func (n *PersistentPayloadTreapNode[K, P]) GetPayload() P {
 	return n.payload
@@ -28,6 +35,41 @@ func (n *PersistentPayloadTreapNode[K, P]) SetPayload(payload P) {
 	n.payload = payload
 	_ = n.Store.DeleteObj(n.objectId) // Invalidate the stored object ID (best effort)
 	n.objectId = store.ObjNotAllocated
+}
+
+// deleteDependents best-effort deletes the key object and lets the payload
+// delete any child objects it owns before the node itself is freed.
+func (n *PersistentPayloadTreapNode[K, P]) deleteDependents() {
+	if keyObjId, err := n.keyObjectIdFromStore(); err == nil && store.IsValidObjectId(keyObjId) {
+		_ = n.Store.DeleteObj(keyObjId)
+	}
+
+	if deleter, ok := any(n.payload).(payloadDeleter); ok {
+		_ = deleter.DeleteDependents(n.Store)
+	}
+}
+
+// keyObjectIdFromStore reads this node's serialized bytes to recover the key's
+// backing ObjectId (first field in the marshaled layout).
+func (n *PersistentPayloadTreapNode[K, P]) keyObjectIdFromStore() (store.ObjectId, error) {
+	if !store.IsValidObjectId(n.objectId) {
+		return store.ObjNotAllocated, fmt.Errorf("invalid node object id: %d", n.objectId)
+	}
+
+	data, err := store.ReadBytesFromObj(n.Store, n.objectId)
+	if err != nil {
+		return store.ObjNotAllocated, err
+	}
+	if len(data) < n.objectId.SizeInBytes() {
+		return store.ObjNotAllocated, fmt.Errorf("node object %d too small to contain key id", n.objectId)
+	}
+
+	var keyObjId store.ObjectId
+	if err := keyObjId.Unmarshal(data[:8]); err != nil {
+		return store.ObjNotAllocated, err
+	}
+
+	return keyObjId, nil
 }
 
 // SetLeft sets the left child of the node.
@@ -246,6 +288,30 @@ func (t *PersistentPayloadTreap[K, P]) Insert(key PersistentKey[K], payload P) {
 	var tmp TreapNodeInterface[K]
 	tmp = t.insert(t.root, newNode)
 	t.root = tmp
+}
+
+// Delete removes the node with the given key and frees any dependent objects
+// (key object and payload-owned objects) even when the subtree root becomes nil.
+func (t *PersistentPayloadTreap[K, P]) Delete(key PersistentKey[K]) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	var target *PersistentPayloadTreapNode[K, P]
+	if found, _ := t.searchComplex(t.root, key.Value(), nil); found != nil {
+		if pNode, ok := found.(*PersistentPayloadTreapNode[K, P]); ok {
+			target = pNode
+		}
+	}
+
+	t.root = t.delete(t.root, key.Value())
+
+	if target != nil {
+		target.deleteDependents()
+		if objId, err := target.ObjectId(); err == nil && store.IsValidObjectId(objId) {
+			_ = t.Store.DeleteObj(objId)
+		}
+		target.SetObjectId(store.ObjNotAllocated)
+	}
 }
 
 // NewPayloadFromObjectId creates a PersistentPayloadTreapNode from the given object ID.

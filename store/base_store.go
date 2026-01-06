@@ -325,11 +325,10 @@ func (s *baseStore) lateReadObj(objId ObjectId) (io.Reader, Finisher, error) {
 }
 
 func (s *baseStore) DeleteObj(objId ObjectId) error {
-	// FIXME: Complex types have one object that points to others.
-	// We need a method that lists all the objects that are part of a complex object
-	// and then recursively delete them. However, we can only do that on the
-	// unmarshalled type - so we do not have that information here.
-	// Therefore, complex objects need to implement a delete method.
+	// Note: DeleteObj only frees the single object identified by objId.
+	// Complex structures that allocate additional objects must ensure those
+	// dependent ObjectIds are deleted by higher-level code before or after
+	// this call (e.g., a payload-specific deleter that walks its children).
 	if !IsValidObjectId(objId) {
 		return nil
 	}
