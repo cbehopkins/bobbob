@@ -189,27 +189,53 @@ func (n *PersistentPayloadTreapNode[K, P]) IsObjectIdInvalid() bool {
 type PersistentPayloadTreap[K any, P PersistentPayload[P]] struct {
 	PersistentTreap[K]
 	mu sync.RWMutex // Protects concurrent access to the treap
+	payloadPool sync.Pool // Pool for *PersistentPayloadTreapNode[K,P]
 }
 
 // NewPersistentPayloadTreapNode creates a new PersistentPayloadTreapNode with the given key, priority, and payload.
 func NewPersistentPayloadTreapNode[K any, P PersistentPayload[P]](key PersistentKey[K], priority Priority, payload P, stre store.Storer, parent *PersistentPayloadTreap[K, P]) *PersistentPayloadTreapNode[K, P] {
-	return &PersistentPayloadTreapNode[K, P]{
-		PersistentTreapNode: PersistentTreapNode[K]{
-			TreapNode: TreapNode[K]{
-				key:      key,
-				priority: priority,
-			},
-			objectId: store.ObjNotAllocated,
-			Store:    stre,
-			parent:   &parent.PersistentTreap,
-		},
-		payload: payload,
+	v := parent.payloadPool.Get()
+	n, _ := v.(*PersistentPayloadTreapNode[K, P])
+	if n == nil {
+		n = &PersistentPayloadTreapNode[K, P]{}
 	}
+	n.TreapNode.key = key
+	n.TreapNode.priority = priority
+	n.TreapNode.left = nil
+	n.TreapNode.right = nil
+	n.objectId = store.ObjNotAllocated
+	n.leftObjectId = store.ObjNotAllocated
+	n.rightObjectId = store.ObjNotAllocated
+	n.Store = stre
+	n.parent = &parent.PersistentTreap
+	var zero P
+	n.payload = zero
+	n.payload = payload
+	return n
+}
+
+// releasePayloadNode zeroes and returns a payload node to the pool.
+func (t *PersistentPayloadTreap[K, P]) releasePayloadNode(n *PersistentPayloadTreapNode[K, P]) {
+	if n == nil {
+		return
+	}
+	n.TreapNode.left = nil
+	n.TreapNode.right = nil
+	n.TreapNode.key = nil
+	n.TreapNode.priority = 0
+	n.objectId = store.ObjNotAllocated
+	n.leftObjectId = store.ObjNotAllocated
+	n.rightObjectId = store.ObjNotAllocated
+	var zero P
+	n.payload = zero
+	n.Store = nil
+	n.parent = nil
+	t.payloadPool.Put(n)
 }
 
 // NewPersistentPayloadTreap creates a new PersistentPayloadTreap with the given comparison function and store reference.
 func NewPersistentPayloadTreap[K any, P PersistentPayload[P]](lessFunc func(a, b K) bool, keyTemplate PersistentKey[K], store store.Storer) *PersistentPayloadTreap[K, P] {
-	return &PersistentPayloadTreap[K, P]{
+	t := &PersistentPayloadTreap[K, P]{
 		PersistentTreap: PersistentTreap[K]{
 			Treap: Treap[K]{
 				root: nil,
@@ -219,6 +245,8 @@ func NewPersistentPayloadTreap[K any, P PersistentPayload[P]](lessFunc func(a, b
 			Store:       store,
 		},
 	}
+	t.payloadPool = sync.Pool{New: func() any { return new(PersistentPayloadTreapNode[K, P]) }}
+	return t
 }
 
 // insert overrides the base insert method to handle payload updates for duplicate keys.
@@ -237,6 +265,8 @@ func (t *PersistentPayloadTreap[K, P]) insert(node TreapNodeInterface[K], newNod
 		if payloadNode, ok := node.(*PersistentPayloadTreapNode[K, P]); ok {
 			if newPayloadNode, ok := newNode.(*PersistentPayloadTreapNode[K, P]); ok {
 				payloadNode.SetPayload(newPayloadNode.GetPayload())
+				// Return the unused new node to the pool
+				t.releasePayloadNode(newPayloadNode)
 				return node
 			}
 		}
@@ -311,6 +341,8 @@ func (t *PersistentPayloadTreap[K, P]) Delete(key PersistentKey[K]) {
 			_ = t.Store.DeleteObj(objId)
 		}
 		target.SetObjectId(store.ObjNotAllocated)
+		// Return node to pool after cleanup
+		t.releasePayloadNode(target)
 	}
 }
 

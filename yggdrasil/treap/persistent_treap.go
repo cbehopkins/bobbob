@@ -85,6 +85,24 @@ type PersistentTreapNode[T any] struct {
 	lastAccessTime int64 // Unix timestamp of last access (in-memory only, not persisted)
 }
 
+// releaseToPool allows generic treap helpers to return persistent nodes to their treap's pool.
+func (n *PersistentTreapNode[T]) releaseToPool() {
+	if n == nil || n.parent == nil {
+		return
+	}
+	// Reset in-memory fields to avoid holding references
+	n.TreapNode.left = nil
+	n.TreapNode.right = nil
+	n.TreapNode.key = nil
+	n.TreapNode.priority = 0
+	n.objectId = store.ObjNotAllocated
+	n.leftObjectId = store.ObjNotAllocated
+	n.rightObjectId = store.ObjNotAllocated
+	n.lastAccessTime = 0
+	n.Store = nil
+	n.parent.nodePool.Put(n)
+}
+
 func (n *PersistentTreapNode[T]) newFromObjectId(objId store.ObjectId) (*PersistentTreapNode[T], error) {
 	tmp := NewPersistentTreapNode(n.parent.keyTemplate.New(), 0, n.Store, n.parent)
 	err := store.ReadGeneric(n.Store, tmp, objId)
@@ -525,6 +543,7 @@ type PersistentTreap[T any] struct {
 	keyTemplate PersistentKey[T]
 	Store       store.Storer
 	mu          sync.RWMutex // Protects concurrent access to the treap
+	nodePool    sync.Pool    // Pool for *PersistentTreapNode[T]
 }
 
 // Root returns the current root node (may be nil). Exposed for external tests.
@@ -534,22 +553,27 @@ func (t *PersistentTreap[T]) Root() TreapNodeInterface[T] {
 
 // NewPersistentTreapNode creates a new PersistentTreapNode with the given key, priority, and store reference.
 func NewPersistentTreapNode[T any](key PersistentKey[T], priority Priority, stre store.Storer, parent *PersistentTreap[T]) *PersistentTreapNode[T] {
-	return &PersistentTreapNode[T]{
-		TreapNode: TreapNode[T]{
-			key:      key,
-			priority: priority,
-			left:     nil,
-			right:    nil,
-		},
-		objectId: store.ObjNotAllocated,
-		Store:    stre,
-		parent:   parent,
+	v := parent.nodePool.Get()
+	n, _ := v.(*PersistentTreapNode[T])
+	if n == nil {
+		n = &PersistentTreapNode[T]{}
 	}
+	n.TreapNode.key = key
+	n.TreapNode.priority = priority
+	n.TreapNode.left = nil
+	n.TreapNode.right = nil
+	n.objectId = store.ObjNotAllocated
+	n.leftObjectId = store.ObjNotAllocated
+	n.rightObjectId = store.ObjNotAllocated
+	n.Store = stre
+	n.parent = parent
+	n.lastAccessTime = 0
+	return n
 }
 
 // NewPersistentTreap creates a new PersistentTreap with the given comparison function and store reference.
 func NewPersistentTreap[T any](lessFunc func(a, b T) bool, keyTemplate PersistentKey[T], store store.Storer) *PersistentTreap[T] {
-	return &PersistentTreap[T]{
+	t := &PersistentTreap[T]{
 		Treap: Treap[T]{
 			root: nil,
 			Less: func(a, b T) bool {
@@ -559,6 +583,8 @@ func NewPersistentTreap[T any](lessFunc func(a, b T) bool, keyTemplate Persisten
 		keyTemplate: keyTemplate,
 		Store:       store,
 	}
+	t.nodePool = sync.Pool{New: func() any { return new(PersistentTreapNode[T]) }}
+	return t
 }
 
 // insert is a helper function that inserts a new node into the persistent treap.

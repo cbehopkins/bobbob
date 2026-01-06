@@ -58,6 +58,7 @@ import (
 	"errors"
 	"iter"
 	"math/rand"
+	"sync"
 )
 
 // Priority represents the heap priority for a node in the treap.
@@ -207,15 +208,50 @@ func NewTreapNode[T any](key Key[T], priority Priority) *TreapNode[T] {
 
 // Treap represents a treap data structure.
 type Treap[T any] struct {
-	root TreapNodeInterface[T]
-	Less func(a, b T) bool
+	root     TreapNodeInterface[T]
+	Less     func(a, b T) bool
+	nodePool sync.Pool
 }
 
 // NewTreap creates a new Treap with the given comparison function.
 func NewTreap[T any](lessFunc func(a, b T) bool) *Treap[T] {
 	return &Treap[T]{
-		root: nil,
-		Less: lessFunc,
+		root:     nil,
+		Less:     lessFunc,
+		nodePool: sync.Pool{New: func() any { return new(TreapNode[T]) }},
+	}
+}
+
+func (t *Treap[T]) newNode(key Key[T], priority Priority) *TreapNode[T] {
+	v := t.nodePool.Get()
+	n, _ := v.(*TreapNode[T])
+	if n == nil {
+		n = &TreapNode[T]{}
+	}
+	n.key = key
+	n.priority = priority
+	n.left = nil
+	n.right = nil
+	return n
+}
+
+func (t *Treap[T]) releasePlainNode(n *TreapNode[T]) {
+	if n == nil {
+		return
+	}
+	n.key = nil
+	n.priority = 0
+	n.left = nil
+	n.right = nil
+	t.nodePool.Put(n)
+}
+
+func (t *Treap[T]) releaseNode(node TreapNodeInterface[T]) {
+	if node == nil || node.IsNil() {
+		return
+	}
+	if plain, ok := node.(*TreapNode[T]); ok {
+		t.releasePlainNode(plain)
 	}
 }
 
@@ -247,6 +283,8 @@ func (t *Treap[T]) insert(node TreapNodeInterface[T], newNode TreapNodeInterface
 	// Check for exact key match - don't insert duplicate
 	if !t.Less(newKey, nodeKey) && !t.Less(nodeKey, newKey) {
 		// Keys are equal - return existing node without adding duplicate
+		// Return newNode to pool if it's a pooled type
+		t.releaseNode(newNode)
 		return node
 	}
 
@@ -280,9 +318,13 @@ func (t *Treap[T]) delete(node TreapNodeInterface[T], key T) TreapNodeInterface[
 		right := node.GetRight()
 
 		if left == nil || left.IsNil() {
+			// Release the removed node back to pool
+			t.releaseNode(node)
 			return right
 		}
 		if right == nil || right.IsNil() {
+			// Release the removed node back to pool
+			t.releaseNode(node)
 			return left
 		}
 		leftPriority := left.GetPriority()
@@ -338,7 +380,7 @@ func (t *Treap[T]) search(node TreapNodeInterface[T], key T) TreapNodeInterface[
 func (t *Treap[T]) InsertComplex(value T, priority Priority) {
 	// Since T implements Key[T], we can use the value directly as the key
 	key := any(value).(Key[T])
-	newNode := NewTreapNode(key, priority)
+	newNode := t.newNode(key, priority)
 	t.root = t.insert(t.root, newNode)
 }
 
