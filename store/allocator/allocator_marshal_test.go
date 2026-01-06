@@ -1,4 +1,4 @@
-package store
+package allocator
 
 import (
 	"os"
@@ -58,13 +58,13 @@ func TestBasicAllocatorMarshal(t *testing.T) {
 	}
 
 	// Verify the end offset is preserved
-	if newAllocator.end != allocator.end {
-		t.Errorf("End offset mismatch: got %d, expected %d", newAllocator.end, allocator.end)
+	if newAllocator.End != allocator.End {
+		t.Errorf("End offset mismatch: got %d, expected %d", newAllocator.End, allocator.End)
 	}
 
 	// Verify the free list size is preserved
-	if len(newAllocator.freeList) != len(allocator.freeList) {
-		t.Errorf("Free list size mismatch: got %d, expected %d", len(newAllocator.freeList), len(allocator.freeList))
+	if len(newAllocator.FreeList) != len(allocator.FreeList) {
+		t.Errorf("Free list size mismatch: got %d, expected %d", len(newAllocator.FreeList), len(allocator.FreeList))
 	}
 
 	// Allocate in the new allocator - should reuse the freed gap
@@ -86,7 +86,7 @@ func TestBasicAllocatorMarshal(t *testing.T) {
 func TestBasicAllocatorMarshalEmpty(t *testing.T) {
 	// Test marshaling an empty allocator
 	allocator := NewEmptyBasicAllocator()
-	allocator.end = 1024 // Set some end value
+	allocator.End = 1024 // Set some end value
 
 	data, err := allocator.Marshal()
 	if err != nil {
@@ -98,19 +98,19 @@ func TestBasicAllocatorMarshalEmpty(t *testing.T) {
 		t.Fatalf("Failed to unmarshal empty allocator: %v", err)
 	}
 
-	if newAllocator.end != allocator.end {
-		t.Errorf("End offset mismatch: got %d, expected %d", newAllocator.end, allocator.end)
+	if newAllocator.End != allocator.End {
+		t.Errorf("End offset mismatch: got %d, expected %d", newAllocator.End, allocator.End)
 	}
 
-	if len(newAllocator.freeList) != 0 {
-		t.Errorf("Expected empty free list, got %d items", len(newAllocator.freeList))
+	if len(newAllocator.FreeList) != 0 {
+		t.Errorf("Expected empty free list, got %d items", len(newAllocator.FreeList))
 	}
 }
 
 func TestBasicAllocatorMarshalWithMultipleGaps(t *testing.T) {
 	// Create allocator
 	allocator := NewEmptyBasicAllocator()
-	allocator.end = 1000
+	allocator.End = 1000
 
 	// Add several gaps to the free list
 	allocator.Free(100, 50)  // Gap 1: 100-150
@@ -129,12 +129,12 @@ func TestBasicAllocatorMarshalWithMultipleGaps(t *testing.T) {
 	}
 
 	// Verify state
-	if newAllocator.end != 1000 {
-		t.Errorf("End offset mismatch: got %d, expected 1000", newAllocator.end)
+	if newAllocator.End != 1000 {
+		t.Errorf("End offset mismatch: got %d, expected 1000", newAllocator.End)
 	}
 
-	if len(newAllocator.freeList) != 3 {
-		t.Errorf("Free list size mismatch: got %d, expected 3", len(newAllocator.freeList))
+	if len(newAllocator.FreeList) != 3 {
+		t.Errorf("Free list size mismatch: got %d, expected 3", len(newAllocator.FreeList))
 	}
 
 	// Allocate from the restored allocator - should use smallest gap first (heap property)

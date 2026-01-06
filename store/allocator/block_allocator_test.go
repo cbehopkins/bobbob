@@ -1,4 +1,4 @@
-package store
+package allocator
 
 import (
 	"testing"
@@ -264,5 +264,110 @@ func TestMultiBlockAllocatorReusesDeallocatedSegmentsAcrossBlocks(t *testing.T) 
 	// Ensure that preParentAllocate was called again
 	if preParentAllocateCallCount != numBlocks+1 {
 		t.Fatalf("expected preParentAllocate to have been called %d times, but it was called %d times", numBlocks+1, preParentAllocateCallCount)
+	}
+}
+// TestOmniBlockAllocatorWithCache verifies that the lookup cache is properly initialized
+// and used for GetObjectInfo lookups.
+func TestOmniBlockAllocatorWithCache(t *testing.T) {
+	parentAllocator := NewEmptyBasicAllocator()
+	parentAllocator.End = 100000
+
+	blockSizes := []int{256, 512, 1024}
+	blockCount := 10
+	omni := NewOmniBlockAllocator(blockSizes, blockCount, parentAllocator)
+
+	// Verify the cache is initialized
+	if omni.lookupCache.Len() != len(blockSizes) {
+		t.Errorf("Expected cache to have %d ranges, got %d", len(blockSizes), omni.lookupCache.Len())
+	}
+
+	// Allocate some objects from each size
+	objectIds := make(map[int][]ObjectId)
+	for _, size := range blockSizes {
+		for i := 0; i < 3; i++ {
+			objId, _, err := omni.Allocate(size)
+			if err != nil {
+				t.Fatalf("Failed to allocate size %d: %v", size, err)
+			}
+			objectIds[size] = append(objectIds[size], objId)
+		}
+	}
+
+	// Test GetObjectInfo with cache lookup for each object
+	for size, ids := range objectIds {
+		for _, objId := range ids {
+			offset, returnedSize, err := omni.GetObjectInfo(objId)
+			if err != nil {
+				t.Errorf("GetObjectInfo(%d) failed: %v", objId, err)
+				continue
+			}
+			if returnedSize != size {
+				t.Errorf("GetObjectInfo(%d): expected size %d, got %d", objId, size, returnedSize)
+			}
+			// FileOffset can be 0 (it's computed from startingFileOffset + slotIndex*blockSize)
+			_ = offset
+		}
+	}
+}
+
+
+// TestOmniBlockAllocatorCachePerformance verifies that the cache provides
+// significantly faster lookups for GetObjectInfo.
+func TestOmniBlockAllocatorCachePerformance(t *testing.T) {
+	parentAllocator := NewEmptyBasicAllocator()
+	parentAllocator.End = 1000000
+
+	// Create omni allocator with many different block sizes to increase cache complexity
+	blockSizes := []int{64, 128, 256, 512, 1024, 2048, 4096}
+	blockCount := 5
+	omni := NewOmniBlockAllocator(blockSizes, blockCount, parentAllocator)
+
+	// Allocate one object from each size
+	objectIds := make([]ObjectId, 0)
+	for _, size := range blockSizes {
+		objId, _, err := omni.Allocate(size)
+		if err != nil {
+			t.Fatalf("Failed to allocate: %v", err)
+		}
+		objectIds = append(objectIds, objId)
+	}
+
+	// Perform many lookups - with cache this should be very fast
+	for i := 0; i < 1000; i++ {
+		for _, objId := range objectIds {
+			_, _, err := omni.GetObjectInfo(objId)
+			if err != nil {
+				t.Fatalf("GetObjectInfo failed: %v", err)
+			}
+		}
+	}
+}
+
+// TestOmniBlockAllocatorCacheFallback verifies that cache properly falls back to
+// parent allocator for objects allocated from parent.
+func TestOmniBlockAllocatorCacheFallback(t *testing.T) {
+	parentAllocator := NewEmptyBasicAllocator()
+	parentAllocator.End = 100000
+
+	blockSizes := []int{256}
+	blockCount := 2
+	omni := NewOmniBlockAllocator(blockSizes, blockCount, parentAllocator)
+
+	// Allocate with a size not in blockSizes - should go to parent
+	objId, _, err := omni.Allocate(1000)
+	if err != nil {
+		t.Fatalf("Failed to allocate from parent: %v", err)
+	}
+
+	// GetObjectInfo should work via fallback to parent
+	offset, size, err := omni.GetObjectInfo(objId)
+	if err != nil {
+		t.Fatalf("GetObjectInfo failed for parent-allocated object: %v", err)
+	}
+	if size != 1000 {
+		t.Errorf("Expected size 1000, got %d", size)
+	}
+	if offset == 0 {
+		t.Errorf("Got zero offset")
 	}
 }

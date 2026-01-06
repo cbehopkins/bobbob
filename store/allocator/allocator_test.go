@@ -1,4 +1,4 @@
-package store
+package allocator
 
 import (
 	"container/heap"
@@ -20,12 +20,12 @@ func TestNewAllocator(t *testing.T) {
 		t.Fatalf("Failed to create allocator: %v", err)
 	}
 
-	if allocator.end != 0 {
-		t.Errorf("Expected end to be 0, got %d", allocator.end)
+	if allocator.End != 0 {
+		t.Errorf("Expected end to be 0, got %d", allocator.End)
 	}
 
-	if len(allocator.freeList) != 0 {
-		t.Errorf("Expected freeList to be empty, got %d", len(allocator.freeList))
+	if len(allocator.FreeList) != 0 {
+		t.Errorf("Expected freeList to be empty, got %d", len(allocator.FreeList))
 	}
 }
 
@@ -56,8 +56,8 @@ func TestAllocate(t *testing.T) {
 		t.Errorf("Expected fileOffset to be 0, got %d", fileOffset)
 	}
 
-	if allocator.end != 100 {
-		t.Errorf("Expected end to be 100, got %d", allocator.end)
+	if allocator.End != 100 {
+		t.Errorf("Expected end to be 100, got %d", allocator.End)
 	}
 }
 
@@ -83,11 +83,11 @@ func TestFree(t *testing.T) {
 		t.Fatalf("Failed to free space: %v", err)
 	}
 
-	if len(allocator.freeList) != 1 {
-		t.Errorf("Expected freeList to have 1 element, got %d", len(allocator.freeList))
+	if len(allocator.FreeList) != 1 {
+		t.Errorf("Expected freeList to have 1 element, got %d", len(allocator.FreeList))
 	}
 
-	gap := heap.Pop(&allocator.freeList).(Gap)
+	gap := heap.Pop(&allocator.FreeList).(Gap)
 	if gap.Start != 0 || gap.End != 100 {
 		t.Errorf("Expected gap to be {0, 100}, got {%d, %d}", gap.Start, gap.End)
 	}

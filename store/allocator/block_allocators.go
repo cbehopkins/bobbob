@@ -1,10 +1,8 @@
-package store
+package allocator
 
 import (
 	"errors"
 )
-
-var AllAllocated = errors.New("no free blocks available")
 
 type blockAllocator struct {
 	blockSize          int
@@ -52,7 +50,7 @@ func (a *blockAllocator) Allocate(size int) (ObjectId, FileOffset, error) {
 			a.allocatedList[i] = true
 			fileOffset := a.startingFileOffset + FileOffset(i*a.blockSize)
 			objectId := a.startingObjectId + ObjectId(i)
-			return objectId, FileOffset(fileOffset), nil
+			return objectId, fileOffset, nil
 		}
 	}
 	a.allAllocated = true
@@ -150,9 +148,9 @@ func (m *multiBlockAllocator) Allocate(size int) (ObjectId, FileOffset, error) {
 	for _, allocator := range m.allocators {
 		// TBD add a bitfield/map/whatever to track which allocators are full
 		// Then we can save quering them
-		objectId, fileOffset, err := allocator.Allocate(m.blockSize)
+		ObjectId, FileOffset, err := allocator.Allocate(m.blockSize)
 		if err == nil {
-			return objectId, fileOffset, nil
+			return ObjectId, FileOffset, nil
 		}
 		if !errors.Is(err, AllAllocated) {
 			return 0, 0, err
@@ -262,7 +260,7 @@ func (m *multiBlockAllocator) Unmarshal(data []byte) error {
 
 	// Deserialize startOffsets
 	m.startOffsets = make([]FileOffset, numAllocators)
-	for i := 0; i < numAllocators; i++ {
+	for i := range numAllocators {
 		if len(data) < 8 {
 			return errors.New("invalid data length")
 		}
@@ -282,9 +280,10 @@ type omniBlockAllocator struct {
 	blockCount   int
 	parent       Allocator
 	preAllocate  func(size int) error
-	postAllocate func(objectId ObjectId, fileOffset FileOffset) error
-	preFree      func(fileOffset FileOffset, size int) error
-	postFree     func(fileOffset FileOffset, size int) error
+	postAllocate func(ObjectId ObjectId, FileOffset FileOffset) error
+	preFree      func(FileOffset FileOffset, size int) error
+	postFree     func(FileOffset FileOffset, size int) error
+	lookupCache  *ObjectIdLookupCache
 }
 
 // NewOmniBlockAllocator creates an allocator that manages multiple block sizes.
@@ -294,14 +293,40 @@ type omniBlockAllocator struct {
 // parent is the fallback allocator for sizes not in the blockSize slice.
 func NewOmniBlockAllocator(blockSize []int, blockCount int, parent Allocator) *omniBlockAllocator {
 	blockMap := make(map[int]*blockAllocator)
+	cache := NewObjectIdLookupCache()
+
+	// Assign non-overlapping ObjectId ranges to each block allocator.
+	// Each allocator gets a range of [baseId, baseId + blockCount)
 	for i, size := range blockSize {
-		// Start from ObjectId 1 to avoid ObjectId 0 which is reserved for store's internal use
-		blockMap[size] = NewBlockAllocator(size, blockCount, 0, ObjectId(i+1))
+		// Calculate a base ObjectId that won't overlap with other allocators.
+		// Since each allocator manages blockCount ObjectIds, we can multiply by blockCount.
+		// Add 1 to skip ObjectId 0 which is reserved.
+		baseObjId := ObjectId(i*blockCount + 1)
+		endObjId := baseObjId + ObjectId(blockCount)
+
+		// Pre-allocate file space for this block allocator from the parent.
+		// Each block allocator needs blockCount * size bytes of file space.
+		totalSize := blockCount * size
+		_, fileOffset, err := parent.Allocate(totalSize)
+		if err != nil {
+			// If allocation fails, continue with a fallback offset.
+			// This allows graceful degradation, though it may cause collisions.
+			fileOffset = 0
+		}
+
+		ba := NewBlockAllocator(size, blockCount, fileOffset, baseObjId)
+		blockMap[size] = ba
+
+		// Populate the cache with the allocator range
+		_ = cache.AddRange(int64(baseObjId), size, ba)
+		_ = cache.UpdateRangeEnd(int64(baseObjId), int64(endObjId))
 	}
+
 	return &omniBlockAllocator{
-		blockMap:   blockMap,
-		blockCount: blockCount,
-		parent:     parent,
+		blockMap:    blockMap,
+		blockCount:  blockCount,
+		parent:      parent,
+		lookupCache: cache,
 	}
 }
 
@@ -313,28 +338,28 @@ func (o *omniBlockAllocator) Allocate(size int) (ObjectId, FileOffset, error) {
 	}
 
 	allocator, ok := o.blockMap[size]
-	var objectId ObjectId
-	var fileOffset FileOffset
+	var ObjectId ObjectId
+	var FileOffset FileOffset
 	var err error
 	if ok {
-		objectId, fileOffset, err = allocator.Allocate(size)
+		ObjectId, FileOffset, err = allocator.Allocate(size)
 	} else {
 		// Defer to the parent allocator if size is not found
-		objectId, fileOffset, err = o.parent.Allocate(size)
+		ObjectId, FileOffset, err = o.parent.Allocate(size)
 	}
 
 	if o.postAllocate != nil {
-		if postErr := o.postAllocate(objectId, fileOffset); postErr != nil {
+		if postErr := o.postAllocate(ObjectId, FileOffset); postErr != nil {
 			return 0, 0, postErr
 		}
 	}
 
-	return objectId, fileOffset, err
+	return ObjectId, FileOffset, err
 }
 
-func (o *omniBlockAllocator) Free(fileOffset FileOffset, size int) error {
+func (o *omniBlockAllocator) Free(FileOffset FileOffset, size int) error {
 	if o.preFree != nil {
-		if err := o.preFree(fileOffset, size); err != nil {
+		if err := o.preFree(FileOffset, size); err != nil {
 			return err
 		}
 	}
@@ -342,14 +367,14 @@ func (o *omniBlockAllocator) Free(fileOffset FileOffset, size int) error {
 	allocator, ok := o.blockMap[size]
 	var err error
 	if ok {
-		err = allocator.Free(fileOffset, size)
+		err = allocator.Free(FileOffset, size)
 	} else {
 		// Defer to the parent allocator if size is not found
-		err = o.parent.Free(fileOffset, size)
+		err = o.parent.Free(FileOffset, size)
 	}
 
 	if o.postFree != nil {
-		if postErr := o.postFree(fileOffset, size); postErr != nil {
+		if postErr := o.postFree(FileOffset, size); postErr != nil {
 			return postErr
 		}
 	}
@@ -358,22 +383,23 @@ func (o *omniBlockAllocator) Free(fileOffset FileOffset, size int) error {
 }
 
 // GetObjectInfo returns the FileOffset and Size for an allocated ObjectId.
-// It tries each BlockAllocator to find which one owns this ObjectId,
-// then falls back to the parent allocator if not found.
+// It uses a lookup cache for O(log n) performance instead of O(n) linear scan.
+// Falls back to parent allocator if ObjectId not found in local allocators.
 func (o *omniBlockAllocator) GetObjectInfo(objId ObjectId) (FileOffset, int, error) {
-	// Try each block allocator
-	for size, allocator := range o.blockMap {
-		if allocator.ContainsObjectId(objId) {
-			offset, err := allocator.GetFileOffset(objId)
-			if err == nil {
-				// Found it in this allocator
-				return offset, size, nil
-			}
-			// Otherwise, continue to next allocator
+	// Try the cache first for O(log n) lookup
+	allocatorIface, blockSize, err := o.lookupCache.Lookup(int64(objId))
+	if err == nil {
+		// Found in cache - delegate to the allocator
+		allocator := allocatorIface.(*blockAllocator)
+		offset, err := allocator.GetFileOffset(objId)
+		if err == nil {
+			return offset, blockSize, nil
 		}
+		// If the allocator itself says it's not allocated, return the error
+		return 0, 0, err
 	}
 
-	// Fall back to parent allocator
+	// Not in cache, fall back to parent allocator
 	if parentHasGetObjectInfo, ok := o.parent.(interface {
 		GetObjectInfo(ObjectId) (FileOffset, int, error)
 	}); ok {

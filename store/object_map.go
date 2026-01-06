@@ -2,54 +2,22 @@ package store
 
 import (
 	"bytes"
-	"encoding/binary"
 	"encoding/gob"
 	"errors"
 	"io"
 	"slices"
 	"sync"
+
+	"github.com/cbehopkins/bobbob/store/allocator"
 )
 
 // ObjectId is an identifier unique within the store for an object.
 // A user refers to an object by its ObjectId.
 // It is up to the store how this is handled internally.
-type ObjectId int64
-
-// SizeInBytes returns the number of bytes required to marshal this ObjectId.
-// It must satisfy the PersistentKey interface.
-func (id ObjectId) SizeInBytes() int {
-	return 8
-}
-
-// Equals reports whether this ObjectId equals another.
-func (id ObjectId) Equals(other ObjectId) bool {
-	return id == other
-}
+type ObjectId = allocator.ObjectId
 
 // FileOffset represents a byte offset within a file.
-type FileOffset int64
-
-// Marshal converts the ObjectId into a fixed length bytes encoding
-func (id ObjectId) Marshal() ([]byte, error) {
-	buf := make([]byte, 8)
-	binary.LittleEndian.PutUint64(buf, uint64(id))
-	return buf, nil
-}
-
-// Unmarshal converts a fixed length bytes encoding into an ObjectId
-func (id *ObjectId) Unmarshal(data []byte) error {
-	if len(data) < 8 {
-		return errors.New("invalid data length for ObjectId")
-	}
-	*id = ObjectId(binary.LittleEndian.Uint64(data[:8]))
-	return nil
-}
-
-// PreMarshal returns the sizes of sub-objects needed to store the ObjectId.
-// For ObjectId, this is a single 8-byte value.
-func (id ObjectId) PreMarshal() []int {
-	return []int{8}
-}
+type FileOffset = allocator.FileOffset
 
 // ObjectIdLut represents a lookup table of ObjectIds.
 // It provides marshaling support for a slice of ObjectIds.
@@ -177,8 +145,8 @@ func (om *ObjectMap) Unmarshal(data []byte) error {
 // FindGaps returns a channel that yields gaps (unused regions) in the file.
 // The gaps are computed by sorting all object offsets and finding regions
 // between consecutive objects.
-func (om *ObjectMap) FindGaps() <-chan Gap {
-	gapChan := make(chan Gap)
+func (om *ObjectMap) FindGaps() <-chan allocator.Gap {
+	gapChan := make(chan allocator.Gap)
 	go func() {
 		defer close(gapChan)
 		om.mu.RLock()
@@ -193,7 +161,7 @@ func (om *ObjectMap) FindGaps() <-chan Gap {
 			currOffset := offsets[i]
 			prevEnd := int64(prevObj.Offset) + int64(prevObj.Size)
 			if currOffset > prevEnd {
-				gapChan <- Gap{Start: prevEnd, End: currOffset}
+				gapChan <- allocator.Gap{Start: prevEnd, End: currOffset}
 			}
 		}
 	}()

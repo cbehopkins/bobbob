@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+
+	"github.com/cbehopkins/bobbob/store/allocator"
 )
 
 var errStoreNotInitialized = errors.New("store is not initialized")
@@ -14,7 +16,7 @@ type baseStore struct {
 	filePath  string
 	file      *os.File
 	objectMap *ObjectMap
-	allocator Allocator
+	allocator allocator.Allocator
 	closed    bool // Track if store is closed
 }
 
@@ -30,17 +32,17 @@ func NewBasicStore(filePath string) (*baseStore, error) {
 	if err != nil {
 		return nil, err
 	}
-	allocator, err := NewBasicAllocator(file)
+	alloc, err := allocator.NewBasicAllocator(file)
 	if err != nil {
 		return nil, err
 	}
-	allocator.end = int64(pointerSize)
+	alloc.End = int64(pointerSize)
 	// Initialize the Store
 	store := &baseStore{
 		filePath:  filePath,
 		file:      file,
 		objectMap: NewObjectMap(),
-		allocator: allocator,
+		allocator: alloc,
 	}
 	store.objectMap.Set(0, ObjectInfo{Offset: 0, Size: pointerSize})
 
@@ -80,20 +82,17 @@ func LoadBaseStore(filePath string) (*baseStore, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to deserialize object map from %q: %w", filePath, err)
 	}
-	allocator := &BasicAllocator{
-		end:         initialOffset,
-		freeList:    make(GapHeap, 0),
-		allocations: make(map[ObjectId]AllocatedRegion),
-	}
+	alloc := allocator.NewEmptyBasicAllocator()
+	alloc.End = initialOffset
 	// Initialize the Store
 	store := &baseStore{
 		filePath:  filePath,
 		file:      file,
 		objectMap: objectMap,
-		allocator: allocator,
+		allocator: alloc,
 	}
 
-	err = allocator.RefreshFreeList(store)
+	err = alloc.RefreshFreeListFromGaps(objectMap.FindGaps())
 	if err != nil {
 		return nil, fmt.Errorf("failed to refresh free list for %q: %w", filePath, err)
 	}

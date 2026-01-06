@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"testing"
+
+	"github.com/cbehopkins/bobbob/store/allocator"
 )
 
 func TestObjectMapSerialize(t *testing.T) {
@@ -99,13 +101,13 @@ func TestFindGapsAfterDeletions(t *testing.T) {
 
 	// Find gaps
 	gapChan := store.objectMap.FindGaps()
-	var gaps []Gap
+	var gaps []allocator.Gap
 	for gap := range gapChan {
 		gaps = append(gaps, gap)
 	}
 
 	// Verify the gaps
-	expectedGaps := []Gap{
+	expectedGaps := []allocator.Gap{
 		{Start: int64(objId1), End: int64(objId2)},
 		{Start: int64(objId3), End: int64(objId4)},
 	}

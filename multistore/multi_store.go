@@ -31,6 +31,7 @@ import (
 	"os"
 
 	"github.com/cbehopkins/bobbob/store"
+	"github.com/cbehopkins/bobbob/store/allocator"
 	"github.com/cbehopkins/bobbob/yggdrasil/treap"
 )
 
@@ -60,7 +61,7 @@ func deduplicateBlockSizes(sizes []int) []int {
 type multiStore struct {
 	filePath   string
 	file       *os.File
-	allocators []store.Allocator
+	allocators []allocator.Allocator
 }
 
 // NewMultiStore creates a new multiStore at the given file path.
@@ -79,7 +80,7 @@ func NewMultiStore(filePath string) (*multiStore, error) {
 		return nil, err
 	}
 
-	rootAllocator, err := store.NewBasicAllocator(file)
+	rootAllocator, err := allocator.NewBasicAllocator(file)
 	if err != nil {
 		_ = file.Close()
 		return nil, err
@@ -96,12 +97,12 @@ func NewMultiStore(filePath string) (*multiStore, error) {
 
 	blockCount := 1024
 	blockSizes := deduplicateBlockSizes(treap.PersistentTreapObjectSizes())
-	omniAllocator := store.NewOmniBlockAllocator(blockSizes, blockCount, rootAllocator)
+	omniAllocator := allocator.NewOmniBlockAllocator(blockSizes, blockCount, rootAllocator)
 
 	ms := &multiStore{
 		filePath:   filePath,
 		file:       file,
-		allocators: []store.Allocator{rootAllocator, omniAllocator},
+		allocators: []allocator.Allocator{rootAllocator, omniAllocator},
 	}
 	return ms, nil
 }
@@ -138,7 +139,7 @@ func LoadMultiStore(filePath string) (*multiStore, error) {
 	ms := &multiStore{
 		filePath:   filePath,
 		file:       file,
-		allocators: []store.Allocator{rootAllocator, omniAllocator},
+		allocators: []allocator.Allocator{rootAllocator, omniAllocator},
 	}
 
 	return ms, nil
@@ -189,13 +190,13 @@ func readMetadata(file *os.File, metadataOffset int64) (omniData, rootData []byt
 }
 
 // unmarshalComponents deserializes the allocators from their byte representations.
-func unmarshalComponents(rootData, omniData []byte) (*store.BasicAllocator, store.Allocator, error) {
+func unmarshalComponents(rootData, omniData []byte) (*allocator.BasicAllocator, allocator.Allocator, error) {
 	type unmarshaler interface {
 		Unmarshal([]byte) error
 	}
 
 	// Create and unmarshal rootAllocator
-	rootAllocator := store.NewEmptyBasicAllocator()
+	rootAllocator := allocator.NewEmptyBasicAllocator()
 
 	rootUnmarshaler, ok := any(rootAllocator).(unmarshaler)
 	if !ok {
@@ -209,7 +210,7 @@ func unmarshalComponents(rootData, omniData []byte) (*store.BasicAllocator, stor
 	// Create and unmarshal omniAllocator
 	blockCount := 1024
 	blockSizes := deduplicateBlockSizes(treap.PersistentTreapObjectSizes())
-	omniAllocator := store.NewOmniBlockAllocator(blockSizes, blockCount, rootAllocator)
+	omniAllocator := allocator.NewOmniBlockAllocator(blockSizes, blockCount, rootAllocator)
 
 	omniUnmarshaler, ok := any(omniAllocator).(unmarshaler)
 	if !ok {
