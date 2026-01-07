@@ -125,6 +125,8 @@ type BasicAllocator struct {
 	flushTicker *time.Ticker
 	stopFlush   chan struct{}
 	flushDone   chan struct{}
+	// OnAllocate is called after a successful allocation (for testing/monitoring).
+	OnAllocate func(objId ObjectId, offset FileOffset, size int)
 }
 
 // NewBasicAllocator creates a new BasicAllocator for the given file.
@@ -295,6 +297,14 @@ func (a *BasicAllocator) RefreshFreeListFromGaps(gaps <-chan Gap) error {
 	return nil
 }
 
+// SetOnAllocate registers a callback to be invoked after each successful allocation.
+// Useful for testing and monitoring allocator usage patterns.
+func (a *BasicAllocator) SetOnAllocate(cb func(objId ObjectId, offset FileOffset, size int)) {
+	a.mu.Lock()
+	a.OnAllocate = cb
+	a.mu.Unlock()
+}
+
 // Allocate to request a new space
 // Thread-safe for concurrent access
 func (a *BasicAllocator) Allocate(size int) (ObjectId, FileOffset, error) {
@@ -312,6 +322,9 @@ func (a *BasicAllocator) Allocate(size int) (ObjectId, FileOffset, error) {
 			}
 			// Cache the allocation; background flush will persist
 			a.Allocations[objId] = allocatedRegion{fileOffset: fileOffset, size: size}
+			if a.OnAllocate != nil {
+				a.OnAllocate(objId, fileOffset, size)
+			}
 			return objId, fileOffset, nil
 		}
 	}
@@ -320,6 +333,9 @@ func (a *BasicAllocator) Allocate(size int) (ObjectId, FileOffset, error) {
 	a.End += int64(size)
 	// Cache the allocation; background flush will persist
 	a.Allocations[objId] = allocatedRegion{fileOffset: fileOffset, size: size}
+	if a.OnAllocate != nil {
+		a.OnAllocate(objId, fileOffset, size)
+	}
 	return objId, fileOffset, nil
 }
 

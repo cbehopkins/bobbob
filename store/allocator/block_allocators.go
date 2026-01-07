@@ -456,6 +456,8 @@ type omniBlockAllocator struct {
 	postFree     func(offset FileOffset, size int) error
 	idx          *AllocatorIndex
 	maxBlockSize int // largest block size, objects larger than this use parent
+	// OnAllocate is called after a successful allocation (for testing/monitoring).
+	OnAllocate func(objId ObjectId, offset FileOffset, size int)
 }
 
 type omniBlockAllocatorOptions struct {
@@ -538,6 +540,12 @@ func NewOmniBlockAllocator(blockSize []int, blockCount int, parent Allocator, op
 	}, nil
 }
 
+// SetOnAllocate registers a callback to be invoked after each successful allocation.
+// Useful for testing and monitoring allocator usage patterns.
+func (o *omniBlockAllocator) SetOnAllocate(cb func(objId ObjectId, offset FileOffset, size int)) {
+	o.OnAllocate = cb
+}
+
 func (o *omniBlockAllocator) Allocate(size int) (ObjectId, FileOffset, error) {
 	if o.preAllocate != nil {
 		if err := o.preAllocate(size); err != nil {
@@ -580,6 +588,9 @@ func (o *omniBlockAllocator) Allocate(size int) (ObjectId, FileOffset, error) {
 							return 0, 0, postErr
 						}
 					}
+					if o.OnAllocate != nil {
+						o.OnAllocate(id, offset, size)
+					}
 					return id, offset, nil
 				}
 			}
@@ -595,6 +606,10 @@ func (o *omniBlockAllocator) Allocate(size int) (ObjectId, FileOffset, error) {
 		if postErr := o.postAllocate(id, offset); postErr != nil {
 			return 0, 0, postErr
 		}
+	}
+
+	if o.OnAllocate != nil {
+		o.OnAllocate(id, offset, size)
 	}
 
 	return id, offset, err
