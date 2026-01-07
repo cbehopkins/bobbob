@@ -1,6 +1,9 @@
-package store
+package external_test
 
-import "github.com/cbehopkins/bobbob/store/allocator"
+import (
+	"github.com/cbehopkins/bobbob/store/allocator"
+	"github.com/cbehopkins/bobbob/yggdrasil/vault"
+)
 
 // This file demonstrates external configuration of allocator callbacks
 // using the Parent() method and SetOnAllocate, proving that these
@@ -13,11 +16,15 @@ import "github.com/cbehopkins/bobbob/store/allocator"
 // This works with any allocator created via NewOmniBlockAllocator,
 // demonstrating that the callback configuration is accessible from
 // outside the allocator package.
-func ExampleConfigureAllocatorCallbacks(alloc allocator.Allocator) {
+func ExampleConfigureAllocatorCallbacks(v *vault.Vault) {
 	// The allocator might support callback configuration via a SetOnAllocate method
 	// Type assert to the interface that provides callback configuration
 	type callbackSetter interface {
 		SetOnAllocate(func(allocator.ObjectId, allocator.FileOffset, int))
+	}
+	alloc := v.Allocator()
+	if alloc == nil {
+		return
 	}
 
 	if setter, ok := alloc.(callbackSetter); ok {

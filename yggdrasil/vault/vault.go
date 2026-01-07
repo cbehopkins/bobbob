@@ -830,6 +830,44 @@ func (vs *VaultSession) Allocator() allocator.Allocator {
 	return vs.Vault.Allocator()
 }
 
+// ConfigureAllocatorCallbacks attaches callbacks to the session's allocator and, when present,
+// its parent (e.g., BasicAllocator behind OmniBlockAllocator). Returns true if at least one
+// callback was attached.
+func (vs *VaultSession) ConfigureAllocatorCallbacks(
+	childCb func(allocator.ObjectId, allocator.FileOffset, int),
+	parentCb func(allocator.ObjectId, allocator.FileOffset, int),
+) bool {
+	alloc := vs.Allocator()
+	if alloc == nil {
+		return false
+	}
+
+	type callbackSetter interface {
+		SetOnAllocate(func(allocator.ObjectId, allocator.FileOffset, int))
+	}
+
+	succeeded := false
+	if childCb != nil {
+		if setter, ok := alloc.(callbackSetter); ok {
+			setter.SetOnAllocate(childCb)
+			succeeded = true
+		}
+	}
+
+	if parentCb != nil {
+		if provider, ok := alloc.(interface{ Parent() allocator.Allocator }); ok {
+			if parent := provider.Parent(); parent != nil {
+				if setter, ok := parent.(callbackSetter); ok {
+					setter.SetOnAllocate(parentCb)
+					succeeded = true
+				}
+			}
+		}
+	}
+
+	return succeeded
+}
+
 // CollectionSpec defines the configuration for a collection to be opened.
 // This interface allows type-safe collection specifications.
 type CollectionSpec interface {
