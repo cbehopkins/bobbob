@@ -287,3 +287,74 @@ func TestExternalCallbackConfiguration(t *testing.T) {
 
 	t.Logf("✓ Both allocator callbacks successfully invoked from external configuration")
 }
+
+// Regression: after marshal/unmarshal with no preallocation and no prior block allocations,
+// the omni allocator must retain its configured block sizes so small allocations are handled
+// by block allocators (child) with only a single range provision from the parent.
+func TestOmniUnmarshalPreservesSizesWithoutPrealloc(t *testing.T) {
+	tmpDir := t.TempDir()
+	dataFile, err := os.Create(filepath.Join(tmpDir, "data.bin"))
+	if err != nil {
+		t.Fatalf("Create data file failed: %v", err)
+	}
+	defer dataFile.Close()
+
+	parent, err := NewBasicAllocator(dataFile)
+	if err != nil {
+		t.Fatalf("NewBasicAllocator failed: %v", err)
+	}
+
+	blockSizes := defaultBlockSizes()
+	blockCount := 4
+
+	original, err := NewOmniBlockAllocator(blockSizes, blockCount, parent, WithoutPreallocation())
+	if err != nil {
+		t.Fatalf("NewOmniBlockAllocator failed: %v", err)
+	}
+
+	data, err := original.Marshal()
+	if err != nil {
+		t.Fatalf("Marshal failed: %v", err)
+	}
+
+	reloaded, err := NewOmniBlockAllocator(blockSizes, blockCount, parent, WithoutPreallocation())
+	if err != nil {
+		t.Fatalf("NewOmniBlockAllocator (reload) failed: %v", err)
+	}
+
+	childCalls := 0
+	parentCalls := 0
+	parentSize := 0
+
+	parent.SetOnAllocate(func(_ ObjectId, _ FileOffset, size int) {
+		parentCalls++
+		parentSize = size
+	})
+	reloaded.SetOnAllocate(func(_ ObjectId, _ FileOffset, _ int) {
+		childCalls++
+	})
+
+	if err := reloaded.Unmarshal(data); err != nil {
+		t.Fatalf("Unmarshal failed: %v", err)
+	}
+
+	small := blockSizes[0]
+	if _, _, err := reloaded.Allocate(small); err != nil {
+		t.Fatalf("Allocate small failed: %v", err)
+	}
+
+	if childCalls != 1 {
+		t.Fatalf("expected child allocator callback to fire once, got %d", childCalls)
+	}
+	if parentCalls == 0 {
+		t.Fatalf("expected parent to provision a range once")
+	}
+	if parentSize < small*blockCount {
+		t.Fatalf("expected parent allocation >= %d (range), got %d", small*blockCount, parentSize)
+	}
+}
+
+// Regression test: after marshal/unmarshal with no preallocation and no prior
+// block allocations, the omni allocator must retain its configured block sizes
+// so small allocations route through block allocators instead of the parent.
+// (Removed duplicate test)

@@ -826,24 +826,29 @@ func (o *omniBlockAllocator) Unmarshal(data []byte) error {
 		int(data[offset+2])<<8 | int(data[offset+3])
 	offset += 4
 
-	// Verify we have enough data for sizes
-	if len(data) < offset+numSizes*4 {
-		return errors.New("invalid data length for sizes")
+	var sizes []int
+	if numSizes > 0 {
+		// Verify we have enough data for sizes
+		if len(data) < offset+numSizes*4 {
+			return errors.New("invalid data length for sizes")
+		}
+
+		sizes = make([]int, numSizes)
+		for i := 0; i < numSizes; i++ {
+			size := int(data[offset])<<24 | int(data[offset+1])<<16 |
+				int(data[offset+2])<<8 | int(data[offset+3])
+			sizes[i] = size
+			offset += 4
+		}
+	} else {
+		// No allocators were serialized (e.g., no preallocation and no allocations yet).
+		// Preserve existing configured sizes so lazy provisioning still works.
+		sizes = make([]int, len(o.sortedSizes))
+		copy(sizes, o.sortedSizes)
 	}
 
-	// Deserialize sizes
-	sizes := make([]int, numSizes)
-	for i := 0; i < numSizes; i++ {
-		size := int(data[offset])<<24 | int(data[offset+1])<<16 |
-			int(data[offset+2])<<8 | int(data[offset+3])
-		sizes[i] = size
-		offset += 4
-	}
-
-	// Initialize blockMap
+	// Initialize blockMap and common metadata
 	o.blockMap = make(map[int]*blockAllocator)
-
-	// Deserialize each allocator
 	bitCount := (o.blockCount + 7) / 8
 	allocatorDataSize := 8 + bitCount + 2*o.blockCount
 
@@ -854,6 +859,12 @@ func (o *omniBlockAllocator) Unmarshal(data []byte) error {
 		o.maxBlockSize = o.sortedSizes[len(o.sortedSizes)-1]
 	}
 	o.idx = NewAllocatorIndex("")
+
+	// If the original data had zero allocators serialized (numSizes == 0),
+	// there is no allocator payload to consume; keep sizes for lazy provisioning.
+	if numSizes == 0 {
+		return nil
+	}
 
 	for _, size := range sizes {
 		allocator := &blockAllocator{
