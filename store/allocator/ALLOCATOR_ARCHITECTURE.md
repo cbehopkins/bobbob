@@ -270,3 +270,96 @@ Removed legacy component:
 Where to look in code:
 - AllocatorIndex: [store/allocator/allocator_index.go](store/allocator/allocator_index.go)
 - Omni allocator integration: [store/allocator/block_allocators.go](store/allocator/block_allocators.go)
+
+## Monitoring and Debugging Allocations
+
+The allocator provides callback hooks for monitoring allocation patterns, useful for testing, profiling, and understanding system behavior.
+
+### Setting Up Allocation Callbacks
+
+Both `BasicAllocator` and `OmniBlockAllocator` support allocation callbacks via `SetOnAllocate`:
+
+```go
+// Configure callback on BasicAllocator
+basicAlloc.SetOnAllocate(func(objId allocator.ObjectId, offset allocator.FileOffset, size int) {
+    log.Printf("BasicAllocator: allocated objId=%d at offset=%d, size=%d", objId, offset, size)
+})
+
+// Configure callback on OmniBlockAllocator
+omniAlloc.SetOnAllocate(func(objId allocator.ObjectId, offset allocator.FileOffset, size int) {
+    log.Printf("OmniBlockAllocator: allocated objId=%d at offset=%d, size=%d", objId, offset, size)
+})
+```
+
+### Accessing the Parent Allocator
+
+When you have an `OmniBlockAllocator`, you can access and configure its parent `BasicAllocator`:
+
+```go
+// Create allocators
+basicAlloc, _ := allocator.NewBasicAllocator(dataFile)
+omniAlloc, _ := allocator.NewOmniBlockAllocator([]int{}, 10000, basicAlloc)
+
+// Access parent and configure its callback
+if parent := omniAlloc.Parent(); parent != nil {
+    if ba, ok := parent.(*allocator.BasicAllocator); ok {
+        ba.SetOnAllocate(func(objId, offset, size) {
+            log.Printf("Parent BasicAllocator called: objId=%d, offset=%d, size=%d", 
+                objId, offset, size)
+        })
+    }
+}
+```
+
+### Understanding Allocation Flow
+
+With callbacks configured on both levels, you can observe:
+
+1. **Preallocation Phase**: When `OmniBlockAllocator` is created, it calls the parent's `Allocate()` for each block size range (7 times for default sizes: 64, 128, 256, 512, 1024, 2048, 4096 bytes). These show up in the parent callback.
+
+2. **User Allocations**:
+   - Small/medium objects (≤4096 bytes): Handled by `OmniBlockAllocator`, show up in its callback
+   - Large objects (>4096 bytes): Fall through to parent `BasicAllocator`, show up in parent callback
+
+3. **Allocation Routing**: Most user allocations are caught by block allocators, so the parent callback is rarely invoked for user data after preallocation.
+
+### Example Use Cases
+
+**Testing and Validation**:
+```go
+var allocCount int
+omniAlloc.SetOnAllocate(func(objId, offset, size) {
+    allocCount++
+})
+// ... run test ...
+if allocCount != expectedCount {
+    t.Errorf("Expected %d allocations, got %d", expectedCount, allocCount)
+}
+```
+
+**Performance Profiling**:
+```go
+var (
+    mu sync.Mutex
+    sizeHistogram = make(map[int]int)
+)
+omniAlloc.SetOnAllocate(func(objId, offset, size) {
+    mu.Lock()
+    sizeHistogram[size]++
+    mu.Unlock()
+})
+// Analyze which sizes are most common to optimize block sizes
+```
+
+**Debugging Allocation Patterns**:
+```go
+basicAlloc.SetOnAllocate(func(objId, offset, size) {
+    if size > 10000 {
+        log.Printf("WARNING: Large allocation %d bytes at offset %d", size, offset)
+    }
+})
+```
+
+### External Package Access
+
+These features are accessible from outside the allocator package. See [store/allocator_callback_check.go](../../store/allocator_callback_check.go) for a working example of external configuration.

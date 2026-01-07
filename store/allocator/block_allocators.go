@@ -546,6 +546,15 @@ func (o *omniBlockAllocator) SetOnAllocate(cb func(objId ObjectId, offset FileOf
 	o.OnAllocate = cb
 }
 
+// Parent returns the parent allocator, allowing external code to configure it.
+// For example, to set allocation callbacks on a BasicAllocator parent:
+//   if ba, ok := omni.Parent().(*BasicAllocator); ok {
+//       ba.SetOnAllocate(callback)
+//   }
+func (o *omniBlockAllocator) Parent() Allocator {
+	return o.parent
+}
+
 func (o *omniBlockAllocator) Allocate(size int) (ObjectId, FileOffset, error) {
 	if o.preAllocate != nil {
 		if err := o.preAllocate(size); err != nil {
