@@ -1,3 +1,6 @@
+//go:build oldlookup
+// +build oldlookup
+
 package allocator
 
 import (
@@ -34,7 +37,7 @@ func NewObjectIdLookupCache() *ObjectIdLookupCache {
 // Panics if ranges would overlap (defensive check for bugs).
 func (c *ObjectIdLookupCache) AddRange(startObjectId int64, blockSize int, startingFileOffset FileOffset) error {
 	endObjectId := startObjectId // Will be updated when we know the allocator's block count
-	
+
 	// Check for overlaps
 	for _, r := range c.ranges {
 		if !(endObjectId <= r.StartObjectId || startObjectId >= r.EndObjectId) {

@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	collections "github.com/cbehopkins/bobbob/multistore"
 	"github.com/cbehopkins/bobbob/store"
 	"github.com/cbehopkins/bobbob/yggdrasil/types"
 )
@@ -422,7 +423,7 @@ func TestSetMemoryBudgetWithPercentile(t *testing.T) {
 func TestSetMemoryBudgetWithPercentile_LargeDataset(t *testing.T) {
 	tempDir := t.TempDir()
 	storePath := filepath.Join(tempDir, "percentile_large.db")
-	stre, err := store.NewBasicStore(storePath)
+	stre, err := collections.NewMultiStore(storePath, 0)
 	if err != nil {
 		t.Fatalf("Failed to create store: %v", err)
 	}

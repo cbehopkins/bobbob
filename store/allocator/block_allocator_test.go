@@ -300,9 +300,8 @@ func TestOmniBlockAllocatorWithCache(t *testing.T) {
 	// plus the provided sizes. After deduplication, we should have more ranges.
 	// The exact count depends on overlap: 256, 512, 1024 are already in defaults.
 	// So we expect: 64, 128, 256, 512, 1024, 2048, 4096 = 7 sizes
-	expectedRanges := 7
-	if omni.lookupCache.Len() != expectedRanges {
-		t.Errorf("Expected cache to have %d ranges, got %d", expectedRanges, omni.lookupCache.Len())
+	if len(omni.blockMap) != 7 {
+		t.Errorf("Expected 7 block allocators, got %d", len(omni.blockMap))
 	}
 
 	// Allocate some objects from each size

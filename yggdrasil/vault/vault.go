@@ -905,6 +905,7 @@ func OpenVault(filename string, specs ...CollectionSpec) (*VaultSession, []any, 
 	// Prefer MultiStore for optimized allocator routing
 	ms, mErr := multistore.LoadMultiStore(filename, 0)
 	if mErr != nil {
+		// FIXME can we update this to use the concurrent store implementation?
 		ms, mErr = multistore.NewMultiStore(filename, 0)
 		if mErr != nil {
 			return nil, nil, fmt.Errorf("failed to create MultiStore: %w", mErr)

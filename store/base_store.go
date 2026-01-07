@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"time"
 
 	"github.com/cbehopkins/bobbob/store/allocator"
 )
@@ -36,6 +37,8 @@ func NewBasicStore(filePath string) (*baseStore, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Start background flush of allocator cache every 5 seconds
+	alloc.StartBackgroundFlush(5 * time.Second)
 	alloc.End = int64(pointerSize)
 	// Initialize the Store
 	store := &baseStore{
@@ -82,7 +85,12 @@ func LoadBaseStore(filePath string) (*baseStore, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to deserialize object map from %q: %w", filePath, err)
 	}
-	alloc := allocator.NewEmptyBasicAllocator()
+	alloc, err := allocator.NewBasicAllocator(file)
+	if err != nil {
+		return nil, fmt.Errorf("failed to init allocator: %w", err)
+	}
+	// Start background flush of allocator cache every 5 seconds
+	alloc.StartBackgroundFlush(5 * time.Second)
 	alloc.End = initialOffset
 	// Initialize the Store
 	store := &baseStore{
@@ -387,6 +395,10 @@ func (s *baseStore) Close() error {
 		return err
 	}
 
+	// Stop allocator background flush (best effort) and mark closed
+	if ba, ok := s.allocator.(*allocator.BasicAllocator); ok {
+		ba.StopBackgroundFlush()
+	}
 	// Mark as closed to prevent further operations
 	s.closed = true
 

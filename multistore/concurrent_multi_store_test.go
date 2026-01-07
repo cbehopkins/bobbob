@@ -367,7 +367,7 @@ func TestConcurrentMultiStoreDiskTokens(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			
+
 			// Signal start of operation
 			concurrent <- true
 			mu.Lock()
@@ -384,7 +384,7 @@ func TestConcurrentMultiStoreDiskTokens(t *testing.T) {
 				<-concurrent
 				return
 			}
-			
+
 			// Write data
 			data := []byte{1, 2, 3, 4, 5}
 			if _, err := writer.Write(data); err != nil {

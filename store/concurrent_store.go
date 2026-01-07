@@ -63,12 +63,12 @@ func (s *concurrentStore) LateWriteNewObj(size int) (ObjectId, io.Writer, Finish
 	if s.diskTokens != nil {
 		<-s.diskTokens // Acquire disk token (blocks if none available)
 	}
-	
+
 	// Allocation modifies allocator state, so use global lock
 	s.lock.Lock()
 	objectId, writer, finisher, err := s.innerStore.LateWriteNewObj(size)
 	s.lock.Unlock()
-	
+
 	if err != nil {
 		if s.diskTokens != nil {
 			s.diskTokens <- struct{}{} // Release on error
@@ -185,7 +185,9 @@ func (s *concurrentStore) WriteBatchedObjs(objIds []ObjectId, data []byte, sizes
 // Returns false if the inner store doesn't support GetObjectInfo.
 func (s *concurrentStore) GetObjectInfo(objId ObjectId) (ObjectInfo, bool) {
 	// Try type assertion to get GetObjectInfo support
-	if getter, ok := s.innerStore.(interface{ GetObjectInfo(ObjectId) (ObjectInfo, bool) }); ok {
+	if getter, ok := s.innerStore.(interface {
+		GetObjectInfo(ObjectId) (ObjectInfo, bool)
+	}); ok {
 		return getter.GetObjectInfo(objId)
 	}
 	return ObjectInfo{}, false

@@ -242,3 +242,31 @@ A: No. Once assigned, ObjectIds are stable. They encode the allocator type and s
 2. Run the tests - see how different sizes are allocated
 3. Check [store/allocator_memory_test.go](store/allocator_memory_test.go) - watch the memory savings happen
 4. Explore [multistore/multi_store.go](multistore/multi_store.go) - see it in real use
+
+## Unified AllocatorIndex + LRU
+
+To remove duplication and support disk-searchable lookups, the system uses a unified index called AllocatorIndex.
+
+- Purpose: One index for both variable-sized objects and fixed-size ranges.
+- Persistence: Binary format with magic "ALIX1" followed by counts, then
+  - Ranges segment: entries of `[StartObjectId, EndObjectId, BlockSize, StartingFileOffset]`
+  - Objects segment: entries sorted by ObjectId as `[ObjectId, FileOffset, Size]`
+- Instances:
+  - BasicAllocator owns an index instance primarily for per-object entries.
+  - OmniBlockAllocator owns an index instance primarily for range entries.
+- Lookup path:
+  1) Check ranges for arithmetic offset (fast path for blocks)
+  2) Check in-memory object table for explicit entries
+  3) Check a small LRU cache of recent on-disk lookups
+  4) Binary search the objects segment on disk; insert result into the LRU
+- LRU details:
+  - Capacity: 4096 recent object entries (ObjectId → FileOffset, Size)
+  - Updated on Add/Delete to stay coherent
+  - Reduces repeated disk reads during hotspot access patterns
+
+Removed legacy component:
+- The previous `ObjectIdLookupCache` (range-only, in-memory) is removed. Its responsibilities are covered by AllocatorIndex ranges, with `AllocatorRange` now defined alongside the index.
+
+Where to look in code:
+- AllocatorIndex: [store/allocator/allocator_index.go](store/allocator/allocator_index.go)
+- Omni allocator integration: [store/allocator/block_allocators.go](store/allocator/block_allocators.go)

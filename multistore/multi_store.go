@@ -38,10 +38,10 @@ import (
 // multiStore implements a store with multiple allocators for different object sizes.
 // It uses a root allocator and a block allocator optimized for persistent treap nodes.
 type multiStore struct {
-	filePath       string
-	file           *os.File
-	allocators     []allocator.Allocator
-	tokenManager   *store.DiskTokenManager // nil for unlimited, otherwise limits concurrent disk ops
+	filePath     string
+	file         *os.File
+	allocators   []allocator.Allocator
+	tokenManager *store.DiskTokenManager // nil for unlimited, otherwise limits concurrent disk ops
 }
 
 // NewMultiStore creates a new multiStore at the given file path.
@@ -144,8 +144,9 @@ func LoadMultiStore(filePath string, maxDiskTokens int) (*multiStore, error) {
 // Pass 0 for unlimited concurrent disk operations.
 //
 // This is a convenience constructor equivalent to:
-//   ms, _ := NewMultiStore(filePath, 0)
-//   cs := store.NewConcurrentStoreWrapping(ms, maxDiskTokens)
+//
+//	ms, _ := NewMultiStore(filePath, 0)
+//	cs := store.NewConcurrentStoreWrapping(ms, maxDiskTokens)
 func NewConcurrentMultiStore(filePath string, maxDiskTokens int) (store.Storer, error) {
 	ms, err := NewMultiStore(filePath, 0)
 	if err != nil {
@@ -160,8 +161,9 @@ func NewConcurrentMultiStore(filePath string, maxDiskTokens int) (store.Storer, 
 // Pass 0 for unlimited concurrent disk operations.
 //
 // This is a convenience constructor equivalent to:
-//   ms, _ := LoadMultiStore(filePath, 0)
-//   cs := store.NewConcurrentStoreWrapping(ms, maxDiskTokens)
+//
+//	ms, _ := LoadMultiStore(filePath, 0)
+//	cs := store.NewConcurrentStoreWrapping(ms, maxDiskTokens)
 func LoadConcurrentMultiStore(filePath string, maxDiskTokens int) (store.Storer, error) {
 	ms, err := LoadMultiStore(filePath, 0)
 	if err != nil {

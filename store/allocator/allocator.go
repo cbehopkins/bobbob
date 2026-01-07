@@ -6,7 +6,10 @@ import (
 	"errors"
 	"io"
 	"os"
+	"path/filepath"
+	"sort"
 	"sync"
+	"time"
 )
 
 // ObjectId is an identifier unique within the store for an object.
@@ -107,10 +110,21 @@ type allocatedRegion struct {
 // BasicAllocator is a struct to manage the allocation of space in the file
 // It tracks both free gaps and allocated regions to support reverse lookups.
 type BasicAllocator struct {
-	mu          sync.Mutex
-	FreeList    gapHeap
-	End         int64
-	Allocations map[ObjectId]allocatedRegion // Tracks allocated regions for reverse lookup
+	mu       sync.Mutex
+	FreeList gapHeap
+	End      int64
+	// Allocations acts as a cache of recent mutations for reverse lookup.
+	Allocations map[ObjectId]allocatedRegion
+	// Persistent backing store for the full allocation table.
+	backing AllocationStore
+	// Unified allocator index (objects + ranges); BasicAllocator uses objects segment.
+	idx *AllocatorIndex
+	// Pending deletions to flush to backing store.
+	pendingDel map[ObjectId]struct{}
+	// Background flush controls.
+	flushTicker *time.Ticker
+	stopFlush   chan struct{}
+	flushDone   chan struct{}
 }
 
 // NewBasicAllocator creates a new BasicAllocator for the given file.
@@ -121,10 +135,19 @@ func NewBasicAllocator(file *os.File) (*BasicAllocator, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Derive default paths for disk-backed metadata (alongside the data file).
+	baseDir := filepath.Dir(file.Name())
+	baseName := filepath.Base(file.Name())
+	allocPath := filepath.Join(baseDir, baseName+".allocs.json")
+	indexPath := filepath.Join(baseDir, baseName+".allocs.idx")
 	return &BasicAllocator{
 		End:         offset,
 		FreeList:    make(gapHeap, 0),
 		Allocations: make(map[ObjectId]allocatedRegion),
+		backing:     NewFileAllocationStore(allocPath),
+		idx:         NewAllocatorIndex(indexPath),
+		pendingDel:  make(map[ObjectId]struct{}),
+		stopFlush:   make(chan struct{}),
 	}, nil
 }
 
@@ -134,6 +157,127 @@ func NewEmptyBasicAllocator() *BasicAllocator {
 	return &BasicAllocator{
 		FreeList:    make(gapHeap, 0),
 		Allocations: make(map[ObjectId]allocatedRegion),
+		backing:     NewInMemoryAllocationStore(),
+		pendingDel:  make(map[ObjectId]struct{}),
+		stopFlush:   make(chan struct{}),
+	}
+}
+
+// StartBackgroundFlush starts periodic flushing of cache entries to the backing store.
+// Call StopBackgroundFlush to terminate.
+func (a *BasicAllocator) StartBackgroundFlush(interval time.Duration) {
+	a.mu.Lock()
+	if a.flushTicker != nil {
+		a.mu.Unlock()
+		return
+	}
+	a.flushTicker = time.NewTicker(interval)
+	a.flushDone = make(chan struct{})
+	go a.runFlushLoop(a.flushTicker)
+	a.mu.Unlock()
+}
+
+// StopBackgroundFlush stops the background flush loop.
+func (a *BasicAllocator) StopBackgroundFlush() {
+	a.mu.Lock()
+	if a.flushTicker != nil {
+		a.flushTicker.Stop()
+		a.flushTicker = nil
+	}
+	close(a.stopFlush)
+	done := a.flushDone
+	a.mu.Unlock()
+	// Wait for flush loop to exit to avoid racing with file deletion
+	if done != nil {
+		<-done
+	}
+	a.mu.Lock()
+	a.stopFlush = make(chan struct{})
+	a.flushDone = nil
+	a.mu.Unlock()
+}
+
+func (a *BasicAllocator) runFlushLoop(t *time.Ticker) {
+	for {
+		select {
+		case <-t.C:
+			a.FlushCacheToBacking(0) // default: flush all
+		case <-a.stopFlush:
+			if a.flushDone != nil {
+				close(a.flushDone)
+			}
+			return
+		}
+	}
+}
+
+// FlushCacheToBacking persists a percentage of cache entries to the backing store.
+// percent == 0 flushes all; otherwise flushes approximately percent% of entries.
+func (a *BasicAllocator) FlushCacheToBacking(percent int) {
+	a.mu.Lock()
+	// Snapshot keys to avoid holding lock during I/O
+	total := len(a.Allocations)
+	keys := make([]ObjectId, 0, total)
+	for id := range a.Allocations {
+		keys = append(keys, id)
+	}
+	delKeys := make([]ObjectId, 0, len(a.pendingDel))
+	for id := range a.pendingDel {
+		delKeys = append(delKeys, id)
+	}
+	a.mu.Unlock()
+
+	// Determine how many to flush
+	flushCount := total
+	if percent > 0 && percent < 100 {
+		flushCount = (total * percent) / 100
+	}
+
+	// Batch allocations for efficient persistence
+	batch := make(map[ObjectId]allocatedRegion, flushCount)
+	for i := 0; i < flushCount; i++ {
+		id := keys[i]
+		a.mu.Lock()
+		r := a.Allocations[id]
+		a.mu.Unlock()
+		batch[id] = r
+	}
+
+	// Prefer unified index for persistence when available
+	if a.idx != nil {
+		// Batch add allocations
+		a.idx.BatchAddObjects(batch)
+		// Apply deletions
+		for _, id := range delKeys {
+			a.idx.DeleteObject(id)
+		}
+		// Persist to disk
+		_ = a.idx.Flush()
+	} else {
+		// Fallback to backing store behavior
+		if batchStore, ok := a.backing.(interface {
+			BatchAdd(map[ObjectId]allocatedRegion) error
+		}); ok {
+			_ = batchStore.BatchAdd(batch)
+		} else {
+			for id, r := range batch {
+				_ = a.backing.Add(id, r.fileOffset, r.size)
+			}
+		}
+		for _, id := range delKeys {
+			_ = a.backing.Delete(id)
+		}
+		if flusher, ok := a.backing.(interface{ Flush() error }); ok {
+			_ = flusher.Flush()
+		}
+	}
+
+	// Clear flushed entries from cache if percent==0 (flush all)
+	if percent == 0 {
+		a.mu.Lock()
+		a.Allocations = make(map[ObjectId]allocatedRegion)
+		a.pendingDel = make(map[ObjectId]struct{})
+		a.mu.Unlock()
 	}
 }
 
@@ -166,7 +310,7 @@ func (a *BasicAllocator) Allocate(size int) (ObjectId, FileOffset, error) {
 			if gap.End-gap.Start > int64(size) {
 				heap.Push(&a.FreeList, Gap{gap.Start + int64(size), gap.End})
 			}
-			// Record the allocation
+			// Cache the allocation; background flush will persist
 			a.Allocations[objId] = allocatedRegion{fileOffset: fileOffset, size: size}
 			return objId, fileOffset, nil
 		}
@@ -174,7 +318,7 @@ func (a *BasicAllocator) Allocate(size int) (ObjectId, FileOffset, error) {
 	objId := ObjectId(a.End)
 	fileOffset := FileOffset(a.End)
 	a.End += int64(size)
-	// Record the allocation
+	// Cache the allocation; background flush will persist
 	a.Allocations[objId] = allocatedRegion{fileOffset: fileOffset, size: size}
 	return objId, fileOffset, nil
 }
@@ -184,9 +328,10 @@ func (a *BasicAllocator) Free(fileOffset FileOffset, size int) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	// Remove from allocations tracking
+	// Mark deletion in cache; background flush will persist removal
 	objId := ObjectId(fileOffset)
 	delete(a.Allocations, objId)
+	a.pendingDel[objId] = struct{}{}
 
 	heap.Push(&a.FreeList, Gap{int64(fileOffset), int64(fileOffset) + int64(size)})
 	return nil
@@ -195,42 +340,75 @@ func (a *BasicAllocator) Free(fileOffset FileOffset, size int) error {
 // GetObjectInfo returns the FileOffset and Size for an allocated ObjectId.
 // Returns an error if the ObjectId is not allocated or invalid.
 func (a *BasicAllocator) GetObjectInfo(objId ObjectId) (FileOffset, int, error) {
+	// First check cache
 	a.mu.Lock()
-	defer a.mu.Unlock()
-
 	region, found := a.Allocations[objId]
-	if !found {
+	a.mu.Unlock()
+	if found {
+		return region.fileOffset, region.size, nil
+	}
+	// Check unified index first
+	if a.idx != nil {
+		off, sz, err := a.idx.Get(objId)
+		if err == nil {
+			return off, sz, nil
+		}
+	}
+	// Fallback to backing store
+	off, sz, ok, err := a.backing.Get(objId)
+	if err != nil {
+		return 0, 0, err
+	}
+	if !ok {
 		return 0, 0, errors.New("object not allocated")
 	}
-	return region.fileOffset, region.size, nil
+	return off, sz, nil
 }
 
 // Marshal serializes the BasicAllocator's state to a byte slice.
 // Format: [end:8][freeListCount:8][gaps...][allocCount:8][allocations...]
 func (a *BasicAllocator) Marshal() ([]byte, error) {
 	a.mu.Lock()
-	defer a.mu.Unlock()
+	freeListCopy := make(gapHeap, len(a.FreeList))
+	copy(freeListCopy, a.FreeList)
+	endCopy := a.End
+	// Snapshot cache
+	cacheCopy := make(map[ObjectId]allocatedRegion, len(a.Allocations))
+	for id, r := range a.Allocations {
+		cacheCopy[id] = r
+	}
+	a.mu.Unlock()
+
+	// Collect full allocation set = backing store merged with cache.
+	full := make(map[ObjectId]allocatedRegion)
+	_ = a.backing.IterateAll(func(id ObjectId, offset FileOffset, size int) bool {
+		full[id] = allocatedRegion{fileOffset: offset, size: size}
+		return true
+	})
+	for id, r := range cacheCopy {
+		full[id] = r
+	}
 
 	// Calculate size
-	allocSize := len(a.Allocations) * 24 // 8 bytes ObjectId + 8 bytes FileOffset + 4 bytes Size + 4 bytes padding
-	size := 16 + len(a.FreeList)*16 + 8 + allocSize
+	allocSize := len(full) * 24 // 8 bytes ObjectId + 8 bytes FileOffset + 4 bytes Size + 4 bytes padding
+	size := 16 + len(freeListCopy)*16 + 8 + allocSize
 	data := make([]byte, size)
 
 	offset := 0
 
 	// Marshal end offset
-	data[offset] = byte(a.End >> 56)
-	data[offset+1] = byte(a.End >> 48)
-	data[offset+2] = byte(a.End >> 40)
-	data[offset+3] = byte(a.End >> 32)
-	data[offset+4] = byte(a.End >> 24)
-	data[offset+5] = byte(a.End >> 16)
-	data[offset+6] = byte(a.End >> 8)
-	data[offset+7] = byte(a.End)
+	data[offset] = byte(endCopy >> 56)
+	data[offset+1] = byte(endCopy >> 48)
+	data[offset+2] = byte(endCopy >> 40)
+	data[offset+3] = byte(endCopy >> 32)
+	data[offset+4] = byte(endCopy >> 24)
+	data[offset+5] = byte(endCopy >> 16)
+	data[offset+6] = byte(endCopy >> 8)
+	data[offset+7] = byte(endCopy)
 	offset += 8
 
 	// Marshal freeList count
-	freeListCount := int64(len(a.FreeList))
+	freeListCount := int64(len(freeListCopy))
 	data[offset] = byte(freeListCount >> 56)
 	data[offset+1] = byte(freeListCount >> 48)
 	data[offset+2] = byte(freeListCount >> 40)
@@ -242,7 +420,7 @@ func (a *BasicAllocator) Marshal() ([]byte, error) {
 	offset += 8
 
 	// Marshal each gap
-	for _, gap := range a.FreeList {
+	for _, gap := range freeListCopy {
 		data[offset] = byte(gap.Start >> 56)
 		data[offset+1] = byte(gap.Start >> 48)
 		data[offset+2] = byte(gap.Start >> 40)
@@ -265,7 +443,7 @@ func (a *BasicAllocator) Marshal() ([]byte, error) {
 	}
 
 	// Marshal allocation count
-	allocCount := int64(len(a.Allocations))
+	allocCount := int64(len(full))
 	data[offset] = byte(allocCount >> 56)
 	data[offset+1] = byte(allocCount >> 48)
 	data[offset+2] = byte(allocCount >> 40)
@@ -277,23 +455,17 @@ func (a *BasicAllocator) Marshal() ([]byte, error) {
 	offset += 8
 
 	// Create a sorted slice for deterministic ordering
-	ids := make([]ObjectId, 0, len(a.Allocations))
-	for id := range a.Allocations {
+	ids := make([]ObjectId, 0, len(full))
+	for id := range full {
 		ids = append(ids, id)
 	}
-	// Simple insertion sort for small maps
-	for i := 1; i < len(ids); i++ {
-		key := ids[i]
-		j := i - 1
-		for j >= 0 && ids[j] > key {
-			ids[j+1] = ids[j]
-			j--
-		}
-		ids[j+1] = key
-	}
+	// Use standard library sort for O(n log n) performance
+	sort.Slice(ids, func(i, j int) bool {
+		return ids[i] < ids[j]
+	})
 
 	for _, id := range ids {
-		region := a.Allocations[id]
+		region := full[id]
 		// ObjectId
 		data[offset] = byte(id >> 56)
 		data[offset+1] = byte(id >> 48)
@@ -403,8 +575,9 @@ func (a *BasicAllocator) Unmarshal(data []byte) error {
 		return errors.New("invalid data length for allocations")
 	}
 
-	// Unmarshal allocations
+	// Unmarshal allocations (populate cache and backing store)
 	a.Allocations = make(map[ObjectId]allocatedRegion, allocCount)
+	records := make([]AllocationRecord, 0, allocCount)
 	for i := 0; i < allocCount; i++ {
 		// ObjectId
 		objId := ObjectId(int64(data[offset])<<56 | int64(data[offset+1])<<48 |
@@ -428,13 +601,17 @@ func (a *BasicAllocator) Unmarshal(data []byte) error {
 		// Skip padding
 		offset += 4
 
-		a.Allocations[objId] = allocatedRegion{fileOffset: fileOffset, size: size}
+		rec := allocatedRegion{fileOffset: fileOffset, size: size}
+		a.Allocations[objId] = rec
+		records = append(records, AllocationRecord{ID: objId, Offset: fileOffset, Size: size})
 	}
-
+	// Replace backing store with the unmarshaled content
+	_ = a.backing.ReplaceAll(records)
 	return nil
 }
 
 var AllAllocated = errors.New("no free blocks available")
+
 // ErrNoContiguousRange indicates the allocator has free space but cannot satisfy
 // the requested contiguous run length.
 var ErrNoContiguousRange = errors.New("no contiguous range available")

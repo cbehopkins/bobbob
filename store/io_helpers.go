@@ -86,11 +86,11 @@ func WriteBatchedSections(file *os.File, firstOffset FileOffset, sections [][]by
 	for _, section := range sections {
 		totalSize += len(section)
 	}
-	
+
 	data := make([]byte, 0, totalSize)
 	for _, section := range sections {
 		data = append(data, section...)
 	}
-	
+
 	return file.WriteAt(data, int64(firstOffset))
 }

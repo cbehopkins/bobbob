@@ -451,10 +451,10 @@ type omniBlockAllocator struct {
 	blockCount   int
 	parent       Allocator
 	preAllocate  func(size int) error
-	postAllocate func(ObjectId ObjectId, FileOffset FileOffset) error
-	preFree      func(FileOffset FileOffset, size int) error
-	postFree     func(FileOffset FileOffset, size int) error
-	lookupCache  *ObjectIdLookupCache
+	postAllocate func(id ObjectId, offset FileOffset) error
+	preFree      func(offset FileOffset, size int) error
+	postFree     func(offset FileOffset, size int) error
+	idx          *AllocatorIndex
 	maxBlockSize int // largest block size, objects larger than this use parent
 }
 
@@ -504,7 +504,7 @@ func NewOmniBlockAllocator(blockSize []int, blockCount int, parent Allocator, op
 	sort.Ints(uniqueSizes)
 
 	blockMap := make(map[int]*blockAllocator)
-	cache := NewObjectIdLookupCache()
+	idx := NewAllocatorIndex("")
 	var maxBlockSize int
 	if len(uniqueSizes) > 0 {
 		maxBlockSize = uniqueSizes[len(uniqueSizes)-1]
@@ -522,9 +522,9 @@ func NewOmniBlockAllocator(blockSize []int, blockCount int, parent Allocator, op
 			ba := NewBlockAllocator(size, blockCount, fileOffset, baseObjId)
 			blockMap[size] = ba
 
-			// Populate the cache with the allocator range
-			_ = cache.AddRange(int64(baseObjId), size, fileOffset)
-			_ = cache.UpdateRangeEnd(int64(baseObjId), int64(baseObjId)+int64(blockCount))
+			// Register the range with the unified index
+			_ = idx.RegisterRange(int64(baseObjId), size, fileOffset)
+			_ = idx.UpdateRangeEnd(int64(baseObjId), int64(baseObjId)+int64(blockCount))
 		}
 	}
 
@@ -533,7 +533,7 @@ func NewOmniBlockAllocator(blockSize []int, blockCount int, parent Allocator, op
 		sortedSizes:  uniqueSizes,
 		blockCount:   blockCount,
 		parent:       parent,
-		lookupCache:  cache,
+		idx:          idx,
 		maxBlockSize: maxBlockSize,
 	}, nil
 }
@@ -545,8 +545,8 @@ func (o *omniBlockAllocator) Allocate(size int) (ObjectId, FileOffset, error) {
 		}
 	}
 
-	var ObjectId ObjectId
-	var FileOffset FileOffset
+	var id ObjectId
+	var offset FileOffset
 	var err error
 
 	// Try best-fit: find the smallest block size that can hold this object
@@ -565,22 +565,22 @@ func (o *omniBlockAllocator) Allocate(size int) (ObjectId, FileOffset, error) {
 				}
 				allocator = NewBlockAllocator(blockSize, o.blockCount, fileOffset, baseObjId)
 				o.blockMap[blockSize] = allocator
-				if o.lookupCache != nil {
-					_ = o.lookupCache.AddRange(int64(baseObjId), blockSize, fileOffset)
-					_ = o.lookupCache.UpdateRangeEnd(int64(baseObjId), int64(baseObjId)+int64(o.blockCount))
+				if o.idx != nil {
+					_ = o.idx.RegisterRange(int64(baseObjId), blockSize, fileOffset)
+					_ = o.idx.UpdateRangeEnd(int64(baseObjId), int64(baseObjId)+int64(o.blockCount))
 				}
 			}
 			if allocator != nil {
-				ObjectId, FileOffset, err = allocator.Allocate(blockSize)
+				id, offset, err = allocator.Allocate(blockSize)
 				if err == nil {
 					// Record the caller-requested size (may be <= blockSize)
-					allocator.setRequestedSize(ObjectId, size)
+					allocator.setRequestedSize(id, size)
 					if o.postAllocate != nil {
-						if postErr := o.postAllocate(ObjectId, FileOffset); postErr != nil {
+						if postErr := o.postAllocate(id, offset); postErr != nil {
 							return 0, 0, postErr
 						}
 					}
-					return ObjectId, FileOffset, nil
+					return id, offset, nil
 				}
 			}
 			// If this block allocator is missing or full, fall through to parent
@@ -589,15 +589,15 @@ func (o *omniBlockAllocator) Allocate(size int) (ObjectId, FileOffset, error) {
 
 	// Object too large or all suitable block allocators are full:
 	// Defer to the parent allocator
-	ObjectId, FileOffset, err = o.parent.Allocate(size)
+	id, offset, err = o.parent.Allocate(size)
 
 	if o.postAllocate != nil {
-		if postErr := o.postAllocate(ObjectId, FileOffset); postErr != nil {
+		if postErr := o.postAllocate(id, offset); postErr != nil {
 			return 0, 0, postErr
 		}
 	}
 
-	return ObjectId, FileOffset, err
+	return id, offset, err
 }
 
 // AllocateRun attempts to reserve a contiguous run of blocks for the given size.
@@ -621,9 +621,9 @@ func (o *omniBlockAllocator) AllocateRun(size int, count int) ([]ObjectId, []Fil
 				}
 				allocator = NewBlockAllocator(blockSize, o.blockCount, fileOffset, baseObjId)
 				o.blockMap[blockSize] = allocator
-				if o.lookupCache != nil {
-					_ = o.lookupCache.AddRange(int64(baseObjId), blockSize, fileOffset)
-					_ = o.lookupCache.UpdateRangeEnd(int64(baseObjId), int64(baseObjId)+int64(o.blockCount))
+				if o.idx != nil {
+					_ = o.idx.RegisterRange(int64(baseObjId), blockSize, fileOffset)
+					_ = o.idx.UpdateRangeEnd(int64(baseObjId), int64(baseObjId)+int64(o.blockCount))
 				}
 			}
 
@@ -649,9 +649,9 @@ func (o *omniBlockAllocator) AllocateRun(size int, count int) ([]ObjectId, []Fil
 	return nil, nil, ErrRunUnsupported
 }
 
-func (o *omniBlockAllocator) Free(FileOffset FileOffset, size int) error {
+func (o *omniBlockAllocator) Free(fileOffset FileOffset, size int) error {
 	if o.preFree != nil {
-		if err := o.preFree(FileOffset, size); err != nil {
+		if err := o.preFree(fileOffset, size); err != nil {
 			return err
 		}
 	}
@@ -666,13 +666,13 @@ func (o *omniBlockAllocator) Free(FileOffset FileOffset, size int) error {
 			blockSize := o.sortedSizes[idx]
 			allocator, ok := o.blockMap[blockSize]
 			if ok && allocator != nil {
-				if objId, ok := allocator.objectIdForOffset(FileOffset); ok {
+				if objId, ok := allocator.objectIdForOffset(fileOffset); ok {
 					allocator.setRequestedSize(objId, 0)
 				}
-				err = allocator.Free(FileOffset, blockSize)
+				err = allocator.Free(fileOffset, blockSize)
 				if err == nil {
 					if o.postFree != nil {
-						if postErr := o.postFree(FileOffset, blockSize); postErr != nil {
+						if postErr := o.postFree(fileOffset, blockSize); postErr != nil {
 							return postErr
 						}
 					}
@@ -683,10 +683,10 @@ func (o *omniBlockAllocator) Free(FileOffset FileOffset, size int) error {
 	}
 
 	// Object too large or not in block allocators: defer to parent
-	err = o.parent.Free(FileOffset, size)
+	err = o.parent.Free(fileOffset, size)
 
 	if o.postFree != nil {
-		if postErr := o.postFree(FileOffset, size); postErr != nil {
+		if postErr := o.postFree(fileOffset, size); postErr != nil {
 			return postErr
 		}
 	}
@@ -695,27 +695,29 @@ func (o *omniBlockAllocator) Free(FileOffset FileOffset, size int) error {
 }
 
 // GetObjectInfo returns the FileOffset and Size for an allocated ObjectId.
-// It uses a lookup cache for O(log n) performance instead of O(n) linear scan.
+// It uses the unified AllocatorIndex for O(log n) range lookup.
 // Falls back to parent allocator if ObjectId not found in local allocators.
 func (o *omniBlockAllocator) GetObjectInfo(objId ObjectId) (FileOffset, int, error) {
-	// Try the cache first for O(log n) lookup
-	rangeInfo, err := o.lookupCache.Lookup(int64(objId))
-	if err == nil {
-		// Validate against the backing allocator to ensure the slot is allocated
-		allocator, ok := o.blockMap[rangeInfo.BlockSize]
-		if ok && allocator != nil {
-			if !allocator.ContainsObjectId(objId) {
-				return 0, 0, errors.New("ObjectId not managed by block allocator")
+	// Try the index first for O(log n) lookup
+	if o.idx != nil {
+		_, blockSize, err := o.idx.Get(objId)
+		if err == nil {
+			allocator, ok := o.blockMap[blockSize]
+			if ok && allocator != nil {
+				if !allocator.ContainsObjectId(objId) {
+					return 0, 0, errors.New("ObjectId not managed by block allocator")
+				}
+				// Validate that the slot is actually allocated and get canonical offset
+				realOff, allocErr := allocator.GetFileOffset(objId)
+				if allocErr != nil {
+					return 0, 0, allocErr
+				}
+				size := blockSize
+				if requested, ok := allocator.requestedSize(objId); ok {
+					size = requested
+				}
+				return realOff, size, nil
 			}
-			offset, allocErr := allocator.GetFileOffset(objId)
-			if allocErr != nil {
-				return 0, 0, allocErr
-			}
-			size := rangeInfo.BlockSize
-			if requested, ok := allocator.requestedSize(objId); ok {
-				size = requested
-			}
-			return offset, size, nil
 		}
 	}
 
@@ -826,7 +828,7 @@ func (o *omniBlockAllocator) Unmarshal(data []byte) error {
 	if len(o.sortedSizes) > 0 {
 		o.maxBlockSize = o.sortedSizes[len(o.sortedSizes)-1]
 	}
-	o.lookupCache = NewObjectIdLookupCache()
+	o.idx = NewAllocatorIndex("")
 
 	for _, size := range sizes {
 		allocator := &blockAllocator{
@@ -847,8 +849,8 @@ func (o *omniBlockAllocator) Unmarshal(data []byte) error {
 		}
 
 		o.blockMap[size] = allocator
-		_ = o.lookupCache.AddRange(int64(allocator.startingObjectId), size, allocator.startingFileOffset)
-		_ = o.lookupCache.UpdateRangeEnd(int64(allocator.startingObjectId), int64(allocator.startingObjectId)+int64(o.blockCount))
+		_ = o.idx.RegisterRange(int64(allocator.startingObjectId), allocator.blockSize, allocator.startingFileOffset)
+		_ = o.idx.UpdateRangeEnd(int64(allocator.startingObjectId), int64(allocator.startingObjectId)+int64(o.blockCount))
 		offset += allocatorDataSize
 	}
 

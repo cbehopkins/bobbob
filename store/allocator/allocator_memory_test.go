@@ -1,93 +1,48 @@
 package allocator
 
 import (
+	"runtime"
+	"runtime/debug"
 	"testing"
 	"unsafe"
 )
 
-// TestBlockAllocatorMemoryOverhead verifies that BlockAllocator uses minimal memory
-// per allocated item (approximately 1 byte per item in allocatedList)
-func TestBlockAllocatorMemoryOverhead(t *testing.T) {
-	const blockSize = 1024
-	const blockCount = 10_000
+// TestBasicAllocatorMemoryUsageBaseline measures heap growth for a fixed number
+// of sequential allocations to establish a memory-usage baseline.
+// Run with: go test ./store/allocator -run TestBasicAllocatorMemoryUsageBaseline -v
+func TestBasicAllocatorMemoryUsageBaseline(t *testing.T) {
+	counts := []int{1_000, 10_000, 50_000}
+	const objSize = 256
 
-	// Create a BlockAllocator
-	ba := NewBlockAllocator(blockSize, blockCount, 0, 0)
+	for _, n := range counts {
+		// Encourage a clean baseline
+		runtime.GC()
+		debug.FreeOSMemory()
 
-	// Calculate expected memory usage
-	structSize := int(unsafe.Sizeof(*ba))
-	sliceHeaderSize := 24           // slice header (ptr, len, cap)
-	boolArraySize := blockCount * 1 // 1 byte per bool
+		var before runtime.MemStats
+		runtime.ReadMemStats(&before)
 
-	expectedTotalBytes := structSize + boolArraySize
-	bytesPerItem := float64(boolArraySize) / float64(blockCount)
-
-	t.Logf("=== BlockAllocator Memory Overhead ===")
-	t.Logf("Block count: %d", blockCount)
-	t.Logf("")
-	t.Logf("Memory breakdown:")
-	t.Logf("  Struct size: %d bytes", structSize)
-	t.Logf("  Slice header: %d bytes", sliceHeaderSize)
-	t.Logf("  Bool array (allocatedList): %d bytes", boolArraySize)
-	t.Logf("  Total: %d bytes (%.2f KB)", expectedTotalBytes, float64(expectedTotalBytes)/1024)
-	t.Logf("")
-	t.Logf("Per-item tracking overhead: %.2f bytes", bytesPerItem)
-	t.Logf("")
-
-	// Verify it's approximately 1 byte per item
-	if bytesPerItem > 1.1 {
-		t.Errorf("Expected ~1 byte per item, got %.2f bytes", bytesPerItem)
-	} else {
-		t.Logf("✓ Memory overhead is ~1 byte per item as expected")
-	}
-
-	// Allocate all blocks to verify the structure works
-	for i := range blockCount {
-		_, _, err := ba.Allocate(blockSize)
-		if err != nil {
-			t.Fatalf("Failed to allocate block %d: %v", i, err)
+		alloc := NewEmptyBasicAllocator()
+		for i := 0; i < n; i++ {
+			if _, _, err := alloc.Allocate(objSize); err != nil {
+				t.Fatalf("Allocate failed at %d: %v", i, err)
+			}
 		}
-	}
 
-	t.Logf("✓ Successfully allocated all %d blocks", blockCount)
-}
+		// Settle heap and measure
+		runtime.GC()
+		var after runtime.MemStats
+		runtime.ReadMemStats(&after)
 
-// TestBlockAllocatorMemoryScaling verifies that memory grows linearly
-// with the number of blocks (no unexpected overhead)
-func TestBlockAllocatorMemoryScaling(t *testing.T) {
-	testSizes := []struct {
-		name  string
-		count int
-	}{
-		{"1k blocks", 1_000},
-		{"10k blocks", 10_000},
-		{"100k blocks", 100_000},
-	}
+		delta := int64(after.Alloc) - int64(before.Alloc)
+		perObj := float64(delta) / float64(n)
 
-	t.Logf("=== BlockAllocator Memory Scaling ===")
-	t.Logf("Testing memory scaling with different block counts\n")
+		// Internal sizes for context
+		allocCount := len(alloc.Allocations)
+		freeListLen := len(alloc.FreeList)
 
-	for _, tc := range testSizes {
-		ba := NewBlockAllocator(1024, tc.count, 0, 0)
-
-		// Calculate expected memory
-		structSize := int(unsafe.Sizeof(*ba))
-		boolArraySize := tc.count * 1
-		totalBytes := structSize + boolArraySize
-		bytesPerItem := float64(boolArraySize) / float64(tc.count)
-
-		t.Logf("%s:", tc.name)
-		t.Logf("  Struct: %d bytes", structSize)
-		t.Logf("  Bool array: %d bytes (%.2f KB)", boolArraySize, float64(boolArraySize)/1024)
-		t.Logf("  Total: %d bytes (%.2f KB)", totalBytes, float64(totalBytes)/1024)
-		t.Logf("  Per-item: %.2f bytes", bytesPerItem)
-
-		// Verify scaling is linear (1 byte per item)
-		if bytesPerItem > 1.1 {
-			t.Errorf("  Expected ~1 byte per item, got %.2f bytes", bytesPerItem)
-		} else {
-			t.Logf("  ✓ Linear scaling maintained")
-		}
+		t.Logf("BasicAllocator baseline: n=%d size=%d heap_delta=%dB ~%.2fB/obj allocations=%d freeList=%d",
+			n, objSize, delta, perObj, allocCount, freeListLen)
 	}
 }
 

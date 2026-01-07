@@ -3,8 +3,11 @@ package treap
 import (
 	"encoding/binary"
 	"fmt"
+	"math/rand"
 	"path/filepath"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/cbehopkins/bobbob/store"
 )
@@ -32,6 +35,45 @@ type ComplexPayload struct {
 	Child store.ObjectId
 	Data  []byte
 }
+
+// intPersistentKey is a local PersistentKey implementation used to avoid package cycles in concurrency tests.
+type intPersistentKey int32
+
+func (k intPersistentKey) Equals(other intPersistentKey) bool { return k == other }
+func (k intPersistentKey) Value() intPersistentKey            { return k }
+func (k intPersistentKey) New() PersistentKey[intPersistentKey] {
+	v := intPersistentKey(-1)
+	return &v
+}
+func (k intPersistentKey) SizeInBytes() int { return store.ObjectId(0).SizeInBytes() }
+func (k intPersistentKey) MarshalToObjectId(stre store.Storer) (store.ObjectId, error) {
+	return store.ObjectId(k), nil
+}
+func (k *intPersistentKey) UnmarshalFromObjectId(id store.ObjectId, stre store.Storer) error {
+	*k = intPersistentKey(id)
+	return nil
+}
+
+// intPayload is a simple payload for concurrency tests.
+type intPayload struct {
+	Value int
+}
+
+func (p intPayload) Marshal() ([]byte, error) {
+	buf := make([]byte, 4)
+	binary.LittleEndian.PutUint32(buf, uint32(p.Value))
+	return buf, nil
+}
+
+func (p intPayload) Unmarshal(data []byte) (UntypedPersistentPayload, error) {
+	if len(data) != 4 {
+		return nil, fmt.Errorf("invalid data length for intPayload: %d", len(data))
+	}
+	val := binary.LittleEndian.Uint32(data)
+	return intPayload{Value: int(val)}, nil
+}
+
+func (p intPayload) SizeInBytes() int { return 4 }
 
 // DeleteDependents deletes the child allocation owned by this payload.
 func (p ComplexPayload) DeleteDependents(stre store.Storer) error {
@@ -1103,5 +1145,96 @@ func TestPersistentPayloadDeleteFreesStringKeyBackingObject(t *testing.T) {
 
 	if _, found := bs.GetObjectInfo(keyObjId); found {
 		t.Fatalf("expected backing key object %d to be freed when deleting node", keyObjId)
+	}
+}
+
+// TestPersistentPayloadTreapConcurrentAccess exercises concurrent inserts and reads on a persistent treap
+// to validate the internal RWMutex protections without requiring users to add their own locks.
+func TestPersistentPayloadTreapConcurrentAccess(t *testing.T) {
+	storePath := filepath.Join(t.TempDir(), "concurrent_payload.db")
+	stre, err := store.NewBasicStore(storePath)
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+	defer stre.Close()
+
+	treap := NewPersistentPayloadTreap[intPersistentKey, intPayload](
+		func(a, b intPersistentKey) bool { return a < b },
+		(*intPersistentKey)(new(intPersistentKey)),
+		stre,
+	)
+
+	writerCount := 4
+	keysPerWriter := 500
+	totalKeys := writerCount * keysPerWriter
+
+	// Readers loop until writers finish, validating any observed entries.
+	done := make(chan struct{})
+	errCh := make(chan error, 1)
+
+	var readerWg sync.WaitGroup
+	readerCount := 4
+	for r := 0; r < readerCount; r++ {
+		readerWg.Add(1)
+		go func(seed int64) {
+			defer readerWg.Done()
+			randSrc := rand.New(rand.NewSource(seed))
+			for {
+				select {
+				case <-done:
+					return
+				default:
+				}
+				k := intPersistentKey(randSrc.Intn(totalKeys))
+				node := treap.Search(&k)
+				if node == nil || node.IsNil() {
+					continue
+				}
+				payload := node.GetPayload().Value
+				if payload != int(k) {
+					select {
+					case errCh <- fmt.Errorf("unexpected payload for key %d: %d", k, payload):
+					default:
+					}
+					return
+				}
+			}
+		}(time.Now().UnixNano() + int64(r))
+	}
+
+	var writerWg sync.WaitGroup
+	for w := 0; w < writerCount; w++ {
+		offset := w * keysPerWriter
+		writerWg.Add(1)
+		go func(start int) {
+			defer writerWg.Done()
+			for i := 0; i < keysPerWriter; i++ {
+				val := start + i
+				key := intPersistentKey(val)
+				treap.Insert(&key, intPayload{Value: val})
+			}
+		}(offset)
+	}
+
+	writerWg.Wait()
+	close(done)
+	readerWg.Wait()
+
+	select {
+	case err := <-errCh:
+		t.Fatalf("reader observed inconsistency: %v", err)
+	default:
+	}
+
+	// Validate all keys are present and correct after concurrent operations.
+	for i := 0; i < totalKeys; i++ {
+		key := intPersistentKey(i)
+		node := treap.Search(&key)
+		if node == nil || node.IsNil() {
+			t.Fatalf("missing key %d", i)
+		}
+		if node.GetPayload().Value != i {
+			t.Fatalf("unexpected payload for key %d: %d", i, node.GetPayload().Value)
+		}
 	}
 }

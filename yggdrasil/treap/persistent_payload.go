@@ -188,8 +188,8 @@ func (n *PersistentPayloadTreapNode[K, P]) IsObjectIdInvalid() bool {
 // PersistentPayloadTreap represents a persistent treap with payloads.
 type PersistentPayloadTreap[K any, P PersistentPayload[P]] struct {
 	PersistentTreap[K]
-	mu sync.RWMutex // Protects concurrent access to the treap
-	payloadPool sync.Pool // Pool for *PersistentPayloadTreapNode[K,P]
+	mu          sync.RWMutex // Protects concurrent access to the treap
+	payloadPool sync.Pool    // Pool for *PersistentPayloadTreapNode[K,P]
 }
 
 // NewPersistentPayloadTreapNode creates a new PersistentPayloadTreapNode with the given key, priority, and payload.
