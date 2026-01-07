@@ -172,6 +172,19 @@ func LoadConcurrentMultiStore(filePath string, maxDiskTokens int) (store.Storer,
 	return store.NewConcurrentStoreWrapping(ms, maxDiskTokens), nil
 }
 
+// Allocator returns the primary allocator (OmniBlockAllocator) backing the multiStore.
+// External callers can use this to attach allocation callbacks and, via Parent(),
+// reach the root BasicAllocator for monitoring.
+func (s *multiStore) Allocator() allocator.Allocator {
+	if len(s.allocators) > 1 {
+		return s.allocators[1]
+	}
+	if len(s.allocators) == 1 {
+		return s.allocators[0]
+	}
+	return nil
+}
+
 // readHeader reads the metadata offset from the first 8 bytes of the file.
 func readHeader(file *os.File) (int64, error) {
 	header := make([]byte, 8)

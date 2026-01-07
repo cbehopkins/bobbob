@@ -58,6 +58,8 @@ package store
 import (
 	"errors"
 	"io"
+
+	"github.com/cbehopkins/bobbob/store/allocator"
 )
 
 var (
@@ -147,6 +149,13 @@ type RunAllocator interface {
 
 // ErrAllocateRunUnsupported indicates the store cannot guarantee contiguous run allocation.
 var ErrAllocateRunUnsupported = errors.New("allocate run unsupported")
+
+// AllocatorProvider exposes access to the underlying allocator used by a store.
+// This enables external consumers (like vault sessions) to configure allocation
+// callbacks without needing direct access to the store implementation type.
+type AllocatorProvider interface {
+	Allocator() allocator.Allocator
+}
 
 // Storer is the primary interface for object storage.
 // It combines basic lifecycle management with streaming read/write operations.

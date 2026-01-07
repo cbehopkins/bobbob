@@ -19,7 +19,7 @@ func ExampleConfigureAllocatorCallbacks(alloc allocator.Allocator) {
 	type callbackSetter interface {
 		SetOnAllocate(func(allocator.ObjectId, allocator.FileOffset, int))
 	}
-	
+
 	if setter, ok := alloc.(callbackSetter); ok {
 		setter.SetOnAllocate(func(objId allocator.ObjectId, offset allocator.FileOffset, size int) {
 			// External logging/monitoring logic here
@@ -33,7 +33,7 @@ func ExampleConfigureAllocatorCallbacks(alloc allocator.Allocator) {
 	type parentProvider interface {
 		Parent() allocator.Allocator
 	}
-	
+
 	if provider, ok := alloc.(parentProvider); ok {
 		if parent := provider.Parent(); parent != nil {
 			// Type assert to BasicAllocator to access its SetOnAllocate

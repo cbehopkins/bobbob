@@ -3,6 +3,8 @@ package store
 import (
 	"io"
 	"sync"
+
+	"github.com/cbehopkins/bobbob/store/allocator"
 )
 
 // concurrentStore wraps any Storer with per-object locking to allow
@@ -233,4 +235,14 @@ func (s *concurrentStore) DeleteObj(objId ObjectId) error {
 // Close closes the store and releases all resources.
 func (s *concurrentStore) Close() error {
 	return s.innerStore.Close()
+}
+
+// Allocator returns the underlying allocator when the wrapped store exposes it.
+// This allows external callers to configure allocation callbacks through the
+// concurrency wrapper without breaking encapsulation.
+func (s *concurrentStore) Allocator() allocator.Allocator {
+	if provider, ok := s.innerStore.(interface{ Allocator() allocator.Allocator }); ok {
+		return provider.Allocator()
+	}
+	return nil
 }

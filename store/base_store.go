@@ -437,3 +437,9 @@ func (s *baseStore) Close() error {
 func (s *baseStore) GetObjectCount() int {
 	return s.objectMap.Len()
 }
+
+// Allocator returns the allocator backing this store, enabling external callers
+// to configure allocation callbacks (e.g., SetOnAllocate).
+func (s *baseStore) Allocator() allocator.Allocator {
+	return s.allocator
+}

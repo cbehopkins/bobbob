@@ -8,6 +8,7 @@ import (
 
 	multistore "github.com/cbehopkins/bobbob/multistore"
 	"github.com/cbehopkins/bobbob/store"
+	"github.com/cbehopkins/bobbob/store/allocator"
 	ycollections "github.com/cbehopkins/bobbob/yggdrasil/collections"
 	"github.com/cbehopkins/bobbob/yggdrasil/treap"
 	"github.com/cbehopkins/bobbob/yggdrasil/types"
@@ -151,6 +152,16 @@ type Vault struct {
 
 	// mu protects concurrent access to activeCollections
 	mu sync.RWMutex
+}
+
+// Allocator exposes the underlying allocator when the Store implements
+// store.AllocatorProvider. External callers can use this to set allocation
+// callbacks on the OmniBlockAllocator and its parent BasicAllocator.
+func (v *Vault) Allocator() allocator.Allocator {
+	if provider, ok := v.Store.(interface{ Allocator() allocator.Allocator }); ok {
+		return provider.Allocator()
+	}
+	return nil
 }
 
 // Note: NewVault has been removed. Use LoadVault for both new and existing vaults.
@@ -807,6 +818,16 @@ type VaultSession struct {
 // Close persists all changes and closes the vault.
 func (vs *VaultSession) Close() error {
 	return vs.Vault.Close()
+}
+
+// Allocator returns the allocator backing this session (if exposed by the store).
+// This enables external users of OpenVault/OpenVaultWithIdentity to attach
+// allocation callbacks without direct access to the store implementation.
+func (vs *VaultSession) Allocator() allocator.Allocator {
+	if vs == nil || vs.Vault == nil {
+		return nil
+	}
+	return vs.Vault.Allocator()
 }
 
 // CollectionSpec defines the configuration for a collection to be opened.
