@@ -1,6 +1,7 @@
 package external_test
 
 import (
+	"fmt"
 	"path/filepath"
 	"testing"
 
@@ -9,6 +10,11 @@ import (
 	"github.com/cbehopkins/bobbob/yggdrasil/types"
 	"github.com/cbehopkins/bobbob/yggdrasil/vault"
 )
+
+type fileData struct {
+	Path    string
+	Payload string
+}
 
 // TestConfigureAllocatorCallbacks demonstrates attaching allocation callbacks externally
 // via VaultSession.ConfigureAllocatorCallbacks. It verifies callbacks on both the
@@ -60,5 +66,108 @@ func TestConfigureAllocatorCallbacks(t *testing.T) {
 	}
 	if parentHits == 0 {
 		t.Fatalf("expected parent allocator callback to fire")
+	}
+}
+
+// TestFreshVaultSmallObjectsStayInBlockAllocator mirrors the user pattern of creating a
+// new vault, attaching callbacks, and inserting small records. It ensures the parent
+// allocator does not repeatedly handle small allocations (<=4KB) during steady-state inserts.
+func TestFreshVaultSmallObjectsStayInBlockAllocator(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "fresh_vault.db")
+
+	session, colls, err := vault.OpenVaultWithIdentity(
+		file,
+		vault.PayloadIdentitySpec[string, treap.MD5Key, types.JsonPayload[fileData]]{
+			Identity:        "srcFiles",
+			LessFunc:        treap.MD5Less,
+			KeyTemplate:     (*treap.MD5Key)(new(treap.MD5Key)),
+			PayloadTemplate: types.JsonPayload[fileData]{},
+		},
+		vault.PayloadIdentitySpec[string, treap.MD5Key, types.JsonPayload[fileData]]{
+			Identity:        "dstFiles",
+			LessFunc:        treap.MD5Less,
+			KeyTemplate:     (*treap.MD5Key)(new(treap.MD5Key)),
+			PayloadTemplate: types.JsonPayload[fileData]{},
+		},
+	)
+	if err != nil {
+		t.Fatalf("OpenVaultWithIdentity: %v", err)
+	}
+	defer session.Close()
+
+	recording := true
+	childSizes := make([]int, 0, 64)
+	parentAll := 0
+	parentSmall := make([]int, 0, 16)
+
+	ok := session.ConfigureAllocatorCallbacks(
+		func(_ allocator.ObjectId, _ allocator.FileOffset, size int) {
+			if !recording {
+				return
+			}
+			childSizes = append(childSizes, size)
+		},
+		func(_ allocator.ObjectId, _ allocator.FileOffset, size int) {
+			if !recording {
+				return
+			}
+			parentAll++
+			if size <= 4096 {
+				parentSmall = append(parentSmall, size)
+			}
+		},
+	)
+	if !ok {
+		t.Fatalf("expected allocator callbacks to attach")
+	}
+
+	src, ok := colls["srcFiles"].(*treap.PersistentPayloadTreap[treap.MD5Key, types.JsonPayload[fileData]])
+	if !ok {
+		t.Fatalf("unexpected src collection type: %T", colls["srcFiles"])
+	}
+	dst, ok := colls["dstFiles"].(*treap.PersistentPayloadTreap[treap.MD5Key, types.JsonPayload[fileData]])
+	if !ok {
+		t.Fatalf("unexpected dst collection type: %T", colls["dstFiles"])
+	}
+
+	payload := func(i int) types.JsonPayload[fileData] {
+		return types.JsonPayload[fileData]{Value: fileData{
+			Path:    fmt.Sprintf("file-%d", i),
+			Payload: "contents-32-bytes-placeholder",
+		}}
+	}
+	numFiles := 500
+	for i := range numFiles {
+		var srcKey treap.MD5Key
+		srcKey[0] = byte(i + 1)
+		var dstKey treap.MD5Key
+		dstKey[0] = byte(i + 1)
+		dstKey[1] = 0xFF
+
+		src.Insert(&srcKey, payload(i))
+		dst.Insert(&dstKey, payload(i+1000))
+	}
+
+	if err := src.Persist(); err != nil {
+		t.Fatalf("persist src treap: %v", err)
+	}
+	if err := dst.Persist(); err != nil {
+		t.Fatalf("persist dst treap: %v", err)
+	}
+
+	recording = false
+	gotChild := len(childSizes)
+	gotParentAll := parentAll
+	gotParentSmall := len(parentSmall)
+	smallSizes := append([]int(nil), parentSmall...)
+
+	if gotChild == 0 {
+		t.Fatalf("expected child allocator callbacks during inserts")
+	}
+	if gotParentAll == 0 {
+		t.Fatalf("parent allocator callback never fired (expected initial block provisioning)")
+	}
+	if gotParentSmall > 0 {
+		t.Fatalf("expected parent allocator to avoid small allocations, saw sizes %v", smallSizes)
 	}
 }
