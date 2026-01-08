@@ -245,7 +245,8 @@ func NewPersistentPayloadTreap[K any, P PersistentPayload[P]](lessFunc func(a, b
 			Store:       store,
 		},
 	}
-	t.payloadPool = sync.Pool{New: func() any { return new(PersistentPayloadTreapNode[K, P]) }}
+	payloadNodeCreate := func() any { return new(PersistentPayloadTreapNode[K, P]) }
+	t.payloadPool = sync.Pool{New: payloadNodeCreate}
 	return t
 }
 
