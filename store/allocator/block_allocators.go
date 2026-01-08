@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"sync"
 )
 
 type blockAllocator struct {
@@ -458,7 +459,8 @@ type omniBlockAllocator struct {
 	preFree      func(offset FileOffset, size int) error
 	postFree     func(offset FileOffset, size int) error
 	idx          *AllocatorIndex
-	maxBlockSize int // largest block size, objects larger than this use parent
+	maxBlockSize int        // largest block size, objects larger than this use parent
+	mu           sync.Mutex // guards pool state for concurrent callers
 	// OnAllocate is called after a successful allocation (for testing/monitoring).
 	OnAllocate func(objId ObjectId, offset FileOffset, size int)
 }
@@ -571,6 +573,9 @@ func (o *omniBlockAllocator) Parent() Allocator {
 }
 
 func (o *omniBlockAllocator) Allocate(size int) (ObjectId, FileOffset, error) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
 	if o.preAllocate != nil {
 		if err := o.preAllocate(size); err != nil {
 			return 0, 0, err
@@ -667,6 +672,9 @@ func (o *omniBlockAllocator) Allocate(size int) (ObjectId, FileOffset, error) {
 // Only sizes that fit within the managed block sizes are supported; larger sizes
 // defer to the parent if it supports RunAllocator.
 func (o *omniBlockAllocator) AllocateRun(size int, count int) ([]ObjectId, []FileOffset, error) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
 	if count <= 0 {
 		return nil, nil, errors.New("count must be positive")
 	}
@@ -731,6 +739,9 @@ func (o *omniBlockAllocator) AllocateRun(size int, count int) ([]ObjectId, []Fil
 }
 
 func (o *omniBlockAllocator) Free(fileOffset FileOffset, size int) error {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
 	if o.preFree != nil {
 		if err := o.preFree(fileOffset, size); err != nil {
 			return err
@@ -813,6 +824,9 @@ func (o *omniBlockAllocator) Free(fileOffset FileOffset, size int) error {
 // It uses the unified AllocatorIndex for O(log n) range lookup.
 // Falls back to parent allocator if ObjectId not found in local allocators.
 func (o *omniBlockAllocator) GetObjectInfo(objId ObjectId) (FileOffset, int, error) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
 	// Try the index first for O(log n) lookup
 	if o.idx != nil {
 		_, blockSize, err := o.idx.Get(objId)
