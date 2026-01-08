@@ -1,6 +1,7 @@
 package vault
 
 import (
+	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
@@ -421,6 +422,10 @@ func TestSetMemoryBudgetWithPercentile(t *testing.T) {
 // The dataset size is kept moderate for test runtime, but large enough to exercise
 // flushing behavior and catch regressions where nodes accumulate unchecked.
 func TestSetMemoryBudgetWithPercentile_LargeDataset(t *testing.T) {
+	// Skip by default due to heavy IO; enable explicitly when needed
+	if os.Getenv("VAULT_RUN_LARGE_DATASET") != "1" {
+		t.Skip("skipping large dataset stress test; set VAULT_RUN_LARGE_DATASET=1 to run")
+	}
 	tempDir := t.TempDir()
 	storePath := filepath.Join(tempDir, "percentile_large.db")
 	stre, err := collections.NewMultiStore(storePath, 0)

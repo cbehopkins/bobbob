@@ -716,34 +716,51 @@ func (k *PersistentPayloadTreapNode[K, P]) UnmarshalFromObjectId(id store.Object
 }
 
 func (n *PersistentPayloadTreapNode[K, P]) Persist() error {
-	// Persist children first so their object IDs are available when marshaling the parent
-	if n.GetLeft() != nil {
-		leftNode, ok := n.GetLeft().(*PersistentPayloadTreapNode[K, P])
-		if !ok {
-			return fmt.Errorf("left child is not a PersistentPayloadTreapNode")
-		}
-		err := leftNode.Persist()
-		if err != nil {
-			return fmt.Errorf("failed to persist left child: %w", err)
-		}
-	}
-	if n.GetRight() != nil {
-		rightNode, ok := n.GetRight().(*PersistentPayloadTreapNode[K, P])
-		if !ok {
-			return fmt.Errorf("right child is not a PersistentPayloadTreapNode")
-		}
-		err := rightNode.Persist()
-		if err != nil {
-			return fmt.Errorf("failed to persist right child: %w", err)
+	// Iterative post-order traversal to persist children before parent,
+	// avoiding deep recursion that can cause stack overflows.
+	type nodePtr = *PersistentPayloadTreapNode[K, P]
+	stack := make([]nodePtr, 0, 64)
+	var lastVisited nodePtr
+	curr := n
+
+	for curr != nil || len(stack) > 0 {
+		if curr != nil {
+			stack = append(stack, curr)
+			// descend left
+			if left := curr.GetLeft(); left != nil {
+				leftNode, ok := left.(*PersistentPayloadTreapNode[K, P])
+				if !ok {
+					return fmt.Errorf("left child is not a PersistentPayloadTreapNode")
+				}
+				curr = leftNode
+				continue
+			}
+			curr = nil
+		} else {
+			peek := stack[len(stack)-1]
+			// if right child exists and hasn't been visited, traverse it
+			if right := peek.GetRight(); right != nil {
+				rightNode, ok := right.(*PersistentPayloadTreapNode[K, P])
+				if !ok {
+					return fmt.Errorf("right child is not a PersistentPayloadTreapNode")
+				}
+				if rightNode != lastVisited {
+					curr = rightNode
+					continue
+				}
+			}
+
+			// Persist the peek node (children already handled)
+			objId, err := peek.MarshalToObjectId(peek.Store)
+			if err != nil {
+				return fmt.Errorf("failed to marshal payload node to object ID: %w", err)
+			}
+			peek.objectId = objId
+			lastVisited = peek
+			stack = stack[:len(stack)-1]
 		}
 	}
 
-	// Now marshal and persist this node
-	objId, err := n.MarshalToObjectId(n.Store)
-	if err != nil {
-		return fmt.Errorf("failed to marshal payload node to object ID: %w", err)
-	}
-	n.objectId = objId
 	return nil
 }
 

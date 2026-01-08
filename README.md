@@ -160,3 +160,29 @@ I use a treap because I'm familiar with it from the gkvlite package. Its propert
 Once you have a treap (really just a set of keys/set) you have map/dict support by extending it to support payloads. As long as your payload matches the PersistentPayload interface you're good to store any type as a Peristent type.
 
 The Collection allows you to build multiple collections within a store. This is starting to look like a database unfortunatly. One is able to set aging policies on the data such that one does not have to manually flush data. See the various examples for how to do this sort of thing.
+
+### Vault Memory Monitoring (Auto Background Management)
+
+The `vault` layer provides automatic memory monitoring to keep in-memory treap nodes bounded:
+
+- Configure a budget via `SetMemoryBudget(maxNodes, flushAgeSeconds)` or `SetMemoryBudgetWithPercentile(maxNodes, flushPercent)`.
+- Background monitoring auto-starts by default and checks every ~100ms.
+- Disable for deterministic tests using `SetBackgroundMonitoring(false)` and manually call `checkMemoryAndFlush()`.
+
+Examples:
+
+```go
+// Default: background monitoring auto-starts
+vault.SetMemoryBudget(1000, 10) // Keep max 1000 nodes; flush >10s old
+
+// Percentile-based flushing
+vault.SetMemoryBudgetWithPercentile(1000, 25) // Flush oldest 25%
+
+// Deterministic tests: disable background monitoring
+vault.SetBackgroundMonitoring(false)
+vault.SetMemoryBudgetWithPercentile(50, 50)
+vault.SetCheckInterval(1)
+_ = vault.checkMemoryAndFlush()
+```
+
+See detailed guidance in [docs/VAULT_MEMORY_MONITORING.md](docs/VAULT_MEMORY_MONITORING.md).
