@@ -580,13 +580,29 @@ func (v *Vault) SetMemoryBudget(maxNodes int, flushAgeSeconds int64) {
 // time-based flushing. When the limit is hit, it flushes the oldest N% of nodes
 // to bring memory usage back down.
 func (v *Vault) SetMemoryBudgetWithPercentile(maxNodes int, flushPercentage int) {
+	v.SetMemoryBudgetWithPercentileWithCallbacks(maxNodes, flushPercentage, nil, nil)
+}
+func (v *Vault) SetMemoryBudgetWithPercentileWithCallbacks(maxNodes int, flushPercentage int, shouldFlushDebug func(MemoryStats, bool), onFlushDebug func(MemoryStats, int) error) {
+	shouldFlushLocal := func(stats MemoryStats) bool {
+		sf := stats.TotalInMemoryNodes > maxNodes
+		if shouldFlushDebug != nil {
+			shouldFlushDebug(stats, sf)
+		}
+		return sf
+	}
+	onFlushLocal := func(stats MemoryStats) (int, error) {
+		count, err := v.FlushOldestPercentile(flushPercentage)
+		if onFlushDebug != nil {
+			err2 := onFlushDebug(stats, count)
+			if err2 != nil {
+				return count, err2
+			}
+		}
+		return count, err
+	}
 	v.EnableMemoryMonitoring(
-		func(stats MemoryStats) bool {
-			return stats.TotalInMemoryNodes > maxNodes
-		},
-		func(stats MemoryStats) (int, error) {
-			return v.FlushOldestPercentile(flushPercentage)
-		},
+		shouldFlushLocal,
+		onFlushLocal,
 	)
 }
 
