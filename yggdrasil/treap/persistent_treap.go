@@ -12,6 +12,7 @@ import (
 	"unsafe"
 
 	"github.com/cbehopkins/bobbob/store"
+	"github.com/cbehopkins/bobbob/yggdrasil/types"
 )
 
 var errNotFullyPersisted = errors.New("node not fully persisted")
@@ -46,7 +47,7 @@ func currentUnixTime() int64 {
 
 type PersistentObjectId store.ObjectId
 
-func (id PersistentObjectId) New() PersistentKey[PersistentObjectId] {
+func (id PersistentObjectId) New() types.PersistentKey[PersistentObjectId] {
 	v := PersistentObjectId(store.ObjectId(store.ObjNotAllocated))
 	return &v
 }
@@ -124,7 +125,7 @@ func NewFromObjectId[T any](objId store.ObjectId, parent *PersistentTreap[T], st
 }
 
 // GetKey returns the key of the node.
-func (n *PersistentTreapNode[T]) GetKey() Key[T] {
+func (n *PersistentTreapNode[T]) GetKey() types.Key[T] {
 	return n.TreapNode.key // Explicitly access the key field from the embedded TreapNode
 }
 
@@ -428,9 +429,9 @@ func (n *PersistentTreapNode[T]) syncChildObjectId(child TreapNodeInterface[T], 
 func (n *PersistentTreapNode[T]) Marshal() ([]byte, error) {
 	buf := make([]byte, n.sizeInBytes())
 	offset := 0
-	persistentKey, ok := n.key.(PersistentKey[T])
+	persistentKey, ok := n.key.(types.PersistentKey[T])
 	if !ok {
-		return nil, fmt.Errorf("key is not a PersistentKey")
+		return nil, fmt.Errorf("key is not a types.PersistentKey")
 	}
 	keyAsObjectId, err := persistentKey.MarshalToObjectId(n.Store)
 	if err != nil {
@@ -470,7 +471,7 @@ func (n *PersistentTreapNode[T]) Marshal() ([]byte, error) {
 	return buf, nil
 }
 
-func (n *PersistentTreapNode[T]) unmarshal(data []byte, key PersistentKey[T]) error {
+func (n *PersistentTreapNode[T]) unmarshal(data []byte, key types.PersistentKey[T]) error {
 	// Validate minimum data length (5 ObjectIds: key, priority placeholder, left, right, self)
 	// Priority is 4 bytes, ObjectIds are 8 bytes each
 	minSize := 4*8 + 4 // 4 ObjectIds + 1 Priority
@@ -491,9 +492,9 @@ func (n *PersistentTreapNode[T]) unmarshal(data []byte, key PersistentKey[T]) er
 	if err != nil {
 		return fmt.Errorf("failed to unmarshal key from object ID: %w", err)
 	}
-	convertedKey, ok := tmpKey.(Key[T])
+	convertedKey, ok := tmpKey.(types.Key[T])
 	if !ok {
-		return fmt.Errorf("unmarshalled key is not of expected type Key[T]")
+		return fmt.Errorf("unmarshalled key is not of expected type types.Key[T]")
 	}
 	n.key = convertedKey
 
@@ -540,7 +541,7 @@ func (n *PersistentTreapNode[T]) Unmarshal(data []byte) error {
 // It extends the in-memory Treap with the ability to save and load nodes from disk.
 type PersistentTreap[T any] struct {
 	Treap[T]
-	keyTemplate PersistentKey[T]
+	keyTemplate types.PersistentKey[T]
 	Store       store.Storer
 	mu          sync.RWMutex // Protects concurrent access to the treap
 	nodePool    sync.Pool    // Pool for *PersistentTreapNode[T]
@@ -552,7 +553,7 @@ func (t *PersistentTreap[T]) Root() TreapNodeInterface[T] {
 }
 
 // NewPersistentTreapNode creates a new PersistentTreapNode with the given key, priority, and store reference.
-func NewPersistentTreapNode[T any](key PersistentKey[T], priority Priority, stre store.Storer, parent *PersistentTreap[T]) *PersistentTreapNode[T] {
+func NewPersistentTreapNode[T any](key types.PersistentKey[T], priority Priority, stre store.Storer, parent *PersistentTreap[T]) *PersistentTreapNode[T] {
 	v := parent.nodePool.Get()
 	n, _ := v.(*PersistentTreapNode[T])
 	if n == nil {
@@ -572,7 +573,7 @@ func NewPersistentTreapNode[T any](key PersistentKey[T], priority Priority, stre
 }
 
 // NewPersistentTreap creates a new PersistentTreap with the given comparison function and store reference.
-func NewPersistentTreap[T any](lessFunc func(a, b T) bool, keyTemplate PersistentKey[T], store store.Storer) *PersistentTreap[T] {
+func NewPersistentTreap[T any](lessFunc func(a, b T) bool, keyTemplate types.PersistentKey[T], store store.Storer) *PersistentTreap[T] {
 	t := &PersistentTreap[T]{
 		Treap: Treap[T]{
 			root: nil,
@@ -635,7 +636,7 @@ func (t *PersistentTreap[T]) delete(node TreapNodeInterface[T], key T) TreapNode
 
 // InsertComplex inserts a new node with the given key and priority into the persistent treap.
 // Use this method when you need to specify a custom priority value.
-func (t *PersistentTreap[T]) InsertComplex(key PersistentKey[T], priority Priority) {
+func (t *PersistentTreap[T]) InsertComplex(key types.PersistentKey[T], priority Priority) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	newNode := NewPersistentTreapNode(key, priority, t.Store, t)
@@ -643,13 +644,13 @@ func (t *PersistentTreap[T]) InsertComplex(key PersistentKey[T], priority Priori
 }
 
 // Insert inserts a new node with the given key into the persistent treap.
-// If the key implements PriorityProvider, its Priority() method is used;
+// If the key implements types.PriorityProvider, its Priority() method is used;
 // otherwise, a random priority is generated.
 // This is the preferred method for most use cases.
-func (t *PersistentTreap[T]) Insert(key PersistentKey[T]) {
+func (t *PersistentTreap[T]) Insert(key types.PersistentKey[T]) {
 	var priority Priority
-	if pp, ok := any(key).(PriorityProvider); ok {
-		priority = pp.Priority()
+	if pp, ok := any(key).(types.PriorityProvider); ok {
+		priority = Priority(pp.Priority())
 	} else {
 		priority = randomPriority()
 	}
@@ -660,7 +661,7 @@ func (t *PersistentTreap[T]) Insert(key PersistentKey[T]) {
 }
 
 // Delete removes the node with the given key from the persistent treap.
-func (t *PersistentTreap[T]) Delete(key PersistentKey[T]) {
+func (t *PersistentTreap[T]) Delete(key types.PersistentKey[T]) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.root = t.delete(t.root, key.Value())
@@ -672,7 +673,7 @@ func (t *PersistentTreap[T]) Delete(key PersistentKey[T]) {
 // such as updating access times for LRU caching or flushing stale nodes.
 // This method automatically updates the lastAccessTime on each accessed node.
 // The callback can return an error to abort the search.
-func (t *PersistentTreap[T]) SearchComplex(key PersistentKey[T], callback func(TreapNodeInterface[T]) error) (TreapNodeInterface[T], error) {
+func (t *PersistentTreap[T]) SearchComplex(key types.PersistentKey[T], callback func(TreapNodeInterface[T]) error) (TreapNodeInterface[T], error) {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 	// Create a wrapper callback that updates the access time
@@ -692,7 +693,7 @@ func (t *PersistentTreap[T]) SearchComplex(key PersistentKey[T], callback func(T
 
 // Search searches for the node with the given key in the persistent treap.
 // It calls SearchComplex with a nil callback.
-func (t *PersistentTreap[T]) Search(key PersistentKey[T]) TreapNodeInterface[T] {
+func (t *PersistentTreap[T]) Search(key types.PersistentKey[T]) TreapNodeInterface[T] {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 	// Create a wrapper callback that updates the access time
@@ -708,7 +709,7 @@ func (t *PersistentTreap[T]) Search(key PersistentKey[T]) TreapNodeInterface[T] 
 }
 
 // UpdatePriority updates the priority of the node with the given key.
-func (t *PersistentTreap[T]) UpdatePriority(key PersistentKey[T], newPriority Priority) {
+func (t *PersistentTreap[T]) UpdatePriority(key types.PersistentKey[T], newPriority Priority) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	node := t.search(t.root, key.Value())
@@ -1239,7 +1240,7 @@ func (t *PersistentTreap[T]) iterateOnDiskAndLoad(objId store.ObjectId, callback
 type NodeInfo[T any] struct {
 	Node           *PersistentTreapNode[T]
 	LastAccessTime int64
-	Key            PersistentKey[T]
+	Key            types.PersistentKey[T]
 }
 
 // GetInMemoryNodes traverses the treap and collects all nodes currently in memory.
@@ -1301,7 +1302,7 @@ func (t *PersistentTreap[T]) collectInMemoryNodes(node TreapNodeInterface[T], no
 	*nodes = append(*nodes, NodeInfo[T]{
 		Node:           pNode,
 		LastAccessTime: pNode.GetLastAccessTime(),
-		Key:            pNode.GetKey().(PersistentKey[T]),
+		Key:            pNode.GetKey().(types.PersistentKey[T]),
 	})
 
 	// Only traverse children that are already in memory

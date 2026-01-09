@@ -181,10 +181,10 @@ func (v *Vault) Allocator() allocator.Allocator {
 // The loaded types.TypeMap will be merged with your registered types.
 func LoadVault(stre store.Storer) (*Vault, error) {
 	vault := &Vault{
-		Store:              stre,
-		TypeMap:            types.NewTypeMap(),
-		CollectionRegistry: ycollections.NewCollectionRegistry(),
-		activeCollections:  make(map[string]CollectionInterface),
+		Store:                       stre,
+		TypeMap:                     types.NewTypeMap(),
+		CollectionRegistry:          ycollections.NewCollectionRegistry(),
+		activeCollections:           make(map[string]CollectionInterface),
 		backgroundMonitoringEnabled: true,
 	}
 
@@ -251,11 +251,11 @@ func (v *Vault) RegisterType(t any) {
 //	v.RegisterType(StringKey(""))
 //	v.RegisterType(UserData{})
 //	users := GetOrCreateCollection[string, JsonPayload[UserData]](v, "users", StringLess, (*StringKey)(new(string)))
-func GetOrCreateCollection[K any, P treap.PersistentPayload[P]](
+func GetOrCreateCollection[K any, P types.PersistentPayload[P]](
 	v *Vault,
 	collectionName string,
 	lessFunc func(a, b K) bool,
-	keyTemplate treap.PersistentKey[K],
+	keyTemplate types.PersistentKey[K],
 ) (*treap.PersistentPayloadTreap[K, P], error) {
 	// Check if we already have this collection loaded (with read lock)
 	v.mu.RLock()
@@ -353,7 +353,7 @@ func GetOrCreateKeyOnlyCollection[K any](
 	v *Vault,
 	collectionName string,
 	lessFunc func(a, b K) bool,
-	keyTemplate treap.PersistentKey[K],
+	keyTemplate types.PersistentKey[K],
 ) (*treap.PersistentTreap[K], error) {
 	// Check if we already have this collection loaded (with read lock)
 	v.mu.RLock()
@@ -548,21 +548,21 @@ func (v *Vault) ListCollections() []string {
 //
 // Example - auto background monitoring (node budget):
 //
-//  vault.EnableMemoryMonitoring(
-//      func(stats MemoryStats) bool { return stats.TotalInMemoryNodes > 1000 },
-//      func(stats MemoryStats) (int, error) {
-//          cutoff := time.Now().Unix() - 10 // 10 seconds old
-//          return vault.FlushOlderThan(cutoff)
-//      },
-//  )
-//  // Background monitoring runs automatically
+//	vault.EnableMemoryMonitoring(
+//	    func(stats MemoryStats) bool { return stats.TotalInMemoryNodes > 1000 },
+//	    func(stats MemoryStats) (int, error) {
+//	        cutoff := time.Now().Unix() - 10 // 10 seconds old
+//	        return vault.FlushOlderThan(cutoff)
+//	    },
+//	)
+//	// Background monitoring runs automatically
 //
 // Example - disable background monitoring for tests:
 //
-//  vault.SetBackgroundMonitoring(false)
-//  vault.SetMemoryBudget(1000, 10)
-//  // Manually trigger checks when desired
-//  _ = vault.checkMemoryAndFlush()
+//	vault.SetBackgroundMonitoring(false)
+//	vault.SetMemoryBudget(1000, 10)
+//	// Manually trigger checks when desired
+//	_ = vault.checkMemoryAndFlush()
 //
 // Example - flush based on node count:
 //
@@ -632,13 +632,13 @@ func (v *Vault) SetBackgroundMonitoring(enabled bool) {
 //
 // Example:
 //
-//  // Auto background monitoring enabled by default
-//  vault.SetMemoryBudget(1000, 10) // Keep max 1000 nodes, flush nodes >10 sec old
+//	// Auto background monitoring enabled by default
+//	vault.SetMemoryBudget(1000, 10) // Keep max 1000 nodes, flush nodes >10 sec old
 //
-//  // Disable background monitoring (e.g., for deterministic tests)
-//  vault.SetBackgroundMonitoring(false)
-//  vault.SetMemoryBudget(1000, 10)
-//  // Then call vault.checkMemoryAndFlush() explicitly as needed
+//	// Disable background monitoring (e.g., for deterministic tests)
+//	vault.SetBackgroundMonitoring(false)
+//	vault.SetMemoryBudget(1000, 10)
+//	// Then call vault.checkMemoryAndFlush() explicitly as needed
 func (v *Vault) SetMemoryBudget(maxNodes int, flushAgeSeconds int64) {
 	v.EnableMemoryMonitoring(
 		func(stats MemoryStats) bool {
@@ -661,13 +661,13 @@ func (v *Vault) SetMemoryBudget(maxNodes int, flushAgeSeconds int64) {
 //
 // Example:
 //
-//  // Auto background monitoring enabled by default
-//  vault.SetMemoryBudgetWithPercentile(1000, 25) // Keep max 1000 nodes, flush oldest 25% when exceeded
+//	// Auto background monitoring enabled by default
+//	vault.SetMemoryBudgetWithPercentile(1000, 25) // Keep max 1000 nodes, flush oldest 25% when exceeded
 //
-//  // Disable background monitoring (e.g., for deterministic tests)
-//  vault.SetBackgroundMonitoring(false)
-//  vault.SetMemoryBudgetWithPercentile(1000, 25)
-//  // Then call vault.checkMemoryAndFlush() explicitly as needed
+//	// Disable background monitoring (e.g., for deterministic tests)
+//	vault.SetBackgroundMonitoring(false)
+//	vault.SetMemoryBudgetWithPercentile(1000, 25)
+//	// Then call vault.checkMemoryAndFlush() explicitly as needed
 //
 // This is useful when you want to aggressively reduce memory without relying on
 // time-based flushing. When the limit is hit, it flushes the oldest N% of nodes
@@ -1051,10 +1051,10 @@ type IdentitySpec[I comparable] interface {
 // PayloadIdentitySpec wraps a payload collection spec with an identity value.
 // The identity string representation is used as the collection name; the identity itself
 // is returned to the caller so indexing does not rely on position.
-type PayloadIdentitySpec[I comparable, K any, P treap.PersistentPayload[P]] struct {
+type PayloadIdentitySpec[I comparable, K any, P types.PersistentPayload[P]] struct {
 	Identity        I
 	LessFunc        func(a, b K) bool
-	KeyTemplate     treap.PersistentKey[K]
+	KeyTemplate     types.PersistentKey[K]
 	PayloadTemplate P
 }
 
@@ -1072,10 +1072,10 @@ func (s PayloadIdentitySpec[I, K, P]) openCollection(v *Vault) (any, error) {
 }
 
 // PayloadCollectionSpec specifies a collection with both keys and payloads.
-type PayloadCollectionSpec[K any, P treap.PersistentPayload[P]] struct {
+type PayloadCollectionSpec[K any, P types.PersistentPayload[P]] struct {
 	Name        string
 	LessFunc    func(a, b K) bool
-	KeyTemplate treap.PersistentKey[K]
+	KeyTemplate types.PersistentKey[K]
 	// PayloadTemplate is used only for type extraction, not stored
 	PayloadTemplate P
 }
@@ -1206,11 +1206,11 @@ func OpenVaultWithIdentity[I comparable](filename string, specs ...IdentitySpec[
 // GetOrCreateCollectionWithIdentity dynamically creates or loads a collection tied to an identity.
 // It registers key/payload types as needed, ensures the identity map exists, and records the mapping.
 // This enables treating the vault as a collection-of-collections that can grow at runtime.
-func GetOrCreateCollectionWithIdentity[I comparable, K any, P treap.PersistentPayload[P]](
+func GetOrCreateCollectionWithIdentity[I comparable, K any, P types.PersistentPayload[P]](
 	v *Vault,
 	identity I,
 	lessFunc func(a, b K) bool,
-	keyTemplate treap.PersistentKey[K],
+	keyTemplate types.PersistentKey[K],
 	payloadTemplate P,
 ) (*treap.PersistentPayloadTreap[K, P], error) {
 	// Ensure types are registered so the collection registry can validate them.

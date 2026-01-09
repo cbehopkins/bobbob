@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/cbehopkins/bobbob/yggdrasil/treap"
+	"github.com/cbehopkins/bobbob/yggdrasil/types"
 	"github.com/cbehopkins/bobbob/yggdrasil/vault"
 )
 
@@ -18,7 +19,7 @@ func (t testData) Marshal() ([]byte, error) {
 	return []byte(fmt.Sprintf("%d", t.Value)), nil
 }
 
-func (t testData) Unmarshal(data []byte) (treap.UntypedPersistentPayload, error) {
+func (t testData) Unmarshal(data []byte) (types.UntypedPersistentPayload, error) {
 	var val int
 	_, err := fmt.Sscanf(string(data), "%d", &val)
 	return testData{Value: val}, err
@@ -35,10 +36,10 @@ func TestConcurrentPersistAllocatorNoPanic(t *testing.T) {
 
 	session, colls, err := vault.OpenVaultWithIdentity(
 		dbPath,
-		vault.PayloadIdentitySpec[string, treap.MD5Key, testData]{
+		vault.PayloadIdentitySpec[string, types.MD5Key, testData]{
 			Identity:        "test",
-			LessFunc:        treap.MD5Less,
-			KeyTemplate:     (*treap.MD5Key)(new(treap.MD5Key)),
+			LessFunc:        types.MD5Less,
+			KeyTemplate:     (*types.MD5Key)(new(types.MD5Key)),
 			PayloadTemplate: testData{},
 		},
 	)
@@ -47,7 +48,7 @@ func TestConcurrentPersistAllocatorNoPanic(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = session.Close() })
 
-	collection := colls["test"].(*treap.PersistentPayloadTreap[treap.MD5Key, testData])
+	collection := colls["test"].(*treap.PersistentPayloadTreap[types.MD5Key, testData])
 
 	// Enable background memory monitoring (previously triggered the panic path).
 	session.Vault.SetMemoryBudgetWithPercentileWithCallbacks(1000, 20, nil, nil)
@@ -64,7 +65,7 @@ func TestConcurrentPersistAllocatorNoPanic(t *testing.T) {
 		go func(workerID int) {
 			defer wg.Done()
 			for i := 0; i < opsPerWorker; i++ {
-				key := treap.MD5Key{}
+				key := types.MD5Key{}
 				copy(key[:], fmt.Sprintf("worker-%02d-op-%03d", workerID, i))
 
 				collection.Insert(&key, testData{Value: i})

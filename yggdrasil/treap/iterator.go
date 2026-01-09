@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/cbehopkins/bobbob/store"
+	"github.com/cbehopkins/bobbob/yggdrasil/types"
 )
 
 // IteratorOptions controls the behavior of treap iteration.
@@ -117,11 +118,11 @@ func (t *PersistentTreap[K]) WalkInOrder(opts IteratorOptions, callback func(nod
 
 // WalkInOrderKeys is a convenience method that yields only the keys.
 // This is more memory efficient as it doesn't require loading payloads.
-func (t *PersistentTreap[K]) WalkInOrderKeys(opts IteratorOptions, callback func(key PersistentKey[K]) error) error {
+func (t *PersistentTreap[K]) WalkInOrderKeys(opts IteratorOptions, callback func(key types.PersistentKey[K]) error) error {
 	return t.WalkInOrder(opts, func(node PersistentTreapNodeInterface[K]) error {
-		key, ok := node.GetKey().(PersistentKey[K])
+		key, ok := node.GetKey().(types.PersistentKey[K])
 		if !ok {
-			return fmt.Errorf("node key is not a PersistentKey")
+			return fmt.Errorf("node key is not a types.PersistentKey")
 		}
 		return callback(key)
 	})
@@ -129,7 +130,7 @@ func (t *PersistentTreap[K]) WalkInOrderKeys(opts IteratorOptions, callback func
 
 // PayloadIteratorCallback is called for each node during payload treap iteration.
 // If loadPayload is false, the payload parameter will be the zero value.
-type PayloadIteratorCallback[K any, P PersistentPayload[P]] func(key PersistentKey[K], payload P, loadPayload bool) error
+type PayloadIteratorCallback[K any, P types.PersistentPayload[P]] func(key types.PersistentKey[K], payload P, loadPayload bool) error
 
 // WalkInOrder iterates through all nodes in the payload treap in sorted key order.
 //
@@ -176,9 +177,9 @@ func (t *PersistentPayloadTreap[K, P]) WalkInOrder(opts IteratorOptions, callbac
 		}
 
 		// Get key
-		key, ok := pNode.GetKey().(PersistentKey[K])
+		key, ok := pNode.GetKey().(types.PersistentKey[K])
 		if !ok {
-			return fmt.Errorf("node key is not a PersistentKey")
+			return fmt.Errorf("node key is not a types.PersistentKey")
 		}
 
 		// Get payload if requested
@@ -223,10 +224,10 @@ func (t *PersistentPayloadTreap[K, P]) WalkInOrder(opts IteratorOptions, callbac
 
 // WalkInOrderKeys is a convenience method that yields only the keys from a payload treap.
 // This is more memory efficient as it doesn't require loading payloads.
-func (t *PersistentPayloadTreap[K, P]) WalkInOrderKeys(opts IteratorOptions, callback func(key PersistentKey[K]) error) error {
+func (t *PersistentPayloadTreap[K, P]) WalkInOrderKeys(opts IteratorOptions, callback func(key types.PersistentKey[K]) error) error {
 	// Override LoadPayloads to false for efficiency
 	opts.LoadPayloads = false
-	return t.WalkInOrder(opts, func(key PersistentKey[K], _ P, _ bool) error {
+	return t.WalkInOrder(opts, func(key types.PersistentKey[K], _ P, _ bool) error {
 		return callback(key)
 	})
 }
@@ -253,7 +254,7 @@ func (t *PersistentPayloadTreap[K, P]) Count() (int, error) {
 		KeepInMemory: false,
 		LoadPayloads: false,
 	}
-	err := t.WalkInOrder(opts, func(_ PersistentKey[K], _ P, _ bool) error {
+	err := t.WalkInOrder(opts, func(_ types.PersistentKey[K], _ P, _ bool) error {
 		count++
 		return nil
 	})

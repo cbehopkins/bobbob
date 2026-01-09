@@ -1,4 +1,5 @@
 .vscode/**
+.github/**
 *.code-workspace
 *.log
 *.tmp

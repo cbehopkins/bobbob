@@ -77,16 +77,16 @@ func TestFreshVaultSmallObjectsStayInBlockAllocator(t *testing.T) {
 
 	session, colls, err := vault.OpenVaultWithIdentity(
 		file,
-		vault.PayloadIdentitySpec[string, treap.MD5Key, types.JsonPayload[fileData]]{
+		vault.PayloadIdentitySpec[string, types.MD5Key, types.JsonPayload[fileData]]{
 			Identity:        "srcFiles",
-			LessFunc:        treap.MD5Less,
-			KeyTemplate:     (*treap.MD5Key)(new(treap.MD5Key)),
+			LessFunc:        types.MD5Less,
+			KeyTemplate:     (*types.MD5Key)(new(types.MD5Key)),
 			PayloadTemplate: types.JsonPayload[fileData]{},
 		},
-		vault.PayloadIdentitySpec[string, treap.MD5Key, types.JsonPayload[fileData]]{
+		vault.PayloadIdentitySpec[string, types.MD5Key, types.JsonPayload[fileData]]{
 			Identity:        "dstFiles",
-			LessFunc:        treap.MD5Less,
-			KeyTemplate:     (*treap.MD5Key)(new(treap.MD5Key)),
+			LessFunc:        types.MD5Less,
+			KeyTemplate:     (*types.MD5Key)(new(types.MD5Key)),
 			PayloadTemplate: types.JsonPayload[fileData]{},
 		},
 	)
@@ -121,11 +121,11 @@ func TestFreshVaultSmallObjectsStayInBlockAllocator(t *testing.T) {
 		t.Fatalf("expected allocator callbacks to attach")
 	}
 
-	src, ok := colls["srcFiles"].(*treap.PersistentPayloadTreap[treap.MD5Key, types.JsonPayload[fileData]])
+	src, ok := colls["srcFiles"].(*treap.PersistentPayloadTreap[types.MD5Key, types.JsonPayload[fileData]])
 	if !ok {
 		t.Fatalf("unexpected src collection type: %T", colls["srcFiles"])
 	}
-	dst, ok := colls["dstFiles"].(*treap.PersistentPayloadTreap[treap.MD5Key, types.JsonPayload[fileData]])
+	dst, ok := colls["dstFiles"].(*treap.PersistentPayloadTreap[types.MD5Key, types.JsonPayload[fileData]])
 	if !ok {
 		t.Fatalf("unexpected dst collection type: %T", colls["dstFiles"])
 	}
@@ -138,9 +138,9 @@ func TestFreshVaultSmallObjectsStayInBlockAllocator(t *testing.T) {
 	}
 	numFiles := 500
 	for i := range numFiles {
-		var srcKey treap.MD5Key
+		var srcKey types.MD5Key
 		srcKey[0] = byte(i + 1)
-		var dstKey treap.MD5Key
+		var dstKey types.MD5Key
 		dstKey[0] = byte(i + 1)
 		dstKey[1] = 0xFF
 

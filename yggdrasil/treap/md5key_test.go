@@ -5,15 +5,17 @@ import (
 	"encoding/hex"
 	"strings"
 	"testing"
+
+	"github.com/cbehopkins/bobbob/yggdrasil/types"
 )
 
 // Test successful parsing of a valid 32-character hex string.
 func TestMD5KeyFromStringSuccess(t *testing.T) {
 	hexStr := "0123456789abcdeffedcba9876543210"
 
-	key, err := MD5KeyFromString(hexStr)
+	key, err := types.MD5KeyFromString(hexStr)
 	if err != nil {
-		t.Fatalf("MD5KeyFromString returned error: %v", err)
+		t.Fatalf("types.MD5KeyFromString returned error: %v", err)
 	}
 
 	expectedBytes, err := hex.DecodeString(hexStr)
@@ -21,7 +23,7 @@ func TestMD5KeyFromStringSuccess(t *testing.T) {
 		t.Fatalf("failed to decode hex: %v", err)
 	}
 
-	var expected MD5Key
+	var expected types.MD5Key
 	copy(expected[:], expectedBytes)
 
 	if key != expected {
@@ -31,7 +33,7 @@ func TestMD5KeyFromStringSuccess(t *testing.T) {
 
 // Test error on too-short or too-long hex strings.
 func TestMD5KeyFromStringInvalidLength(t *testing.T) {
-	_, err := MD5KeyFromString("abcd")
+	_, err := types.MD5KeyFromString("abcd")
 	if err == nil {
 		t.Fatalf("expected length error, got nil")
 	}
@@ -42,7 +44,7 @@ func TestMD5KeyFromStringInvalidLength(t *testing.T) {
 
 // Test error when the hex string contains invalid characters.
 func TestMD5KeyFromStringInvalidHex(t *testing.T) {
-	_, err := MD5KeyFromString("0123456789abcdeffedcba98765432zz")
+	_, err := types.MD5KeyFromString("0123456789abcdeffedcba98765432zz")
 	if err == nil {
 		t.Fatalf("expected parse error, got nil")
 	}
@@ -54,12 +56,12 @@ func TestMD5KeyFromStringInvalidHex(t *testing.T) {
 // Test successful and failing unmarshalling paths.
 func TestMD5KeyUnmarshal(t *testing.T) {
 	goodData := []byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15}
-	var key MD5Key
+	var key types.MD5Key
 
 	if err := key.Unmarshal(goodData); err != nil {
 		t.Fatalf("unexpected error unmarshalling good data: %v", err)
 	}
-	expected := MD5Key{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15}
+	expected := types.MD5Key{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15}
 	if key != expected {
 		t.Fatalf("unmarshal mismatch: got %v, want %v", key, expected)
 	}
@@ -82,12 +84,12 @@ func TestMd5KeyFromBase64StringSuccess(t *testing.T) {
 
 	b64 := base64.RawStdEncoding.EncodeToString(decodedHex)
 
-	key, err := Md5KeyFromBase64String(b64)
+	key, err := types.Md5KeyFromBase64String(b64)
 	if err != nil {
-		t.Fatalf("Md5KeyFromBase64String returned error: %v", err)
+		t.Fatalf("types.Md5KeyFromBase64String returned error: %v", err)
 	}
 
-	var expected MD5Key
+	var expected types.MD5Key
 	copy(expected[:], decodedHex)
 
 	if key != expected {
@@ -97,7 +99,7 @@ func TestMd5KeyFromBase64StringSuccess(t *testing.T) {
 
 func TestMd5KeyFromBase64StringInvalidLength(t *testing.T) {
 	// base64 for 3 bytes, not 16
-	_, err := Md5KeyFromBase64String("QUJD")
+	_, err := types.Md5KeyFromBase64String("QUJD")
 	if err == nil {
 		t.Fatalf("expected error for wrong length, got nil")
 	}
@@ -107,7 +109,7 @@ func TestMd5KeyFromBase64StringInvalidLength(t *testing.T) {
 }
 
 func TestMd5KeyFromBase64StringInvalidData(t *testing.T) {
-	_, err := Md5KeyFromBase64String("***not-base64***")
+	_, err := types.Md5KeyFromBase64String("***not-base64***")
 	if err == nil {
 		t.Fatalf("expected error for invalid base64, got nil")
 	}

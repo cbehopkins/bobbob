@@ -157,7 +157,7 @@ func (p SimplePayload) Marshal() ([]byte, error) {
 	return data, nil
 }
 
-func (p SimplePayload) Unmarshal(data []byte) (treap.UntypedPersistentPayload, error) {
+func (p SimplePayload) Unmarshal(data []byte) (types.UntypedPersistentPayload, error) {
 	val := SimplePayload(binary.LittleEndian.Uint64(data))
 	return val, nil
 }
@@ -318,12 +318,12 @@ func ExamplePersistentTreap_Iter() {
 // hash value itself serving as the priority (since MD5 hashes are uniformly
 // distributed). This is useful for content-addressable storage.
 func ExampleMD5Key() {
-	t := treap.NewTreap[treap.MD5Key](treap.MD5Less)
+	t := treap.NewTreap[types.MD5Key](types.MD5Less)
 
 	// Create MD5 keys from hex strings (32 characters = 16 bytes)
-	key1, _ := treap.MD5KeyFromString("a1b2c3d4e5f6708192a3b4c5d6e7f809")
-	key2, _ := treap.MD5KeyFromString("11223344556677889900aabbccddeeff")
-	key3, _ := treap.MD5KeyFromString("00000000000000000000000000000001")
+	key1, _ := types.MD5KeyFromString("a1b2c3d4e5f6708192a3b4c5d6e7f809")
+	key2, _ := types.MD5KeyFromString("11223344556677889900aabbccddeeff")
+	key3, _ := types.MD5KeyFromString("00000000000000000000000000000001")
 
 	// Insert keys - MD5Key implements PriorityProvider so no priority needed
 	t.Insert(key1)
@@ -650,12 +650,12 @@ func ExampleVault_dynamicCollections() {
 	// Set memory budget: keep max 100 nodes, flush oldest 25% when exceeded
 	session.Vault.SetMemoryBudgetWithPercentile(100, 25)
 
-	getCollection := func(id types.IntKey) *treap.PersistentPayloadTreap[treap.MD5Key, types.JsonPayload[[]string]] {
+	getCollection := func(id types.IntKey) *treap.PersistentPayloadTreap[types.MD5Key, types.JsonPayload[[]string]] {
 		coll, err := vault.GetOrCreateCollectionWithIdentity(
 			session.Vault,
 			id,
-			treap.MD5Less,
-			(*treap.MD5Key)(new(treap.MD5Key)),
+			types.MD5Less,
+			(*types.MD5Key)(new(types.MD5Key)),
 			types.JsonPayload[[]string]{},
 		)
 		if err != nil {
@@ -666,12 +666,12 @@ func ExampleVault_dynamicCollections() {
 
 	// Write to collection 1 (created on demand)
 	coll1 := getCollection(types.IntKey(1))
-	keyA, _ := treap.MD5KeyFromString("a1b2c3d4e5f6708192a3b4c5d6e7f809")
+	keyA, _ := types.MD5KeyFromString("a1b2c3d4e5f6708192a3b4c5d6e7f809")
 	coll1.Insert(&keyA, types.JsonPayload[[]string]{Value: []string{"alpha", "beta"}})
 
 	// Write to collection 2 (also created on demand)
 	coll2 := getCollection(types.IntKey(2))
-	keyB, _ := treap.MD5KeyFromString("11223344556677889900aabbccddeeff")
+	keyB, _ := types.MD5KeyFromString("11223344556677889900aabbccddeeff")
 	coll2.Insert(&keyB, types.JsonPayload[[]string]{Value: []string{"gamma"}})
 
 	// Read back from collection 1

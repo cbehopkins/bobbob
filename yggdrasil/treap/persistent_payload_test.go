@@ -10,9 +10,10 @@ import (
 	"time"
 
 	"github.com/cbehopkins/bobbob/store"
+	"github.com/cbehopkins/bobbob/yggdrasil/types"
 )
 
-// MockPayload is a mock implementation of PersistentPayload for testing.
+// MockPayload is a mock implementation of types.PersistentPayload for testing.
 type MockPayload struct {
 	Data string
 }
@@ -21,7 +22,7 @@ func (p MockPayload) Marshal() ([]byte, error) {
 	return []byte(p.Data), nil
 }
 
-func (p MockPayload) Unmarshal(data []byte) (UntypedPersistentPayload, error) {
+func (p MockPayload) Unmarshal(data []byte) (types.UntypedPersistentPayload, error) {
 	p.Data = string(data)
 	return p, nil
 }
@@ -36,12 +37,12 @@ type ComplexPayload struct {
 	Data  []byte
 }
 
-// intPersistentKey is a local PersistentKey implementation used to avoid package cycles in concurrency tests.
+// intPersistentKey is a local types.PersistentKey implementation used to avoid package cycles in concurrency tests.
 type intPersistentKey int32
 
 func (k intPersistentKey) Equals(other intPersistentKey) bool { return k == other }
 func (k intPersistentKey) Value() intPersistentKey            { return k }
-func (k intPersistentKey) New() PersistentKey[intPersistentKey] {
+func (k intPersistentKey) New() types.PersistentKey[intPersistentKey] {
 	v := intPersistentKey(-1)
 	return &v
 }
@@ -65,7 +66,7 @@ func (p intPayload) Marshal() ([]byte, error) {
 	return buf, nil
 }
 
-func (p intPayload) Unmarshal(data []byte) (UntypedPersistentPayload, error) {
+func (p intPayload) Unmarshal(data []byte) (types.UntypedPersistentPayload, error) {
 	if len(data) != 4 {
 		return nil, fmt.Errorf("invalid data length for intPayload: %d", len(data))
 	}
@@ -91,7 +92,7 @@ func (p ComplexPayload) Marshal() ([]byte, error) {
 	return append(childBytes, p.Data...), nil
 }
 
-func (p ComplexPayload) Unmarshal(data []byte) (UntypedPersistentPayload, error) {
+func (p ComplexPayload) Unmarshal(data []byte) (types.UntypedPersistentPayload, error) {
 	if len(data) < 8 {
 		return nil, fmt.Errorf("data too short for ComplexPayload: %d", len(data))
 	}
@@ -112,11 +113,11 @@ func TestPersistentPayloadTreapNodeMarshalUnmarshal(t *testing.T) {
 	store := setupTestStore(t)
 	defer store.Close()
 
-	var key IntKey = 42
+	var key types.IntKey = 42
 	priority := Priority(100)
 	payload := MockPayload{Data: "test_payload"}
-	treap := NewPersistentPayloadTreap[IntKey, MockPayload](IntLess, (*IntKey)(new(int32)), store)
-	node := NewPersistentPayloadTreapNode[IntKey, MockPayload](&key, priority, payload, store, treap)
+	treap := NewPersistentPayloadTreap[types.IntKey, MockPayload](types.IntLess, (*types.IntKey)(new(int32)), store)
+	node := NewPersistentPayloadTreapNode[types.IntKey, MockPayload](&key, priority, payload, store, treap)
 
 	// Marshal the node
 	data, err := node.Marshal()
@@ -125,7 +126,7 @@ func TestPersistentPayloadTreapNodeMarshalUnmarshal(t *testing.T) {
 	}
 
 	// Unmarshal the node
-	unmarshalledNode := &PersistentPayloadTreapNode[IntKey, MockPayload]{}
+	unmarshalledNode := &PersistentPayloadTreapNode[types.IntKey, MockPayload]{}
 	unmarshalledNode.payload = MockPayload{}
 	err = unmarshalledNode.unmarshal(data, &key)
 	if err != nil {
@@ -134,7 +135,7 @@ func TestPersistentPayloadTreapNodeMarshalUnmarshal(t *testing.T) {
 
 	// Check if the unmarshalled node is equal to the original node
 	if unmarshalledNode.GetKey().Value() != node.GetKey().Value() {
-		t.Errorf("Expected key %d, got %d", *node.GetKey().(*IntKey), *unmarshalledNode.GetKey().(*IntKey))
+		t.Errorf("Expected key %d, got %d", *node.GetKey().(*types.IntKey), *unmarshalledNode.GetKey().(*types.IntKey))
 	}
 	if unmarshalledNode.GetPriority() != node.GetPriority() {
 		t.Errorf("Expected priority %d, got %d", node.GetPriority(), unmarshalledNode.GetPriority())
@@ -150,12 +151,12 @@ func TestPersistentPayloadTreapInsertAndSearch(t *testing.T) {
 	store := setupTestStore(t)
 	defer store.Close()
 
-	treap := NewPersistentPayloadTreap[IntKey, MockPayload](IntLess, (*IntKey)(new(int32)), store)
+	treap := NewPersistentPayloadTreap[types.IntKey, MockPayload](types.IntLess, (*types.IntKey)(new(int32)), store)
 
-	keys := []*IntKey{
-		(*IntKey)(new(int32)),
-		(*IntKey)(new(int32)),
-		(*IntKey)(new(int32)),
+	keys := []*types.IntKey{
+		(*types.IntKey)(new(int32)),
+		(*types.IntKey)(new(int32)),
+		(*types.IntKey)(new(int32)),
 	}
 	*keys[0] = 10
 	*keys[1] = 20
@@ -176,7 +177,7 @@ func TestPersistentPayloadTreapInsertAndSearch(t *testing.T) {
 		if node == nil || node.IsNil() {
 			t.Errorf("Expected to find key %d in the treap, but it was not found", *key)
 		} else {
-			payloadNode := node.(*PersistentPayloadTreapNode[IntKey, MockPayload])
+			payloadNode := node.(*PersistentPayloadTreapNode[types.IntKey, MockPayload])
 			if payloadNode.GetPayload().Data != payloads[i].Data {
 				t.Errorf("Expected payload %s, got %s", payloads[i].Data, payloadNode.GetPayload().Data)
 			}
@@ -190,9 +191,9 @@ func TestPersistentPayloadTreapUpdatePayload(t *testing.T) {
 	store := setupTestStore(t)
 	defer store.Close()
 
-	treap := NewPersistentPayloadTreap[IntKey, MockPayload](IntLess, (*IntKey)(new(int32)), store)
+	treap := NewPersistentPayloadTreap[types.IntKey, MockPayload](types.IntLess, (*types.IntKey)(new(int32)), store)
 
-	key := IntKey(42)
+	key := types.IntKey(42)
 	payload := MockPayload{Data: "initial_payload"}
 	treap.InsertComplex(&key, Priority(50), payload)
 
@@ -205,7 +206,7 @@ func TestPersistentPayloadTreapUpdatePayload(t *testing.T) {
 	if node == nil || node.IsNil() {
 		t.Fatalf("Expected to find key %d in the treap, but it was not found", key)
 	}
-	payloadNode := node.(*PersistentPayloadTreapNode[IntKey, MockPayload])
+	payloadNode := node.(*PersistentPayloadTreapNode[types.IntKey, MockPayload])
 	if payloadNode.GetPayload().Data != newPayload.Data {
 		t.Errorf("Expected payload %s, got %s", newPayload.Data, payloadNode.GetPayload().Data)
 	}
@@ -217,15 +218,15 @@ func TestPersistentPayloadTreapInsertLargeNumberOfPairs(t *testing.T) {
 	store := setupTestStore(t)
 	defer store.Close()
 
-	treap := NewPersistentPayloadTreap[IntKey, MockPayload](IntLess, (*IntKey)(new(int32)), store)
+	treap := NewPersistentPayloadTreap[types.IntKey, MockPayload](types.IntLess, (*types.IntKey)(new(int32)), store)
 
 	const numPairs = 10000
-	keys := make([]*IntKey, numPairs)
+	keys := make([]*types.IntKey, numPairs)
 	payloads := make([]MockPayload, numPairs)
 
 	// Insert a large number of key/value pairs
 	for i := 0; i < numPairs; i++ {
-		key := IntKey(i)
+		key := types.IntKey(i)
 		keys[i] = &key
 		payload := MockPayload{Data: fmt.Sprintf("payload_%d", i)}
 		payloads[i] = payload
@@ -245,7 +246,7 @@ func TestPersistentPayloadTreapInsertLargeNumberOfPairs(t *testing.T) {
 		if node == nil || node.IsNil() {
 			t.Fatalf("Expected to find key %d in the treap, but it was not found", *key)
 		}
-		payloadNode := node.(*PersistentPayloadTreapNode[IntKey, MockPayload])
+		payloadNode := node.(*PersistentPayloadTreapNode[types.IntKey, MockPayload])
 		if payloadNode.GetPayload().Data != payloads[i].Data {
 			t.Errorf("Expected payload %s, got %s", payloads[i].Data, payloadNode.GetPayload().Data)
 		}
@@ -258,15 +259,15 @@ func TestPersistentPayloadTreapLargeScaleUpdateAndVerify(t *testing.T) {
 	store := setupTestStore(t)
 	defer store.Close()
 
-	treap := NewPersistentPayloadTreap[IntKey, MockPayload](IntLess, (*IntKey)(new(int32)), store)
+	treap := NewPersistentPayloadTreap[types.IntKey, MockPayload](types.IntLess, (*types.IntKey)(new(int32)), store)
 
 	const numPairs = 5000
-	keys := make([]*IntKey, numPairs)
+	keys := make([]*types.IntKey, numPairs)
 	payloads := make([]MockPayload, numPairs)
 
 	// Insert key-value pairs
 	for i := 0; i < numPairs; i++ {
-		key := IntKey(i)
+		key := types.IntKey(i)
 		keys[i] = &key
 		payload := MockPayload{Data: fmt.Sprintf("initial_payload_%d", i)}
 		payloads[i] = payload
@@ -286,7 +287,7 @@ func TestPersistentPayloadTreapLargeScaleUpdateAndVerify(t *testing.T) {
 		if node == nil || node.IsNil() {
 			t.Fatalf("Expected to find key %d in the treap, but it was not found", *key)
 		}
-		payloadNode := node.(*PersistentPayloadTreapNode[IntKey, MockPayload])
+		payloadNode := node.(*PersistentPayloadTreapNode[types.IntKey, MockPayload])
 		if payloadNode.GetPayload().Data != payloads[i].Data {
 			t.Errorf("Expected payload %s, got %s", payloads[i].Data, payloadNode.GetPayload().Data)
 		}
@@ -299,15 +300,15 @@ func TestPersistentPayloadTreapInsertDeleteAndVerify(t *testing.T) {
 	store := setupTestStore(t)
 	defer store.Close()
 
-	treap := NewPersistentPayloadTreap[IntKey, MockPayload](IntLess, (*IntKey)(new(int32)), store)
+	treap := NewPersistentPayloadTreap[types.IntKey, MockPayload](types.IntLess, (*types.IntKey)(new(int32)), store)
 
 	const numPairs = 5000
-	keys := make([]*IntKey, numPairs)
+	keys := make([]*types.IntKey, numPairs)
 	payloads := make([]MockPayload, numPairs)
 
 	// Insert key-value pairs
 	for i := 0; i < numPairs; i++ {
-		key := IntKey(i)
+		key := types.IntKey(i)
 		keys[i] = &key
 		payload := MockPayload{Data: fmt.Sprintf("payload_%d", i)}
 		payloads[i] = payload
@@ -330,7 +331,7 @@ func TestPersistentPayloadTreapInsertDeleteAndVerify(t *testing.T) {
 			if node == nil || node.IsNil() {
 				t.Errorf("Expected to find key %d in the treap, but it was not found", *key)
 			} else {
-				payloadNode := node.(*PersistentPayloadTreapNode[IntKey, MockPayload])
+				payloadNode := node.(*PersistentPayloadTreapNode[types.IntKey, MockPayload])
 				if payloadNode.GetPayload().Data != payloads[i].Data {
 					t.Errorf("Expected payload %s, got %s", payloads[i].Data, payloadNode.GetPayload().Data)
 				}
@@ -349,11 +350,11 @@ func TestPersistentPayloadTreapPersistenceOne(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create store: %v", err)
 	}
-	keyTemplate := (*IntKey)(new(int32))
-	treap := NewPersistentPayloadTreap[IntKey, MockPayload](IntLess, keyTemplate, store0)
+	keyTemplate := (*types.IntKey)(new(int32))
+	treap := NewPersistentPayloadTreap[types.IntKey, MockPayload](types.IntLess, keyTemplate, store0)
 
 	// Insert data into the treap
-	key := IntKey(42)
+	key := types.IntKey(42)
 	payload := MockPayload{Data: fmt.Sprintf("payload_%d", 42)}
 	treap.Insert(&key, payload)
 
@@ -366,7 +367,7 @@ func TestPersistentPayloadTreapPersistenceOne(t *testing.T) {
 	// Simplification for this test
 	// We will implement an object lookup mechanism later
 	var treapObjectId store.ObjectId
-	treapObjectId, _ = treap.root.(*PersistentPayloadTreapNode[IntKey, MockPayload]).ObjectId()
+	treapObjectId, _ = treap.root.(*PersistentPayloadTreapNode[types.IntKey, MockPayload]).ObjectId()
 
 	// Close the store
 	store0.Close()
@@ -379,7 +380,7 @@ func TestPersistentPayloadTreapPersistenceOne(t *testing.T) {
 	defer store1.Close()
 
 	// Create a new treap with the loaded store
-	treap = NewPersistentPayloadTreap[IntKey, MockPayload](IntLess, (*IntKey)(new(int32)), store1)
+	treap = NewPersistentPayloadTreap[types.IntKey, MockPayload](types.IntLess, (*types.IntKey)(new(int32)), store1)
 	err = treap.Load(treapObjectId)
 	if err != nil {
 		t.Fatalf("Failed to load treap: %v", err)
@@ -403,14 +404,14 @@ func TestPersistentPayloadTreapPersistence(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create store: %v", err)
 	}
-	keyTemplate := (*IntKey)(new(int32))
-	treap := NewPersistentPayloadTreap[IntKey, MockPayload](IntLess, keyTemplate, store0)
+	keyTemplate := (*types.IntKey)(new(int32))
+	treap := NewPersistentPayloadTreap[types.IntKey, MockPayload](types.IntLess, keyTemplate, store0)
 
 	// Insert data into the treap
-	keys := make([]*IntKey, 100)
+	keys := make([]*types.IntKey, 100)
 	for i := 0; i < 100; i++ {
-		keys[i] = (*IntKey)(new(int32))
-		*keys[i] = IntKey(i)
+		keys[i] = (*types.IntKey)(new(int32))
+		*keys[i] = types.IntKey(i)
 		payload := MockPayload{Data: fmt.Sprintf("payload_%d", i)}
 		treap.Insert(keys[i], payload)
 	}
@@ -433,11 +434,11 @@ func TestPersistentPayloadTreapPersistence(t *testing.T) {
 	// Simplification for this test
 	// We will implement an object lookup mechanism later
 	var treapObjectId store.ObjectId
-	treapObjectId, _ = treap.root.(*PersistentPayloadTreapNode[IntKey, MockPayload]).ObjectId()
-	var bob PersistentTreap[IntKey]
-	bob.keyTemplate = (*IntKey)(new(int32))
+	treapObjectId, _ = treap.root.(*PersistentPayloadTreapNode[types.IntKey, MockPayload]).ObjectId()
+	var bob PersistentTreap[types.IntKey]
+	bob.keyTemplate = (*types.IntKey)(new(int32))
 	bob.Store = store0
-	bobNode, err := NewPayloadFromObjectId[IntKey, MockPayload](treapObjectId, &bob, store0)
+	bobNode, err := NewPayloadFromObjectId[types.IntKey, MockPayload](treapObjectId, &bob, store0)
 	if err != nil {
 		t.Fatalf("Failed to read treap: %v", err)
 	}
@@ -462,7 +463,7 @@ func TestPersistentPayloadTreapPersistence(t *testing.T) {
 	defer store1.Close()
 
 	// Create a new treap with the loaded store
-	treap = NewPersistentPayloadTreap[IntKey, MockPayload](IntLess, (*IntKey)(new(int32)), store1)
+	treap = NewPersistentPayloadTreap[types.IntKey, MockPayload](types.IntLess, (*types.IntKey)(new(int32)), store1)
 	err = treap.Load(treapObjectId)
 	if err != nil {
 		t.Fatalf("Failed to load treap: %v", err)
@@ -485,11 +486,11 @@ func TestPersistentPayloadTreapNodeMarshalToObjectId(t *testing.T) {
 	defer stre.Close()
 
 	// Create a DummyPayload node
-	var key IntKey = 99
+	var key types.IntKey = 99
 	priority := Priority(150)
 	payload := MockPayload{Data: "dummy_payload_data"}
-	treap := NewPersistentPayloadTreap[IntKey, MockPayload](IntLess, (*IntKey)(new(int32)), stre)
-	node := NewPersistentPayloadTreapNode[IntKey, MockPayload](&key, priority, payload, stre, treap)
+	treap := NewPersistentPayloadTreap[types.IntKey, MockPayload](types.IntLess, (*types.IntKey)(new(int32)), stre)
+	node := NewPersistentPayloadTreapNode[types.IntKey, MockPayload](&key, priority, payload, stre, treap)
 
 	// Test MarshalToObjectId - this should write the node to the store
 	objId, err := node.MarshalToObjectId(stre)
@@ -503,7 +504,7 @@ func TestPersistentPayloadTreapNodeMarshalToObjectId(t *testing.T) {
 	}
 
 	// Unmarshal from the ObjectId using NewPayloadFromObjectId (read from store)
-	newNode, err := NewPayloadFromObjectId[IntKey, MockPayload](objId, &treap.PersistentTreap, stre)
+	newNode, err := NewPayloadFromObjectId[types.IntKey, MockPayload](objId, &treap.PersistentTreap, stre)
 	if err != nil {
 		t.Fatalf("Failed to unmarshal node from ObjectId: %v", err)
 	}
@@ -528,16 +529,16 @@ func TestPersistentPayloadTreapLazyLoading(t *testing.T) {
 	stre := setupTestStore(t)
 	defer stre.Close()
 
-	treap := NewPersistentPayloadTreap[IntKey, MockPayload](IntLess, (*IntKey)(new(int32)), stre)
+	treap := NewPersistentPayloadTreap[types.IntKey, MockPayload](types.IntLess, (*types.IntKey)(new(int32)), stre)
 
 	// Insert nodes with controlled priorities to create a predictable tree structure
 	// Root will be key=50 (highest priority=100)
 	// Left child will be key=30 (priority=80)
 	// Right child will be key=70 (priority=90)
-	keys := []*IntKey{
-		(*IntKey)(new(int32)),
-		(*IntKey)(new(int32)),
-		(*IntKey)(new(int32)),
+	keys := []*types.IntKey{
+		(*types.IntKey)(new(int32)),
+		(*types.IntKey)(new(int32)),
+		(*types.IntKey)(new(int32)),
 	}
 	*keys[0] = 50
 	*keys[1] = 30
@@ -562,20 +563,20 @@ func TestPersistentPayloadTreapLazyLoading(t *testing.T) {
 	}
 
 	// Get the root object ID
-	rootObjectId, _ := treap.root.(*PersistentPayloadTreapNode[IntKey, MockPayload]).ObjectId()
+	rootObjectId, _ := treap.root.(*PersistentPayloadTreapNode[types.IntKey, MockPayload]).ObjectId()
 
 	// Create a new treap and load only the root from disk
-	treap2 := NewPersistentPayloadTreap[IntKey, MockPayload](IntLess, (*IntKey)(new(int32)), stre)
+	treap2 := NewPersistentPayloadTreap[types.IntKey, MockPayload](types.IntLess, (*types.IntKey)(new(int32)), stre)
 	err = treap2.Load(rootObjectId)
 	if err != nil {
 		t.Fatalf("Failed to load treap from ObjectId: %v", err)
 	}
 
 	// Now verify that only the root is loaded, not its children
-	rootNode := treap2.root.(*PersistentPayloadTreapNode[IntKey, MockPayload])
+	rootNode := treap2.root.(*PersistentPayloadTreapNode[types.IntKey, MockPayload])
 
 	// Verify the root node data is correct
-	if rootNode.GetKey().Value() != IntKey(50) {
+	if rootNode.GetKey().Value() != types.IntKey(50) {
 		t.Errorf("Expected root key 50, got %d", rootNode.GetKey().Value())
 	}
 
@@ -600,7 +601,7 @@ func TestPersistentPayloadTreapLazyLoading(t *testing.T) {
 	if leftNode == nil {
 		t.Fatalf("Expected GetLeft() to load and return left child, but got nil")
 	}
-	if leftNode.GetKey().Value() != IntKey(30) {
+	if leftNode.GetKey().Value() != types.IntKey(30) {
 		t.Errorf("Expected left child key 30, got %d", leftNode.GetKey().Value())
 	}
 
@@ -614,7 +615,7 @@ func TestPersistentPayloadTreapLazyLoading(t *testing.T) {
 	if rightNode == nil {
 		t.Fatalf("Expected GetRight() to load and return right child, but got nil")
 	}
-	if rightNode.GetKey().Value() != IntKey(70) {
+	if rightNode.GetKey().Value() != types.IntKey(70) {
 		t.Errorf("Expected right child key 70, got %d", rightNode.GetKey().Value())
 	}
 
@@ -630,13 +631,13 @@ func TestPersistentPayloadTreapTimestamps(t *testing.T) {
 	store := setupTestStore(t)
 	defer store.Close()
 
-	treap := NewPersistentPayloadTreap[IntKey, MockPayload](IntLess, (*IntKey)(new(int32)), store)
+	treap := NewPersistentPayloadTreap[types.IntKey, MockPayload](types.IntLess, (*types.IntKey)(new(int32)), store)
 
 	// Insert some keys with payloads
-	keys := []*IntKey{
-		(*IntKey)(new(int32)),
-		(*IntKey)(new(int32)),
-		(*IntKey)(new(int32)),
+	keys := []*types.IntKey{
+		(*types.IntKey)(new(int32)),
+		(*types.IntKey)(new(int32)),
+		(*types.IntKey)(new(int32)),
 	}
 	*keys[0] = 10
 	*keys[1] = 20
@@ -659,7 +660,7 @@ func TestPersistentPayloadTreapTimestamps(t *testing.T) {
 	}
 
 	// Check that the node has a timestamp
-	pNode := node.(*PersistentPayloadTreapNode[IntKey, MockPayload])
+	pNode := node.(*PersistentPayloadTreapNode[types.IntKey, MockPayload])
 	timestamp := pNode.GetLastAccessTime()
 	if timestamp == 0 {
 		t.Errorf("Expected lastAccessTime to be set after search, but got 0")
@@ -695,14 +696,14 @@ func TestPersistentPayloadTreapGetInMemoryNodes(t *testing.T) {
 	store := setupTestStore(t)
 	defer store.Close()
 
-	treap := NewPersistentPayloadTreap[IntKey, MockPayload](IntLess, (*IntKey)(new(int32)), store)
+	treap := NewPersistentPayloadTreap[types.IntKey, MockPayload](types.IntLess, (*types.IntKey)(new(int32)), store)
 
 	// Insert and search for keys
-	keys := []*IntKey{
-		(*IntKey)(new(int32)),
-		(*IntKey)(new(int32)),
-		(*IntKey)(new(int32)),
-		(*IntKey)(new(int32)),
+	keys := []*types.IntKey{
+		(*types.IntKey)(new(int32)),
+		(*types.IntKey)(new(int32)),
+		(*types.IntKey)(new(int32)),
+		(*types.IntKey)(new(int32)),
 	}
 	*keys[0] = 10
 	*keys[1] = 20
@@ -736,7 +737,7 @@ func TestPersistentPayloadTreapGetInMemoryNodes(t *testing.T) {
 	// Verify each key is present
 	keyMap := make(map[int32]bool)
 	for _, nodeInfo := range inMemoryNodes {
-		key := nodeInfo.Key.(*IntKey)
+		key := nodeInfo.Key.(*types.IntKey)
 		keyMap[int32(*key)] = true
 	}
 
@@ -753,13 +754,13 @@ func TestPersistentPayloadTreapFlushOlderThan(t *testing.T) {
 	store := setupTestStore(t)
 	defer store.Close()
 
-	treap := NewPersistentPayloadTreap[IntKey, MockPayload](IntLess, (*IntKey)(new(int32)), store)
+	treap := NewPersistentPayloadTreap[types.IntKey, MockPayload](types.IntLess, (*types.IntKey)(new(int32)), store)
 
 	// Insert keys with payloads
-	keys := []*IntKey{
-		(*IntKey)(new(int32)),
-		(*IntKey)(new(int32)),
-		(*IntKey)(new(int32)),
+	keys := []*types.IntKey{
+		(*types.IntKey)(new(int32)),
+		(*types.IntKey)(new(int32)),
+		(*types.IntKey)(new(int32)),
 	}
 	*keys[0] = 10
 	*keys[1] = 20
@@ -818,7 +819,7 @@ func TestPersistentPayloadTreapFlushOlderThan(t *testing.T) {
 			t.Errorf("Expected to find key %d after flush, but it was not found", *key)
 		} else {
 			// Verify the payload is still correct
-			pNode := node.(*PersistentPayloadTreapNode[IntKey, MockPayload])
+			pNode := node.(*PersistentPayloadTreapNode[types.IntKey, MockPayload])
 			if pNode.GetPayload().Data != payloads[i].Data {
 				t.Errorf("Expected payload %s for key %d, got %s", payloads[i].Data, *key, pNode.GetPayload().Data)
 			}
@@ -832,13 +833,13 @@ func TestPersistentPayloadTreapSelectiveFlush(t *testing.T) {
 	store := setupTestStore(t)
 	defer store.Close()
 
-	treap := NewPersistentPayloadTreap[IntKey, MockPayload](IntLess, (*IntKey)(new(int32)), store)
+	treap := NewPersistentPayloadTreap[types.IntKey, MockPayload](types.IntLess, (*types.IntKey)(new(int32)), store)
 
 	// Insert keys with payloads
-	keys := []*IntKey{
-		(*IntKey)(new(int32)),
-		(*IntKey)(new(int32)),
-		(*IntKey)(new(int32)),
+	keys := []*types.IntKey{
+		(*types.IntKey)(new(int32)),
+		(*types.IntKey)(new(int32)),
+		(*types.IntKey)(new(int32)),
 	}
 	*keys[0] = 10
 	*keys[1] = 20
@@ -863,7 +864,7 @@ func TestPersistentPayloadTreapSelectiveFlush(t *testing.T) {
 
 	// Search for the third key and manually set a newer timestamp
 	node2 := treap.Search(keys[2])
-	pNode2 := node2.(*PersistentPayloadTreapNode[IntKey, MockPayload])
+	pNode2 := node2.(*PersistentPayloadTreapNode[types.IntKey, MockPayload])
 	pNode2.SetLastAccessTime(midTimestamp + 10) // Manually set a newer timestamp
 
 	// Persist everything
@@ -886,7 +887,7 @@ func TestPersistentPayloadTreapSelectiveFlush(t *testing.T) {
 	inMemoryNodes := treap.GetInMemoryNodes()
 	foundKey2 := false
 	for _, nodeInfo := range inMemoryNodes {
-		key := nodeInfo.Key.(*IntKey)
+		key := nodeInfo.Key.(*types.IntKey)
 		if *key == *keys[2] {
 			foundKey2 = true
 			if nodeInfo.LastAccessTime < midTimestamp+5 {
@@ -905,7 +906,7 @@ func TestPersistentPayloadTreapSelectiveFlush(t *testing.T) {
 		if node == nil {
 			t.Errorf("Expected to find key %d (keys[%d]) after selective flush", *key, i)
 		} else {
-			pNode := node.(*PersistentPayloadTreapNode[IntKey, MockPayload])
+			pNode := node.(*PersistentPayloadTreapNode[types.IntKey, MockPayload])
 			if pNode.GetPayload().Data != payloads[i].Data {
 				t.Errorf("Expected payload %s for key %d, got %s", payloads[i].Data, *key, pNode.GetPayload().Data)
 			}
@@ -919,16 +920,16 @@ func TestPersistentPayloadTreapFlushAndReload(t *testing.T) {
 	store := setupTestStore(t)
 	defer store.Close()
 
-	treap := NewPersistentPayloadTreap[IntKey, MockPayload](IntLess, (*IntKey)(new(int32)), store)
+	treap := NewPersistentPayloadTreap[types.IntKey, MockPayload](types.IntLess, (*types.IntKey)(new(int32)), store)
 
 	// Insert a larger number of keys
 	const numKeys = 20
-	keys := make([]*IntKey, numKeys)
+	keys := make([]*types.IntKey, numKeys)
 	payloads := make([]MockPayload, numKeys)
 
 	for i := 0; i < numKeys; i++ {
-		keys[i] = (*IntKey)(new(int32))
-		*keys[i] = IntKey(i * 10)
+		keys[i] = (*types.IntKey)(new(int32))
+		*keys[i] = types.IntKey(i * 10)
 		payloads[i] = MockPayload{Data: fmt.Sprintf("payload_%d", i*10)}
 		treap.Insert(keys[i], payloads[i])
 	}
@@ -972,7 +973,7 @@ func TestPersistentPayloadTreapFlushAndReload(t *testing.T) {
 		if node == nil {
 			t.Errorf("Expected to find key %d after flush and reload", *keys[idx])
 		} else {
-			pNode := node.(*PersistentPayloadTreapNode[IntKey, MockPayload])
+			pNode := node.(*PersistentPayloadTreapNode[types.IntKey, MockPayload])
 			if pNode.GetPayload().Data != payloads[idx].Data {
 				t.Errorf("Expected payload %s for key %d, got %s", payloads[idx].Data, *keys[idx], pNode.GetPayload().Data)
 			}
@@ -998,7 +999,7 @@ func TestPersistentPayloadTreapFlushWithNoNodes(t *testing.T) {
 	store := setupTestStore(t)
 	defer store.Close()
 
-	treap := NewPersistentPayloadTreap[IntKey, MockPayload](IntLess, (*IntKey)(new(int32)), store)
+	treap := NewPersistentPayloadTreap[types.IntKey, MockPayload](types.IntLess, (*types.IntKey)(new(int32)), store)
 
 	// Try to flush when there are no nodes
 	currentTime := currentUnixTime()
@@ -1018,12 +1019,12 @@ func TestPersistentPayloadTreapFlushNoneOlderThan(t *testing.T) {
 	store := setupTestStore(t)
 	defer store.Close()
 
-	treap := NewPersistentPayloadTreap[IntKey, MockPayload](IntLess, (*IntKey)(new(int32)), store)
+	treap := NewPersistentPayloadTreap[types.IntKey, MockPayload](types.IntLess, (*types.IntKey)(new(int32)), store)
 
 	// Insert keys
-	keys := []*IntKey{
-		(*IntKey)(new(int32)),
-		(*IntKey)(new(int32)),
+	keys := []*types.IntKey{
+		(*types.IntKey)(new(int32)),
+		(*types.IntKey)(new(int32)),
 	}
 	*keys[0] = 10
 	*keys[1] = 20
@@ -1082,8 +1083,8 @@ func TestPersistentPayloadDeleteFreesNestedObjects(t *testing.T) {
 		t.Fatalf("failed to allocate child object: %v", err)
 	}
 
-	treap := NewPersistentPayloadTreap[StringKey, ComplexPayload](StringLess, (*StringKey)(new(string)), st)
-	key := StringKey("parent")
+	treap := NewPersistentPayloadTreap[types.StringKey, ComplexPayload](types.StringLess, (*types.StringKey)(new(string)), st)
+	key := types.StringKey("parent")
 	treap.Insert(&key, ComplexPayload{Child: childID, Data: []byte("parent-payload")})
 
 	if err := treap.Persist(); err != nil {
@@ -1112,8 +1113,8 @@ func TestPersistentPayloadDeleteFreesStringKeyBackingObject(t *testing.T) {
 		t.Fatalf("store does not expose GetObjectInfo")
 	}
 
-	treap := NewPersistentPayloadTreap[StringKey, MockPayload](StringLess, (*StringKey)(new(string)), st)
-	key := StringKey("leaky-key")
+	treap := NewPersistentPayloadTreap[types.StringKey, MockPayload](types.StringLess, (*types.StringKey)(new(string)), st)
+	key := types.StringKey("leaky-key")
 	treap.Insert(&key, MockPayload{Data: "value"})
 
 	if err := treap.Persist(); err != nil {

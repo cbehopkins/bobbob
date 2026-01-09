@@ -1,6 +1,10 @@
 package treap
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/cbehopkins/bobbob/yggdrasil/types"
+)
 
 // PayloadTreapNode represents a node in the PayloadTreap.
 type PayloadTreapNode[K any, P any] struct {
@@ -69,7 +73,7 @@ type PayloadTreap[K any, P any] struct {
 }
 
 // NewPayloadTreapNode creates a new PayloadTreapNode with the given key, priority, and payload.
-func NewPayloadTreapNode[K any, P any](key Key[K], priority Priority, payload P) *PayloadTreapNode[K, P] {
+func NewPayloadTreapNode[K any, P any](key types.Key[K], priority Priority, payload P) *PayloadTreapNode[K, P] {
 	return &PayloadTreapNode[K, P]{
 		TreapNode: TreapNode[K]{
 			key:      key,
@@ -92,11 +96,11 @@ func NewPayloadTreap[K any, P any](lessFunc func(a, b K) bool) *PayloadTreap[K, 
 }
 
 // InsertComplex inserts a new node with the given value, priority, and payload into the treap.
-// The type K must implement the Key[K] interface (e.g., IntKey, StringKey).
+// The type K must implement the types.Key[K] interface (e.g., IntKey, StringKey).
 // Use this method when you need to specify a custom priority value.
 func (t *PayloadTreap[K, P]) InsertComplex(value K, priority Priority, payload P) {
-	// Since K implements Key[K], convert to use as key
-	key := any(value).(Key[K])
+	// Since K implements types.Key[K], convert to use as key
+	key := any(value).(types.Key[K])
 	newNode := NewPayloadTreapNode(key, priority, payload)
 	t.Treap.root = t.Treap.insert(t.Treap.root, newNode)
 }

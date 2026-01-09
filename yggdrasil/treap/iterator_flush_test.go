@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/cbehopkins/bobbob/store"
+	"github.com/cbehopkins/bobbob/yggdrasil/types"
 )
 
 // TestAggressiveFlushing verifies that nodes are flushed after processing their right subtree
@@ -16,13 +17,13 @@ func TestAggressiveFlushing(t *testing.T) {
 	}
 	defer stre.Close()
 
-	templateKey := IntKey(0).New()
-	treap := NewPersistentTreap(IntLess, templateKey, stre)
+	templateKey := types.IntKey(0).New()
+	treap := NewPersistentTreap(types.IntLess, templateKey, stre)
 
 	// Create a balanced tree with deterministic priorities
 	// Use InsertComplex to control the tree structure
 	// Priority decreases from center to edges for a more balanced tree
-	k1, k2, k3, k4, k5, k6, k7 := IntKey(1), IntKey(2), IntKey(3), IntKey(4), IntKey(5), IntKey(6), IntKey(7)
+	k1, k2, k3, k4, k5, k6, k7 := types.IntKey(1), types.IntKey(2), types.IntKey(3), types.IntKey(4), types.IntKey(5), types.IntKey(6), types.IntKey(7)
 	treap.InsertComplex(&k4, Priority(1000)) // Root
 	treap.InsertComplex(&k2, Priority(900))
 	treap.InsertComplex(&k6, Priority(900))
@@ -48,7 +49,7 @@ func TestAggressiveFlushing(t *testing.T) {
 	}
 
 	visitedCount := 0
-	err = treap.WalkInOrderKeys(opts, func(key PersistentKey[IntKey]) error {
+	err = treap.WalkInOrderKeys(opts, func(key types.PersistentKey[types.IntKey]) error {
 		visitedCount++
 
 		// Check memory after each visit
@@ -87,32 +88,32 @@ func TestFlushingComparison(t *testing.T) {
 	}
 	defer stre.Close()
 
-	templateKey := IntKey(0).New()
+	templateKey := types.IntKey(0).New()
 
 	// Test 1: Keep in memory
-	treap1 := NewPersistentTreap(IntLess, templateKey, stre)
-	for i := IntKey(1); i <= 20; i++ {
+	treap1 := NewPersistentTreap(types.IntLess, templateKey, stre)
+	for i := types.IntKey(1); i <= 20; i++ {
 		key := i
 		treap1.Insert(&key)
 	}
 	treap1.Persist()
 
 	opts := IteratorOptions{KeepInMemory: true, LoadPayloads: false}
-	treap1.WalkInOrderKeys(opts, func(key PersistentKey[IntKey]) error { return nil })
+	treap1.WalkInOrderKeys(opts, func(key types.PersistentKey[types.IntKey]) error { return nil })
 
 	keepInMemoryCount := len(treap1.GetInMemoryNodes())
 	t.Logf("With KeepInMemory=true: %d nodes in memory", keepInMemoryCount)
 
 	// Test 2: Aggressive flushing
-	treap2 := NewPersistentTreap(IntLess, templateKey, stre)
-	for i := IntKey(1); i <= 20; i++ {
+	treap2 := NewPersistentTreap(types.IntLess, templateKey, stre)
+	for i := types.IntKey(1); i <= 20; i++ {
 		key := i
 		treap2.Insert(&key)
 	}
 	treap2.Persist()
 
 	opts = IteratorOptions{KeepInMemory: false, LoadPayloads: false}
-	treap2.WalkInOrderKeys(opts, func(key PersistentKey[IntKey]) error { return nil })
+	treap2.WalkInOrderKeys(opts, func(key types.PersistentKey[types.IntKey]) error { return nil })
 
 	aggressiveFlushCount := len(treap2.GetInMemoryNodes())
 	t.Logf("With KeepInMemory=false (aggressive flush): %d nodes in memory", aggressiveFlushCount)

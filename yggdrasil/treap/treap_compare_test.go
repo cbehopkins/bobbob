@@ -5,22 +5,23 @@ import (
 	"testing"
 
 	"github.com/cbehopkins/bobbob/store"
+	"github.com/cbehopkins/bobbob/yggdrasil/types"
 )
 
 // TestTreapCompareBasic tests basic comparison of two in-memory treaps
 func TestTreapCompareBasic(t *testing.T) {
 	// Create two treaps
-	treapA := NewTreap(IntLess)
-	treapB := NewTreap(IntLess)
+	treapA := NewTreap(types.IntLess)
+	treapB := NewTreap(types.IntLess)
 
 	// Populate treapA with keys 1, 2, 3, 4, 5
 	for i := 1; i <= 5; i++ {
-		treapA.Insert(IntKey(i))
+		treapA.Insert(types.IntKey(i))
 	}
 
 	// Populate treapB with keys 3, 4, 5, 6, 7
 	for i := 3; i <= 7; i++ {
-		treapB.Insert(IntKey(i))
+		treapB.Insert(types.IntKey(i))
 	}
 
 	var onlyInA []int
@@ -28,17 +29,17 @@ func TestTreapCompareBasic(t *testing.T) {
 	var onlyInB []int
 
 	err := treapA.Compare(treapB,
-		func(node TreapNodeInterface[IntKey]) error {
+		func(node TreapNodeInterface[types.IntKey]) error {
 			key := node.GetKey().Value()
 			onlyInA = append(onlyInA, int(key))
 			return nil
 		},
-		func(nodeA, nodeB TreapNodeInterface[IntKey]) error {
+		func(nodeA, nodeB TreapNodeInterface[types.IntKey]) error {
 			key := nodeA.GetKey().Value()
 			inBoth = append(inBoth, int(key))
 			return nil
 		},
-		func(node TreapNodeInterface[IntKey]) error {
+		func(node TreapNodeInterface[types.IntKey]) error {
 			key := node.GetKey().Value()
 			onlyInB = append(onlyInB, int(key))
 			return nil
@@ -66,12 +67,12 @@ func TestTreapCompareBasic(t *testing.T) {
 
 // TestTreapCompareEmpty tests comparison when one or both treaps are empty
 func TestTreapCompareEmpty(t *testing.T) {
-	treapA := NewTreap(IntLess)
-	treapB := NewTreap(IntLess)
+	treapA := NewTreap(types.IntLess)
+	treapB := NewTreap(types.IntLess)
 
 	// Populate only treapB
 	for i := 1; i <= 3; i++ {
-		treapB.Insert(IntKey(i))
+		treapB.Insert(types.IntKey(i))
 	}
 
 	var onlyInA []int
@@ -79,15 +80,15 @@ func TestTreapCompareEmpty(t *testing.T) {
 	var onlyInB []int
 
 	err := treapA.Compare(treapB,
-		func(node TreapNodeInterface[IntKey]) error {
+		func(node TreapNodeInterface[types.IntKey]) error {
 			onlyInA = append(onlyInA, int(node.GetKey().Value()))
 			return nil
 		},
-		func(nodeA, nodeB TreapNodeInterface[IntKey]) error {
+		func(nodeA, nodeB TreapNodeInterface[types.IntKey]) error {
 			inBoth = append(inBoth, int(nodeA.GetKey().Value()))
 			return nil
 		},
-		func(node TreapNodeInterface[IntKey]) error {
+		func(node TreapNodeInterface[types.IntKey]) error {
 			onlyInB = append(onlyInB, int(node.GetKey().Value()))
 			return nil
 		},
@@ -109,13 +110,13 @@ func TestTreapCompareEmpty(t *testing.T) {
 
 // TestTreapCompareIdentical tests comparison of identical treaps
 func TestTreapCompareIdentical(t *testing.T) {
-	treapA := NewTreap(IntLess)
-	treapB := NewTreap(IntLess)
+	treapA := NewTreap(types.IntLess)
+	treapB := NewTreap(types.IntLess)
 
 	// Populate both with same keys
 	for i := 1; i <= 5; i++ {
-		treapA.Insert(IntKey(i))
-		treapB.Insert(IntKey(i))
+		treapA.Insert(types.IntKey(i))
+		treapB.Insert(types.IntKey(i))
 	}
 
 	var onlyInA []int
@@ -123,15 +124,15 @@ func TestTreapCompareIdentical(t *testing.T) {
 	var onlyInB []int
 
 	err := treapA.Compare(treapB,
-		func(node TreapNodeInterface[IntKey]) error {
+		func(node TreapNodeInterface[types.IntKey]) error {
 			onlyInA = append(onlyInA, int(node.GetKey().Value()))
 			return nil
 		},
-		func(nodeA, nodeB TreapNodeInterface[IntKey]) error {
+		func(nodeA, nodeB TreapNodeInterface[types.IntKey]) error {
 			inBoth = append(inBoth, int(nodeA.GetKey().Value()))
 			return nil
 		},
-		func(node TreapNodeInterface[IntKey]) error {
+		func(node TreapNodeInterface[types.IntKey]) error {
 			onlyInB = append(onlyInB, int(node.GetKey().Value()))
 			return nil
 		},
@@ -153,11 +154,11 @@ func TestTreapCompareIdentical(t *testing.T) {
 
 // TestTreapCompareNilCallbacks tests that nil callbacks are handled properly
 func TestTreapCompareNilCallbacks(t *testing.T) {
-	treapA := NewTreap(IntLess)
-	treapB := NewTreap(IntLess)
+	treapA := NewTreap(types.IntLess)
+	treapB := NewTreap(types.IntLess)
 
-	treapA.Insert(IntKey(1))
-	treapB.Insert(IntKey(2))
+	treapA.Insert(types.IntKey(1))
+	treapB.Insert(types.IntKey(2))
 
 	// Should not panic with nil callbacks
 	err := treapA.Compare(treapB, nil, nil, nil)
@@ -168,17 +169,17 @@ func TestTreapCompareNilCallbacks(t *testing.T) {
 
 // TestTreapCompareErrorPropagation tests that errors from callbacks are propagated
 func TestTreapCompareErrorPropagation(t *testing.T) {
-	treapA := NewTreap(IntLess)
-	treapB := NewTreap(IntLess)
+	treapA := NewTreap(types.IntLess)
+	treapB := NewTreap(types.IntLess)
 
-	treapA.Insert(IntKey(1))
-	treapB.Insert(IntKey(1))
+	treapA.Insert(types.IntKey(1))
+	treapB.Insert(types.IntKey(1))
 
 	expectedErr := fmt.Errorf("test error")
 
 	err := treapA.Compare(treapB,
 		nil,
-		func(nodeA, nodeB TreapNodeInterface[IntKey]) error {
+		func(nodeA, nodeB TreapNodeInterface[types.IntKey]) error {
 			return expectedErr
 		},
 		nil,
@@ -204,18 +205,18 @@ func TestPersistentTreapCompare(t *testing.T) {
 	}
 	defer storeB.Close()
 
-	treapA := NewPersistentTreap[IntKey](IntLess, (*IntKey)(new(int32)), storeA)
-	treapB := NewPersistentTreap[IntKey](IntLess, (*IntKey)(new(int32)), storeB)
+	treapA := NewPersistentTreap[types.IntKey](types.IntLess, (*types.IntKey)(new(int32)), storeA)
+	treapB := NewPersistentTreap[types.IntKey](types.IntLess, (*types.IntKey)(new(int32)), storeB)
 
 	// Populate treapA with keys 1, 2, 3
 	for i := 1; i <= 3; i++ {
-		key := IntKey(i)
+		key := types.IntKey(i)
 		treapA.Insert(&key)
 	}
 
 	// Populate treapB with keys 2, 3, 4
 	for i := 2; i <= 4; i++ {
-		key := IntKey(i)
+		key := types.IntKey(i)
 		treapB.Insert(&key)
 	}
 
@@ -224,15 +225,15 @@ func TestPersistentTreapCompare(t *testing.T) {
 	var onlyInB []int
 
 	err = treapA.Compare(treapB,
-		func(node TreapNodeInterface[IntKey]) error {
+		func(node TreapNodeInterface[types.IntKey]) error {
 			onlyInA = append(onlyInA, int(node.GetKey().Value()))
 			return nil
 		},
-		func(nodeA, nodeB TreapNodeInterface[IntKey]) error {
+		func(nodeA, nodeB TreapNodeInterface[types.IntKey]) error {
 			inBoth = append(inBoth, int(nodeA.GetKey().Value()))
 			return nil
 		},
-		func(node TreapNodeInterface[IntKey]) error {
+		func(node TreapNodeInterface[types.IntKey]) error {
 			onlyInB = append(onlyInB, int(node.GetKey().Value()))
 			return nil
 		},
@@ -271,19 +272,19 @@ func TestPersistentPayloadTreapCompare(t *testing.T) {
 	}
 	defer storeB.Close()
 
-	treapA := NewPersistentPayloadTreap[IntKey, MockPayload](IntLess, (*IntKey)(new(int32)), storeA)
-	treapB := NewPersistentPayloadTreap[IntKey, MockPayload](IntLess, (*IntKey)(new(int32)), storeB)
+	treapA := NewPersistentPayloadTreap[types.IntKey, MockPayload](types.IntLess, (*types.IntKey)(new(int32)), storeA)
+	treapB := NewPersistentPayloadTreap[types.IntKey, MockPayload](types.IntLess, (*types.IntKey)(new(int32)), storeB)
 
 	// Populate treapA with keys 1, 2, 3 and payloads
 	for i := 1; i <= 3; i++ {
-		key := IntKey(i)
+		key := types.IntKey(i)
 		payload := MockPayload{Data: fmt.Sprintf("valueA-%d", i)}
 		treapA.Insert(&key, payload)
 	}
 
 	// Populate treapB with keys 2, 3, 4 and payloads
 	for i := 2; i <= 4; i++ {
-		key := IntKey(i)
+		key := types.IntKey(i)
 		payload := MockPayload{Data: fmt.Sprintf("valueB-%d", i)}
 		treapB.Insert(&key, payload)
 	}
@@ -294,23 +295,23 @@ func TestPersistentPayloadTreapCompare(t *testing.T) {
 	var payloadsInBoth []string
 
 	err = treapA.Compare(treapB,
-		func(node TreapNodeInterface[IntKey]) error {
+		func(node TreapNodeInterface[types.IntKey]) error {
 			onlyInA = append(onlyInA, int(node.GetKey().Value()))
 			// Access payload
-			payloadNode := node.(PersistentPayloadNodeInterface[IntKey, MockPayload])
+			payloadNode := node.(PersistentPayloadNodeInterface[types.IntKey, MockPayload])
 			payload := payloadNode.GetPayload()
 			t.Logf("Only in A: key=%d, payload=%v", node.GetKey().Value(), payload.Data)
 			return nil
 		},
-		func(nodeA, nodeB TreapNodeInterface[IntKey]) error {
+		func(nodeA, nodeB TreapNodeInterface[types.IntKey]) error {
 			inBoth = append(inBoth, int(nodeA.GetKey().Value()))
 			// Access both payloads
-			payloadA := nodeA.(PersistentPayloadNodeInterface[IntKey, MockPayload]).GetPayload()
-			payloadB := nodeB.(PersistentPayloadNodeInterface[IntKey, MockPayload]).GetPayload()
+			payloadA := nodeA.(PersistentPayloadNodeInterface[types.IntKey, MockPayload]).GetPayload()
+			payloadB := nodeB.(PersistentPayloadNodeInterface[types.IntKey, MockPayload]).GetPayload()
 			payloadsInBoth = append(payloadsInBoth, fmt.Sprintf("A:%s,B:%s", payloadA.Data, payloadB.Data))
 			return nil
 		},
-		func(node TreapNodeInterface[IntKey]) error {
+		func(node TreapNodeInterface[types.IntKey]) error {
 			onlyInB = append(onlyInB, int(node.GetKey().Value()))
 			return nil
 		},
@@ -354,19 +355,19 @@ func TestPersistentPayloadTreapCompareDisjoint(t *testing.T) {
 	}
 	defer storeB.Close()
 
-	treapA := NewPersistentPayloadTreap[IntKey, MockPayload](IntLess, (*IntKey)(new(int32)), storeA)
-	treapB := NewPersistentPayloadTreap[IntKey, MockPayload](IntLess, (*IntKey)(new(int32)), storeB)
+	treapA := NewPersistentPayloadTreap[types.IntKey, MockPayload](types.IntLess, (*types.IntKey)(new(int32)), storeA)
+	treapB := NewPersistentPayloadTreap[types.IntKey, MockPayload](types.IntLess, (*types.IntKey)(new(int32)), storeB)
 
 	// Populate treapA with keys 1-5
 	for i := 1; i <= 5; i++ {
-		key := IntKey(i)
+		key := types.IntKey(i)
 		payload := MockPayload{Data: fmt.Sprintf("A-%d", i)}
 		treapA.Insert(&key, payload)
 	}
 
 	// Populate treapB with keys 6-10
 	for i := 6; i <= 10; i++ {
-		key := IntKey(i)
+		key := types.IntKey(i)
 		payload := MockPayload{Data: fmt.Sprintf("B-%d", i)}
 		treapB.Insert(&key, payload)
 	}
@@ -376,15 +377,15 @@ func TestPersistentPayloadTreapCompareDisjoint(t *testing.T) {
 	var onlyInB []int
 
 	err = treapA.Compare(treapB,
-		func(node TreapNodeInterface[IntKey]) error {
+		func(node TreapNodeInterface[types.IntKey]) error {
 			onlyInA = append(onlyInA, int(node.GetKey().Value()))
 			return nil
 		},
-		func(nodeA, nodeB TreapNodeInterface[IntKey]) error {
+		func(nodeA, nodeB TreapNodeInterface[types.IntKey]) error {
 			inBoth = append(inBoth, int(nodeA.GetKey().Value()))
 			return nil
 		},
-		func(node TreapNodeInterface[IntKey]) error {
+		func(node TreapNodeInterface[types.IntKey]) error {
 			onlyInB = append(onlyInB, int(node.GetKey().Value()))
 			return nil
 		},

@@ -8,6 +8,7 @@ import (
 
 	collections "github.com/cbehopkins/bobbob/multistore"
 	"github.com/cbehopkins/bobbob/yggdrasil/treap"
+	"github.com/cbehopkins/bobbob/yggdrasil/types"
 )
 
 // fixedPayload is a simple constant-size payload for batch persistence tests.
@@ -23,7 +24,7 @@ func (p fixedPayload) Marshal() ([]byte, error) {
 	return buf, nil
 }
 
-func (p fixedPayload) Unmarshal(data []byte) (treap.UntypedPersistentPayload, error) {
+func (p fixedPayload) Unmarshal(data []byte) (types.UntypedPersistentPayload, error) {
 	if len(data) < 16 {
 		return nil, errors.New("insufficient data for payload")
 	}
@@ -44,10 +45,10 @@ func TestPersistentPayloadTreapBatchPersistWithMultiStore(t *testing.T) {
 	}
 	defer ms.Close()
 
-	var keyTemplate *treap.IntKey = (*treap.IntKey)(new(int32))
-	pt := treap.NewPersistentPayloadTreap[treap.IntKey, fixedPayload](treap.IntLess, keyTemplate, ms)
+	var keyTemplate *types.IntKey = (*types.IntKey)(new(int32))
+	pt := treap.NewPersistentPayloadTreap[types.IntKey, fixedPayload](types.IntLess, keyTemplate, ms)
 
-	keys := []*treap.IntKey{(*treap.IntKey)(new(int32)), (*treap.IntKey)(new(int32)), (*treap.IntKey)(new(int32))}
+	keys := []*types.IntKey{(*types.IntKey)(new(int32)), (*types.IntKey)(new(int32)), (*types.IntKey)(new(int32))}
 	*keys[0] = 1
 	*keys[1] = 2
 	*keys[2] = 3
@@ -66,7 +67,7 @@ func TestPersistentPayloadTreapBatchPersistWithMultiStore(t *testing.T) {
 		t.Fatalf("BatchPersist failed: %v", err)
 	}
 
-	rootNode, ok := pt.Root().(treap.PersistentTreapNodeInterface[treap.IntKey])
+	rootNode, ok := pt.Root().(treap.PersistentTreapNodeInterface[types.IntKey])
 	if !ok {
 		t.Fatalf("root is not persistent node")
 	}
@@ -75,7 +76,7 @@ func TestPersistentPayloadTreapBatchPersistWithMultiStore(t *testing.T) {
 		t.Fatalf("root ObjectId failed: %v", err)
 	}
 
-	reloaded := treap.NewPersistentPayloadTreap[treap.IntKey, fixedPayload](treap.IntLess, keyTemplate, ms)
+	reloaded := treap.NewPersistentPayloadTreap[types.IntKey, fixedPayload](types.IntLess, keyTemplate, ms)
 	if err := reloaded.Load(rootId); err != nil {
 		t.Fatalf("Load failed: %v", err)
 	}
@@ -85,7 +86,7 @@ func TestPersistentPayloadTreapBatchPersistWithMultiStore(t *testing.T) {
 		if n == nil {
 			t.Fatalf("expected to find key %d after reload", *k)
 		}
-		payloadNode, ok := n.(treap.PersistentPayloadNodeInterface[treap.IntKey, fixedPayload])
+		payloadNode, ok := n.(treap.PersistentPayloadNodeInterface[types.IntKey, fixedPayload])
 		if !ok {
 			t.Fatalf("node is not payload node")
 		}

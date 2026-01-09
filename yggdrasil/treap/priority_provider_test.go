@@ -6,22 +6,23 @@ import (
 	"testing"
 
 	"github.com/cbehopkins/bobbob/internal/testutil"
+	"github.com/cbehopkins/bobbob/yggdrasil/types"
 )
 
-// TestMD5KeyPriorityProvider verifies that MD5Key implements PriorityProvider
+// TestMD5KeyPriorityProvider verifies that types.MD5Key implements types.PriorityProvider
 // and that its priority is derived from the hash value.
 func TestMD5KeyPriorityProvider(t *testing.T) {
 	// Create an MD5 hash from some data
 	data := []byte("test data for MD5 hashing")
 	hash := md5.Sum(data)
-	key := MD5Key(hash)
+	key := types.MD5Key(hash)
 
 	// Verify it implements PriorityProvider
-	var _ PriorityProvider = key
+	var _ types.PriorityProvider = key
 
 	// Verify the priority matches the first 4 bytes of the hash
 	expectedPriority := Priority(binary.LittleEndian.Uint32(hash[0:4]))
-	actualPriority := key.Priority()
+	actualPriority := Priority(key.Priority())
 
 	if actualPriority != expectedPriority {
 		t.Errorf("Priority mismatch: expected %d, got %d", expectedPriority, actualPriority)
@@ -31,10 +32,10 @@ func TestMD5KeyPriorityProvider(t *testing.T) {
 // TestTreapWithPriorityProvider verifies that Insert uses the key's Priority method
 // when the key implements PriorityProvider.
 func TestTreapWithPriorityProvider(t *testing.T) {
-	treap := NewTreap[MD5Key](MD5Less)
+	treap := NewTreap[types.MD5Key](types.MD5Less)
 
 	// Create a few MD5 keys
-	keys := make([]MD5Key, 3)
+	keys := make([]types.MD5Key, 3)
 	for i := range keys {
 		data := []byte{byte(i), byte(i * 2), byte(i * 3)}
 		keys[i] = md5.Sum(data)
@@ -53,7 +54,7 @@ func TestTreapWithPriorityProvider(t *testing.T) {
 			continue
 		}
 
-		expectedPriority := key.Priority()
+		expectedPriority := Priority(key.Priority())
 		actualPriority := node.GetPriority()
 
 		if actualPriority != expectedPriority {
@@ -69,8 +70,8 @@ func TestPersistentTreapWithPriorityProvider(t *testing.T) {
 	_, stre, cleanup := testutil.SetupTestStore(t)
 	defer cleanup()
 
-	keyTemplate := MD5Key{}
-	treap := NewPersistentTreap[MD5Key](MD5Less, &keyTemplate, stre)
+	keyTemplate := types.MD5Key{}
+	treap := NewPersistentTreap[types.MD5Key](types.MD5Less, &keyTemplate, stre)
 
 	// Create MD5 keys
 	data1 := []byte("first file content")
@@ -81,9 +82,9 @@ func TestPersistentTreapWithPriorityProvider(t *testing.T) {
 	key2 := md5.Sum(data2)
 	key3 := md5.Sum(data3)
 
-	md5Key1 := MD5Key(key1)
-	md5Key2 := MD5Key(key2)
-	md5Key3 := MD5Key(key3)
+	md5Key1 := types.MD5Key(key1)
+	md5Key2 := types.MD5Key(key2)
+	md5Key3 := types.MD5Key(key3)
 
 	// Insert the keys
 	treap.Insert(&md5Key1)
@@ -92,12 +93,12 @@ func TestPersistentTreapWithPriorityProvider(t *testing.T) {
 
 	// Verify each key's priority
 	testCases := []struct {
-		key      *MD5Key
+		key      *types.MD5Key
 		expected Priority
 	}{
-		{&md5Key1, md5Key1.Priority()},
-		{&md5Key2, md5Key2.Priority()},
-		{&md5Key3, md5Key3.Priority()},
+		{&md5Key1, Priority(md5Key1.Priority())},
+		{&md5Key2, Priority(md5Key2.Priority())},
+		{&md5Key3, Priority(md5Key3.Priority())},
 	}
 
 	for _, tc := range testCases {
@@ -118,19 +119,19 @@ func TestPersistentTreapWithPriorityProvider(t *testing.T) {
 // TestIntKeyWithoutPriorityProvider verifies that keys without PriorityProvider
 // still get random priorities as before.
 func TestIntKeyWithoutPriorityProvider(t *testing.T) {
-	treap := NewTreap[IntKey](IntLess)
+	treap := NewTreap[types.IntKey](types.IntLess)
 
 	// Insert multiple nodes
-	key1 := IntKey(10)
-	key2 := IntKey(20)
-	key3 := IntKey(30)
+	key1 := types.IntKey(10)
+	key2 := types.IntKey(20)
+	key3 := types.IntKey(30)
 
 	treap.Insert(key1)
 	treap.Insert(key2)
 	treap.Insert(key3)
 
 	// Verify all keys exist
-	for _, key := range []IntKey{key1, key2, key3} {
+	for _, key := range []types.IntKey{key1, key2, key3} {
 		node := treap.Search(key)
 		if node.IsNil() {
 			t.Errorf("Key not found: %v", key)
@@ -160,11 +161,11 @@ func TestIntKeyWithoutPriorityProvider(t *testing.T) {
 // TestInsertComplexOverridesPriorityProvider verifies that InsertComplex
 // can override the priority even when PriorityProvider is implemented.
 func TestInsertComplexOverridesPriorityProvider(t *testing.T) {
-	treap := NewTreap[MD5Key](MD5Less)
+	treap := NewTreap[types.MD5Key](types.MD5Less)
 
 	data := []byte("test data")
 	hash := md5.Sum(data)
-	key := MD5Key(hash)
+	key := types.MD5Key(hash)
 
 	// Insert with a specific priority using InsertComplex
 	customPriority := Priority(99999)
@@ -182,7 +183,7 @@ func TestInsertComplexOverridesPriorityProvider(t *testing.T) {
 	}
 
 	// Verify it's different from what Priority() would return
-	keyPriority := key.Priority()
+	keyPriority := Priority(key.Priority())
 	if actualPriority == keyPriority {
 		t.Errorf("Custom priority should differ from key.Priority(), but both are %d", actualPriority)
 	}

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/cbehopkins/bobbob/store"
+	"github.com/cbehopkins/bobbob/yggdrasil/types"
 )
 
 func setupTestStore(t *testing.T) store.Storer {
@@ -23,15 +24,15 @@ func setupTestStore(t *testing.T) store.Storer {
 func TestPersistentTreapBasics(t *testing.T) {
 	store := setupTestStore(t)
 	defer store.Close()
-	var keyTemplate *IntKey = (*IntKey)(new(int32))
-	treap := NewPersistentTreap[IntKey](IntLess, keyTemplate, store)
+	var keyTemplate *types.IntKey = (*types.IntKey)(new(int32))
+	treap := NewPersistentTreap[types.IntKey](types.IntLess, keyTemplate, store)
 
-	keys := []*IntKey{
-		(*IntKey)(new(int32)),
-		(*IntKey)(new(int32)),
-		(*IntKey)(new(int32)),
-		(*IntKey)(new(int32)),
-		(*IntKey)(new(int32)),
+	keys := []*types.IntKey{
+		(*types.IntKey)(new(int32)),
+		(*types.IntKey)(new(int32)),
+		(*types.IntKey)(new(int32)),
+		(*types.IntKey)(new(int32)),
+		(*types.IntKey)(new(int32)),
 	}
 	*keys[0] = 10
 	*keys[1] = 20
@@ -52,10 +53,10 @@ func TestPersistentTreapBasics(t *testing.T) {
 		}
 	}
 
-	nonExistentKeys := []*IntKey{
-		(*IntKey)(new(int32)),
-		(*IntKey)(new(int32)),
-		(*IntKey)(new(int32)),
+	nonExistentKeys := []*types.IntKey{
+		(*types.IntKey)(new(int32)),
+		(*types.IntKey)(new(int32)),
+		(*types.IntKey)(new(int32)),
 	}
 	*nonExistentKeys[0] = 1
 	*nonExistentKeys[1] = 3
@@ -80,10 +81,10 @@ func TestPersistentTreapBasics(t *testing.T) {
 	}
 
 	// Test SearchComplex with callback
-	var accessedNodes []IntKey
-	callback := func(node TreapNodeInterface[IntKey]) error {
+	var accessedNodes []types.IntKey
+	callback := func(node TreapNodeInterface[types.IntKey]) error {
 		if node != nil && !node.IsNil() {
-			key := node.GetKey().(*IntKey)
+			key := node.GetKey().(*types.IntKey)
 			accessedNodes = append(accessedNodes, *key)
 		}
 		return nil
@@ -119,15 +120,15 @@ func TestPersistentTreapSearchComplexWithError(t *testing.T) {
 	store := setupTestStore(t)
 	defer store.Close()
 
-	var keyTemplate *IntKey = (*IntKey)(new(int32))
-	treap := NewPersistentTreap[IntKey](IntLess, keyTemplate, store)
+	var keyTemplate *types.IntKey = (*types.IntKey)(new(int32))
+	treap := NewPersistentTreap[types.IntKey](types.IntLess, keyTemplate, store)
 
-	keys := []*IntKey{
-		(*IntKey)(new(int32)),
-		(*IntKey)(new(int32)),
-		(*IntKey)(new(int32)),
-		(*IntKey)(new(int32)),
-		(*IntKey)(new(int32)),
+	keys := []*types.IntKey{
+		(*types.IntKey)(new(int32)),
+		(*types.IntKey)(new(int32)),
+		(*types.IntKey)(new(int32)),
+		(*types.IntKey)(new(int32)),
+		(*types.IntKey)(new(int32)),
 	}
 	*keys[0] = 50
 	*keys[1] = 30
@@ -142,7 +143,7 @@ func TestPersistentTreapSearchComplexWithError(t *testing.T) {
 	// Test that callback error aborts the search
 	var accessedCount int
 	expectedError := errors.New("custom error from callback")
-	callback := func(node TreapNodeInterface[IntKey]) error {
+	callback := func(node TreapNodeInterface[types.IntKey]) error {
 		accessedCount++
 		// Always return error to test error handling
 		return expectedError
@@ -176,10 +177,10 @@ func TestPersistentTreapNodeMarshalUnmarshal(t *testing.T) {
 	store := setupTestStore(t)
 	defer store.Close()
 
-	key := IntKey(42)
+	key := types.IntKey(42)
 	priority := Priority(100)
-	treap := NewPersistentTreap[IntKey](IntLess, (*IntKey)(new(int32)), store)
-	node := NewPersistentTreapNode[IntKey](&key, priority, store, treap)
+	treap := NewPersistentTreap[types.IntKey](types.IntLess, (*types.IntKey)(new(int32)), store)
+	node := NewPersistentTreapNode[types.IntKey](&key, priority, store, treap)
 
 	// Marshal the node
 	data, err := node.Marshal()
@@ -188,13 +189,13 @@ func TestPersistentTreapNodeMarshalUnmarshal(t *testing.T) {
 	}
 
 	// Unmarshal the node
-	unmarshalledNode := &PersistentTreapNode[IntKey]{Store: store, parent: treap}
-	dstKey := IntKey(0)
+	unmarshalledNode := &PersistentTreapNode[types.IntKey]{Store: store, parent: treap}
+	dstKey := types.IntKey(0)
 	err = unmarshalledNode.unmarshal(data, &dstKey)
 	if err != nil {
 		t.Fatalf("Failed to unmarshal node: %v", err)
 	}
-	tmpKey := unmarshalledNode.GetKey().(*IntKey)
+	tmpKey := unmarshalledNode.GetKey().(*types.IntKey)
 	// Check if the unmarshalled node is equal to the original node
 	if *tmpKey != key {
 		t.Errorf("Expected key %d, got %d", key, *tmpKey)
@@ -217,10 +218,10 @@ func TestPersistentTreapNodeInvalidateObjectId(t *testing.T) {
 	stre := setupTestStore(t)
 	defer stre.Close()
 
-	key := IntKey(42)
+	key := types.IntKey(42)
 	priority := Priority(100)
-	treap := NewPersistentTreap[IntKey](IntLess, (*IntKey)(new(int32)), stre)
-	node := NewPersistentTreapNode[IntKey](&key, priority, stre, treap)
+	treap := NewPersistentTreap[types.IntKey](types.IntLess, (*types.IntKey)(new(int32)), stre)
+	node := NewPersistentTreapNode[types.IntKey](&key, priority, stre, treap)
 
 	// Initially, the ObjectId should be store.ObjNotAllocated
 	if node.objectId != store.ObjNotAllocated {
@@ -239,8 +240,8 @@ func TestPersistentTreapNodeInvalidateObjectId(t *testing.T) {
 	}
 
 	// Add a left child and check if ObjectId is invalidated
-	leftKey := IntKey(21)
-	leftNode := NewPersistentTreapNode[IntKey](&leftKey, Priority(50), stre, treap)
+	leftKey := types.IntKey(21)
+	leftNode := NewPersistentTreapNode[types.IntKey](&leftKey, Priority(50), stre, treap)
 	err = node.SetLeft(leftNode)
 	if err != nil {
 		t.Fatalf("Failed to set left child: %v", err)
@@ -262,8 +263,8 @@ func TestPersistentTreapNodeInvalidateObjectId(t *testing.T) {
 	}
 
 	// Add a right child and check if ObjectId is invalidated
-	rightKey := IntKey(63)
-	rightNode := NewPersistentTreapNode[IntKey](&rightKey, Priority(70), stre, treap)
+	rightKey := types.IntKey(63)
+	rightNode := NewPersistentTreapNode[types.IntKey](&rightKey, Priority(70), stre, treap)
 	err = node.SetRight(rightNode)
 	if err != nil {
 		t.Fatalf("Failed to set right child: %v", err)
@@ -304,14 +305,14 @@ func TestPersistentTreapPersistence(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create store: %v", err)
 	}
-	var keyTemplate IntKey
-	treap := NewPersistentTreap[IntKey](IntLess, &keyTemplate, store0)
+	var keyTemplate types.IntKey
+	treap := NewPersistentTreap[types.IntKey](types.IntLess, &keyTemplate, store0)
 
 	// Insert data into the treap
-	keys := make([]*IntKey, 100)
+	keys := make([]*types.IntKey, 100)
 	for i := 0; i < 100; i++ {
-		keys[i] = (*IntKey)(new(int32))
-		*keys[i] = IntKey(i)
+		keys[i] = (*types.IntKey)(new(int32))
+		*keys[i] = types.IntKey(i)
 		treap.Insert(keys[i])
 	}
 
@@ -324,9 +325,9 @@ func TestPersistentTreapPersistence(t *testing.T) {
 	// Simplification for this test
 	// We will implement an object lookup mechanism later
 	var treapObjectId store.ObjectId
-	treapObjectId, _ = treap.root.(*PersistentTreapNode[IntKey]).ObjectId()
-	var bob PersistentTreap[IntKey]
-	bob.keyTemplate = (*IntKey)(new(int32))
+	treapObjectId, _ = treap.root.(*PersistentTreapNode[types.IntKey]).ObjectId()
+	var bob PersistentTreap[types.IntKey]
+	bob.keyTemplate = (*types.IntKey)(new(int32))
 	bob.Store = store0
 	bobNode, err := NewFromObjectId(treapObjectId, &bob, store0)
 	if err != nil {
@@ -353,7 +354,7 @@ func TestPersistentTreapPersistence(t *testing.T) {
 	defer store1.Close()
 
 	// Create a new treap with the loaded store
-	treap = NewPersistentTreap[IntKey](IntLess, (*IntKey)(new(int32)), store1)
+	treap = NewPersistentTreap[types.IntKey](types.IntLess, (*types.IntKey)(new(int32)), store1)
 
 	err = treap.Load(treapObjectId)
 	if err != nil {
@@ -376,14 +377,14 @@ func TestPersistentTreapNodeMarshalUnmarshalWithChildren(t *testing.T) {
 	store0 := setupTestStore(t)
 	defer store0.Close()
 
-	var keyTemplate IntKey
-	parent := &PersistentTreap[IntKey]{keyTemplate: &keyTemplate, Store: store0}
-	rootKey := IntKey(100)
-	leftKey := IntKey(50)
-	rightKey := IntKey(150)
-	root := NewPersistentTreapNode[IntKey](&rootKey, 10, store0, parent)
-	left := NewPersistentTreapNode[IntKey](&leftKey, 5, store0, parent)
-	right := NewPersistentTreapNode[IntKey](&rightKey, 15, store0, parent)
+	var keyTemplate types.IntKey
+	parent := &PersistentTreap[types.IntKey]{keyTemplate: &keyTemplate, Store: store0}
+	rootKey := types.IntKey(100)
+	leftKey := types.IntKey(50)
+	rightKey := types.IntKey(150)
+	root := NewPersistentTreapNode[types.IntKey](&rootKey, 10, store0, parent)
+	left := NewPersistentTreapNode[types.IntKey](&leftKey, 5, store0, parent)
+	right := NewPersistentTreapNode[types.IntKey](&rightKey, 15, store0, parent)
 
 	err := root.SetLeft(left)
 	if err != nil {
@@ -412,14 +413,14 @@ func TestPersistentTreapTimestamps(t *testing.T) {
 	store := setupTestStore(t)
 	defer store.Close()
 
-	var keyTemplate *IntKey = (*IntKey)(new(int32))
-	treap := NewPersistentTreap[IntKey](IntLess, keyTemplate, store)
+	var keyTemplate *types.IntKey = (*types.IntKey)(new(int32))
+	treap := NewPersistentTreap[types.IntKey](types.IntLess, keyTemplate, store)
 
 	// Insert some keys
-	keys := []*IntKey{
-		(*IntKey)(new(int32)),
-		(*IntKey)(new(int32)),
-		(*IntKey)(new(int32)),
+	keys := []*types.IntKey{
+		(*types.IntKey)(new(int32)),
+		(*types.IntKey)(new(int32)),
+		(*types.IntKey)(new(int32)),
 	}
 	*keys[0] = 10
 	*keys[1] = 20
@@ -436,7 +437,7 @@ func TestPersistentTreapTimestamps(t *testing.T) {
 	}
 
 	// Check that the node has a timestamp
-	pNode := node.(*PersistentTreapNode[IntKey])
+	pNode := node.(*PersistentTreapNode[types.IntKey])
 	timestamp := pNode.GetLastAccessTime()
 	if timestamp == 0 {
 		t.Errorf("Expected lastAccessTime to be set after search, but got 0")
@@ -467,15 +468,15 @@ func TestPersistentTreapGetInMemoryNodes(t *testing.T) {
 	store := setupTestStore(t)
 	defer store.Close()
 
-	var keyTemplate *IntKey = (*IntKey)(new(int32))
-	treap := NewPersistentTreap[IntKey](IntLess, keyTemplate, store)
+	var keyTemplate *types.IntKey = (*types.IntKey)(new(int32))
+	treap := NewPersistentTreap[types.IntKey](types.IntLess, keyTemplate, store)
 
 	// Insert and search for keys
-	keys := []*IntKey{
-		(*IntKey)(new(int32)),
-		(*IntKey)(new(int32)),
-		(*IntKey)(new(int32)),
-		(*IntKey)(new(int32)),
+	keys := []*types.IntKey{
+		(*types.IntKey)(new(int32)),
+		(*types.IntKey)(new(int32)),
+		(*types.IntKey)(new(int32)),
+		(*types.IntKey)(new(int32)),
 	}
 	*keys[0] = 10
 	*keys[1] = 20
@@ -502,7 +503,7 @@ func TestPersistentTreapGetInMemoryNodes(t *testing.T) {
 	// Verify each key is present
 	keyMap := make(map[int32]bool)
 	for _, nodeInfo := range inMemoryNodes {
-		key := nodeInfo.Key.(*IntKey)
+		key := nodeInfo.Key.(*types.IntKey)
 		keyMap[int32(*key)] = true
 	}
 
@@ -519,14 +520,14 @@ func TestPersistentTreapFlushOlderThan(t *testing.T) {
 	store := setupTestStore(t)
 	defer store.Close()
 
-	var keyTemplate *IntKey = (*IntKey)(new(int32))
-	treap := NewPersistentTreap[IntKey](IntLess, keyTemplate, store)
+	var keyTemplate *types.IntKey = (*types.IntKey)(new(int32))
+	treap := NewPersistentTreap[types.IntKey](types.IntLess, keyTemplate, store)
 
 	// Insert keys
-	keys := []*IntKey{
-		(*IntKey)(new(int32)),
-		(*IntKey)(new(int32)),
-		(*IntKey)(new(int32)),
+	keys := []*types.IntKey{
+		(*types.IntKey)(new(int32)),
+		(*types.IntKey)(new(int32)),
+		(*types.IntKey)(new(int32)),
 	}
 	*keys[0] = 10
 	*keys[1] = 20
@@ -587,14 +588,14 @@ func TestPersistentTreapSelectiveFlush(t *testing.T) {
 	store := setupTestStore(t)
 	defer store.Close()
 
-	var keyTemplate *IntKey = (*IntKey)(new(int32))
-	treap := NewPersistentTreap[IntKey](IntLess, keyTemplate, store)
+	var keyTemplate *types.IntKey = (*types.IntKey)(new(int32))
+	treap := NewPersistentTreap[types.IntKey](types.IntLess, keyTemplate, store)
 
 	// Insert keys
-	keys := []*IntKey{
-		(*IntKey)(new(int32)),
-		(*IntKey)(new(int32)),
-		(*IntKey)(new(int32)),
+	keys := []*types.IntKey{
+		(*types.IntKey)(new(int32)),
+		(*types.IntKey)(new(int32)),
+		(*types.IntKey)(new(int32)),
 	}
 	*keys[0] = 10
 	*keys[1] = 20
@@ -614,7 +615,7 @@ func TestPersistentTreapSelectiveFlush(t *testing.T) {
 	// Wait a moment and search for the third key
 	// (In a real scenario, there would be a time gap; for testing we simulate with direct timestamp manipulation)
 	node2 := treap.Search(keys[2])
-	pNode2 := node2.(*PersistentTreapNode[IntKey])
+	pNode2 := node2.(*PersistentTreapNode[types.IntKey])
 	pNode2.SetLastAccessTime(midTimestamp + 10) // Manually set a newer timestamp
 
 	// Persist everything
@@ -637,7 +638,7 @@ func TestPersistentTreapSelectiveFlush(t *testing.T) {
 	inMemoryNodes := treap.GetInMemoryNodes()
 	foundKey2 := false
 	for _, nodeInfo := range inMemoryNodes {
-		key := nodeInfo.Key.(*IntKey)
+		key := nodeInfo.Key.(*types.IntKey)
 		if *key == *keys[2] {
 			foundKey2 = true
 			if nodeInfo.LastAccessTime < midTimestamp+5 {

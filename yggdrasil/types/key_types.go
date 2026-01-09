@@ -1,12 +1,13 @@
 package types
 
 import (
+	"crypto/md5"
+	"encoding/base64"
 	"encoding/binary"
-	"encoding/json"
 	"errors"
+	"fmt"
 
 	"github.com/cbehopkins/bobbob/store"
-	"github.com/cbehopkins/bobbob/yggdrasil/treap"
 )
 
 // IntKey is a 32-bit integer key for use in treap data structures.
@@ -29,7 +30,7 @@ func IntLess(a, b IntKey) bool {
 }
 
 // New creates a new IntKey instance initialized to -1.
-func (k IntKey) New() treap.PersistentKey[IntKey] {
+func (k IntKey) New() PersistentKey[IntKey] {
 	v := IntKey(-1)
 	return &v
 }
@@ -84,7 +85,7 @@ func (k ShortUIntKey) Value() ShortUIntKey {
 }
 
 // New creates a new ShortUIntKey instance initialized to 0.
-func (k ShortUIntKey) New() treap.PersistentKey[ShortUIntKey] {
+func (k ShortUIntKey) New() PersistentKey[ShortUIntKey] {
 	v := ShortUIntKey(0)
 	return &v
 }
@@ -158,7 +159,7 @@ func (k StringKey) Equals(other StringKey) bool {
 }
 
 // New creates a new empty StringKey instance.
-func (k StringKey) New() treap.PersistentKey[StringKey] {
+func (k StringKey) New() PersistentKey[StringKey] {
 	v := StringKey("")
 	return &v
 }
@@ -177,37 +178,106 @@ func (k *StringKey) UnmarshalFromObjectId(id store.ObjectId, stre store.Storer) 
 	return store.ReadGeneric(stre, k, id)
 }
 
-// Custom struct for testing
-type exampleCustomKey struct {
-	ID   int
-	Name string
-}
+// MD5Key represents a 16-byte MD5 hash that can be used as a treap key.
+// It implements PriorityProvider to use the hash value itself as the priority,
+// since MD5 hashes are uniformly distributed and make excellent priorities.
+type MD5Key [16]byte
 
-func (k exampleCustomKey) Value() exampleCustomKey {
+// Value returns the MD5Key itself.
+func (k MD5Key) Value() MD5Key {
 	return k
 }
 
-func (k exampleCustomKey) SizeInBytes() int {
-	return 8
+// SizeInBytes returns 16 for the MD5 hash.
+func (k MD5Key) SizeInBytes() int {
+	return 16
 }
 
-func (k exampleCustomKey) Marshal() ([]byte, error) {
-	return json.Marshal(k)
+// Equals reports whether this MD5Key equals another.
+func (k MD5Key) Equals(other MD5Key) bool {
+	return k == other
 }
 
-func (k *exampleCustomKey) Unmarshal(data []byte) error {
-	return json.Unmarshal(data, k)
+// Priority implements PriorityProvider by using the first 4 bytes of the MD5 hash.
+// This provides a well-distributed priority without needing random number generation.
+func (k MD5Key) Priority() uint32 {
+	return binary.LittleEndian.Uint32(k[0:4])
 }
 
-func (k exampleCustomKey) Equals(other exampleCustomKey) bool {
-	return k.ID == other.ID && k.Name == other.Name
-}
-
-func customKeyLess(a, b exampleCustomKey) bool {
-	ka := a
-	kb := b
-	if ka.ID == kb.ID {
-		return ka.Name < kb.Name
+// MD5Less is a comparison function for MD5Key values.
+func MD5Less(a, b MD5Key) bool {
+	for i := 0; i < 16; i++ {
+		if a[i] != b[i] {
+			return a[i] < b[i]
+		}
 	}
-	return ka.ID < kb.ID
+	return false
+}
+
+// Marshal encodes the MD5Key to bytes.
+func (k MD5Key) Marshal() ([]byte, error) {
+	return k[:], nil
+}
+
+// Unmarshal decodes the MD5Key from bytes.
+func (k *MD5Key) Unmarshal(data []byte) error {
+	if len(data) != 16 {
+		return errors.New("MD5Key must be exactly 16 bytes")
+	}
+	copy(k[:], data)
+	return nil
+}
+
+// New creates a new zero-value MD5Key instance.
+func (k MD5Key) New() PersistentKey[MD5Key] {
+	v := MD5Key{}
+	return &v
+}
+
+// MarshalToObjectId stores the MD5Key as a new object in the store.
+func (k MD5Key) MarshalToObjectId(stre store.Storer) (store.ObjectId, error) {
+	marshalled, err := k.Marshal()
+	if err != nil {
+		return 0, err
+	}
+	return store.WriteNewObjFromBytes(stre, marshalled)
+}
+
+// UnmarshalFromObjectId loads the MD5Key from an object in the store.
+func (k *MD5Key) UnmarshalFromObjectId(id store.ObjectId, stre store.Storer) error {
+	return store.ReadGeneric(stre, k, id)
+}
+
+// MD5KeyFromString converts a 32-character hex string to a 16-byte MD5Key.
+// Returns an error if the string is not exactly 32 characters or contains invalid hex.
+func MD5KeyFromString(md5Hex string) (MD5Key, error) {
+	var key MD5Key
+	if len(md5Hex) != 32 {
+		return key, fmt.Errorf("invalid md5 hex string length: got %d, want 32", len(md5Hex))
+	}
+	for i := range 16 {
+		n, err := fmt.Sscanf(md5Hex[i*2:i*2+2], "%02x", &key[i])
+		if err != nil {
+			return key, fmt.Errorf("failed to parse hex at position %d: %w", i*2, err)
+		}
+		if n != 1 {
+			return key, fmt.Errorf("expected to parse 1 byte at position %d, got %d", i*2, n)
+		}
+	}
+	return key, nil
+}
+
+// Md5KeyFromBase64String parses an unpadded base64 MD5 digest into an MD5Key.
+func Md5KeyFromBase64String(s string) (MD5Key, error) {
+	var key MD5Key
+
+	// RawStdEncoding handles no-padding base64
+	n, err := base64.RawStdEncoding.Decode(key[:], []byte(s))
+	if err != nil {
+		return MD5Key{}, fmt.Errorf("invalid base64 md5 key %q: %w", s, err)
+	}
+	if n != md5.Size {
+		return MD5Key{}, fmt.Errorf("invalid base64 md5 key %q: expected %d bytes, got %d", s, md5.Size, n)
+	}
+	return key, nil
 }

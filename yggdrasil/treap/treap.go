@@ -21,7 +21,7 @@
 // Ensures type safety when loading data across sessions.
 //
 // Key Types: IntKey, StringKey, ShortUIntKey - wrapper types that implement
-// PersistentKey interface for storage in treaps.
+// types.PersistentKey interface for storage in treaps.
 //
 // # Usage Example
 //
@@ -59,6 +59,8 @@ import (
 	"iter"
 	"math/rand"
 	"sync"
+
+	"github.com/cbehopkins/bobbob/yggdrasil/types"
 )
 
 // Priority represents the heap priority for a node in the treap.
@@ -148,14 +150,14 @@ func reverseOrderWalk[T any](node TreapNodeInterface[T], callback TreeCallback[T
 // TreapNode represents a node in an in-memory treap.
 // It maintains both a key (for BST ordering) and a priority (for heap ordering).
 type TreapNode[T any] struct {
-	key      Key[T]
+	key      types.Key[T]
 	priority Priority
 	left     TreapNodeInterface[T]
 	right    TreapNodeInterface[T]
 }
 
 // GetKey returns the key of the node.
-func (n *TreapNode[T]) GetKey() Key[T] {
+func (n *TreapNode[T]) GetKey() types.Key[T] {
 	return n.key
 }
 
@@ -197,7 +199,7 @@ func (n *TreapNode[T]) IsNil() bool {
 }
 
 // NewTreapNode creates a new TreapNode with the given key and priority.
-func NewTreapNode[T any](key Key[T], priority Priority) *TreapNode[T] {
+func NewTreapNode[T any](key types.Key[T], priority Priority) *TreapNode[T] {
 	return &TreapNode[T]{
 		key:      key,
 		priority: priority,
@@ -222,7 +224,7 @@ func NewTreap[T any](lessFunc func(a, b T) bool) *Treap[T] {
 	}
 }
 
-func (t *Treap[T]) newNode(key Key[T], priority Priority) *TreapNode[T] {
+func (t *Treap[T]) newNode(key types.Key[T], priority Priority) *TreapNode[T] {
 	v := t.nodePool.Get()
 	n, _ := v.(*TreapNode[T])
 	if n == nil {
@@ -375,24 +377,24 @@ func (t *Treap[T]) search(node TreapNodeInterface[T], key T) TreapNodeInterface[
 	result, _ := t.searchComplex(node, key, nil)
 	return result
 } // InsertComplex inserts a new node with the given value and priority into the treap.
-// The type T must implement the Key[T] interface (e.g., IntKey, StringKey).
+// The type T must implement the types.Key[T] interface (e.g., IntKey, StringKey).
 // Use this method when you need to specify a custom priority value.
 func (t *Treap[T]) InsertComplex(value T, priority Priority) {
-	// Since T implements Key[T], we can use the value directly as the key
-	key := any(value).(Key[T])
+	// Since T implements types.Key[T], we can use the value directly as the key
+	key := any(value).(types.Key[T])
 	newNode := t.newNode(key, priority)
 	t.root = t.insert(t.root, newNode)
 }
 
 // Insert inserts a new node with the given value into the treap.
-// The type T must implement the Key[T] interface (e.g., IntKey, StringKey).
-// If the value implements PriorityProvider, its Priority() method is used;
+// The type T must implement the types.Key[T] interface (e.g., IntKey, StringKey).
+// If the value implements types.PriorityProvider, its Priority() method is used;
 // otherwise, a random priority is generated.
 // This is the preferred method for most use cases.
 func (t *Treap[T]) Insert(value T) {
 	var priority Priority
-	if pp, ok := any(value).(PriorityProvider); ok {
-		priority = pp.Priority()
+	if pp, ok := any(value).(types.PriorityProvider); ok {
+		priority = Priority(pp.Priority())
 	} else {
 		priority = randomPriority()
 	}
@@ -401,8 +403,8 @@ func (t *Treap[T]) Insert(value T) {
 
 // Delete removes the node with the given value from the treap.
 func (t *Treap[T]) Delete(value T) {
-	// Since T implements Key[T], convert to get the comparable value
-	key := any(value).(Key[T])
+	// Since T implements types.Key[T], convert to get the comparable value
+	key := any(value).(types.Key[T])
 	t.root = t.delete(t.root, key.Value())
 }
 
@@ -412,8 +414,8 @@ func (t *Treap[T]) Delete(value T) {
 // such as updating access times for LRU caching.
 // The callback can return an error to abort the search.
 func (t *Treap[T]) SearchComplex(value T, callback func(TreapNodeInterface[T]) error) (TreapNodeInterface[T], error) {
-	// Since T implements Key[T], convert to get the comparable value
-	key := any(value).(Key[T])
+	// Since T implements types.Key[T], convert to get the comparable value
+	key := any(value).(types.Key[T])
 	return t.searchComplex(t.root, key.Value(), callback)
 }
 

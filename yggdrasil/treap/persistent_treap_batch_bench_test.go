@@ -7,6 +7,7 @@ import (
 
 	collections "github.com/cbehopkins/bobbob/multistore"
 	"github.com/cbehopkins/bobbob/yggdrasil/treap"
+	"github.com/cbehopkins/bobbob/yggdrasil/types"
 )
 
 // BenchmarkPersistentTreapPersist benchmarks the regular Persist method.
@@ -19,15 +20,15 @@ func BenchmarkPersistentTreapPersist(b *testing.B) {
 			}
 			defer ms.Close()
 
-			var keyTemplate *treap.IntKey = (*treap.IntKey)(new(int32))
+			var keyTemplate *types.IntKey = (*types.IntKey)(new(int32))
 
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				b.StopTimer()
-				pt := treap.NewPersistentTreap[treap.IntKey](treap.IntLess, keyTemplate, ms)
+				pt := treap.NewPersistentTreap[types.IntKey](types.IntLess, keyTemplate, ms)
 				for j := 0; j < count; j++ {
-					key := (*treap.IntKey)(new(int32))
-					*key = treap.IntKey(j)
+					key := (*types.IntKey)(new(int32))
+					*key = types.IntKey(j)
 					pt.Insert(key)
 				}
 				b.StartTimer()
@@ -50,15 +51,15 @@ func BenchmarkPersistentTreapBatchPersist(b *testing.B) {
 			}
 			defer ms.Close()
 
-			var keyTemplate *treap.IntKey = (*treap.IntKey)(new(int32))
+			var keyTemplate *types.IntKey = (*types.IntKey)(new(int32))
 
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				b.StopTimer()
-				pt := treap.NewPersistentTreap[treap.IntKey](treap.IntLess, keyTemplate, ms)
+				pt := treap.NewPersistentTreap[types.IntKey](types.IntLess, keyTemplate, ms)
 				for j := 0; j < count; j++ {
-					key := (*treap.IntKey)(new(int32))
-					*key = treap.IntKey(j)
+					key := (*types.IntKey)(new(int32))
+					*key = types.IntKey(j)
 					pt.Insert(key)
 				}
 				b.StartTimer()
@@ -81,15 +82,15 @@ func BenchmarkPersistentPayloadTreapPersist(b *testing.B) {
 			}
 			defer ms.Close()
 
-			var keyTemplate *treap.IntKey = (*treap.IntKey)(new(int32))
+			var keyTemplate *types.IntKey = (*types.IntKey)(new(int32))
 
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				b.StopTimer()
-				pt := treap.NewPersistentPayloadTreap[treap.IntKey, fixedPayload](treap.IntLess, keyTemplate, ms)
+				pt := treap.NewPersistentPayloadTreap[types.IntKey, fixedPayload](types.IntLess, keyTemplate, ms)
 				for j := 0; j < count; j++ {
-					key := (*treap.IntKey)(new(int32))
-					*key = treap.IntKey(j)
+					key := (*types.IntKey)(new(int32))
+					*key = types.IntKey(j)
 					pt.Insert(key, fixedPayload{A: uint64(j), B: uint64(j * 10)})
 				}
 				b.StartTimer()
@@ -112,15 +113,15 @@ func BenchmarkPersistentPayloadTreapBatchPersist(b *testing.B) {
 			}
 			defer ms.Close()
 
-			var keyTemplate *treap.IntKey = (*treap.IntKey)(new(int32))
+			var keyTemplate *types.IntKey = (*types.IntKey)(new(int32))
 
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				b.StopTimer()
-				pt := treap.NewPersistentPayloadTreap[treap.IntKey, fixedPayload](treap.IntLess, keyTemplate, ms)
+				pt := treap.NewPersistentPayloadTreap[types.IntKey, fixedPayload](types.IntLess, keyTemplate, ms)
 				for j := 0; j < count; j++ {
-					key := (*treap.IntKey)(new(int32))
-					*key = treap.IntKey(j)
+					key := (*types.IntKey)(new(int32))
+					*key = types.IntKey(j)
 					pt.Insert(key, fixedPayload{A: uint64(j), B: uint64(j * 10)})
 				}
 				b.StartTimer()

@@ -6,14 +6,15 @@ import (
 	"sync"
 
 	"github.com/cbehopkins/bobbob/store"
+	"github.com/cbehopkins/bobbob/yggdrasil/types"
 )
 
-// UntypedPersistentPayload and PersistentPayload interfaces have been moved to interfaces.go
+// UntypedPersistentPayload and types.PersistentPayload interfaces have been moved to interfaces.go
 
 // PersistentPayloadTreapNode represents a node in the persistent payload treap.
 // It embeds the payload along with the persistent treap node functionality.
 // That is when you persist this node, both the treap structure and the payload are persisted together.
-type PersistentPayloadTreapNode[K any, P PersistentPayload[P]] struct {
+type PersistentPayloadTreapNode[K any, P types.PersistentPayload[P]] struct {
 	PersistentTreapNode[K]
 	payload P
 }
@@ -138,7 +139,7 @@ func (n *PersistentPayloadTreapNode[K, P]) Marshal() ([]byte, error) {
 }
 
 // unmarshal overrides the Unmarshal method to include the payload.
-func (n *PersistentPayloadTreapNode[K, P]) unmarshal(data []byte, key PersistentKey[K]) error {
+func (n *PersistentPayloadTreapNode[K, P]) unmarshal(data []byte, key types.PersistentKey[K]) error {
 	// Unmarshal the base PersistentTreapNode
 	err := n.PersistentTreapNode.unmarshal(data, key)
 	if err != nil {
@@ -186,14 +187,14 @@ func (n *PersistentPayloadTreapNode[K, P]) IsObjectIdInvalid() bool {
 // PersistentPayloadTreapInterface and PersistentPayloadNodeInterface have been moved to interfaces.go
 
 // PersistentPayloadTreap represents a persistent treap with payloads.
-type PersistentPayloadTreap[K any, P PersistentPayload[P]] struct {
+type PersistentPayloadTreap[K any, P types.PersistentPayload[P]] struct {
 	PersistentTreap[K]
 	mu          sync.RWMutex // Protects concurrent access to the treap
 	payloadPool sync.Pool    // Pool for *PersistentPayloadTreapNode[K,P]
 }
 
 // NewPersistentPayloadTreapNode creates a new PersistentPayloadTreapNode with the given key, priority, and payload.
-func NewPersistentPayloadTreapNode[K any, P PersistentPayload[P]](key PersistentKey[K], priority Priority, payload P, stre store.Storer, parent *PersistentPayloadTreap[K, P]) *PersistentPayloadTreapNode[K, P] {
+func NewPersistentPayloadTreapNode[K any, P types.PersistentPayload[P]](key types.PersistentKey[K], priority Priority, payload P, stre store.Storer, parent *PersistentPayloadTreap[K, P]) *PersistentPayloadTreapNode[K, P] {
 	v := parent.payloadPool.Get()
 	n, _ := v.(*PersistentPayloadTreapNode[K, P])
 	if n == nil {
@@ -234,7 +235,7 @@ func (t *PersistentPayloadTreap[K, P]) releasePayloadNode(n *PersistentPayloadTr
 }
 
 // NewPersistentPayloadTreap creates a new PersistentPayloadTreap with the given comparison function and store reference.
-func NewPersistentPayloadTreap[K any, P PersistentPayload[P]](lessFunc func(a, b K) bool, keyTemplate PersistentKey[K], store store.Storer) *PersistentPayloadTreap[K, P] {
+func NewPersistentPayloadTreap[K any, P types.PersistentPayload[P]](lessFunc func(a, b K) bool, keyTemplate types.PersistentKey[K], store store.Storer) *PersistentPayloadTreap[K, P] {
 	t := &PersistentPayloadTreap[K, P]{
 		PersistentTreap: PersistentTreap[K]{
 			Treap: Treap[K]{
@@ -292,7 +293,7 @@ func (t *PersistentPayloadTreap[K, P]) insert(node TreapNodeInterface[K], newNod
 // InsertComplex inserts a new node with the given key, priority, and payload into the persistent payload treap.
 // Use this method when you need to specify a custom priority value.
 // If a key already exists, this will update its payload instead of creating a duplicate.
-func (t *PersistentPayloadTreap[K, P]) InsertComplex(key PersistentKey[K], priority Priority, payload P) {
+func (t *PersistentPayloadTreap[K, P]) InsertComplex(key types.PersistentKey[K], priority Priority, payload P) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	newNode := NewPersistentPayloadTreapNode(key, priority, payload, t.Store, t)
@@ -302,14 +303,14 @@ func (t *PersistentPayloadTreap[K, P]) InsertComplex(key PersistentKey[K], prior
 }
 
 // Insert inserts a new node with the given key and payload into the persistent payload treap.
-// If the key implements PriorityProvider, its Priority() method is used;
+// If the key implements types.PriorityProvider, its Priority() method is used;
 // otherwise, a random priority is generated.
 // If a key already exists, this will update its payload instead of creating a duplicate.
 // This is the preferred method for most use cases.
-func (t *PersistentPayloadTreap[K, P]) Insert(key PersistentKey[K], payload P) {
+func (t *PersistentPayloadTreap[K, P]) Insert(key types.PersistentKey[K], payload P) {
 	var priority Priority
-	if pp, ok := any(key).(PriorityProvider); ok {
-		priority = pp.Priority()
+	if pp, ok := any(key).(types.PriorityProvider); ok {
+		priority = Priority(pp.Priority())
 	} else {
 		priority = randomPriority()
 	}
@@ -323,7 +324,7 @@ func (t *PersistentPayloadTreap[K, P]) Insert(key PersistentKey[K], payload P) {
 
 // Delete removes the node with the given key and frees any dependent objects
 // (key object and payload-owned objects) even when the subtree root becomes nil.
-func (t *PersistentPayloadTreap[K, P]) Delete(key PersistentKey[K]) {
+func (t *PersistentPayloadTreap[K, P]) Delete(key types.PersistentKey[K]) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
@@ -349,7 +350,7 @@ func (t *PersistentPayloadTreap[K, P]) Delete(key PersistentKey[K]) {
 
 // NewPayloadFromObjectId creates a PersistentPayloadTreapNode from the given object ID.
 // Reading it in fron the store if it exuists.
-func NewPayloadFromObjectId[T any, P PersistentPayload[P]](objId store.ObjectId, parent *PersistentTreap[T], stre store.Storer) (*PersistentPayloadTreapNode[T, P], error) {
+func NewPayloadFromObjectId[T any, P types.PersistentPayload[P]](objId store.ObjectId, parent *PersistentTreap[T], stre store.Storer) (*PersistentPayloadTreapNode[T, P], error) {
 	tmp := &PersistentPayloadTreapNode[T, P]{
 		PersistentTreapNode: PersistentTreapNode[T]{
 			Store:  stre,
@@ -375,7 +376,7 @@ func (t *PersistentPayloadTreap[K, P]) Load(objId store.ObjectId) error {
 // such as updating access times for LRU caching or flushing stale nodes.
 // This method automatically updates the lastAccessTime on each accessed node.
 // The callback can return an error to abort the search.
-func (t *PersistentPayloadTreap[K, P]) SearchComplex(key PersistentKey[K], callback func(TreapNodeInterface[K]) error) (PersistentPayloadNodeInterface[K, P], error) {
+func (t *PersistentPayloadTreap[K, P]) SearchComplex(key types.PersistentKey[K], callback func(TreapNodeInterface[K]) error) (PersistentPayloadNodeInterface[K, P], error) {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 	// Create a wrapper callback that updates the access time
@@ -407,7 +408,7 @@ func (t *PersistentPayloadTreap[K, P]) SearchComplex(key PersistentKey[K], callb
 
 // Search searches for the node with the given key in the persistent treap.
 // It calls SearchComplex with a nil callback.
-func (t *PersistentPayloadTreap[K, P]) Search(key PersistentKey[K]) PersistentPayloadNodeInterface[K, P] {
+func (t *PersistentPayloadTreap[K, P]) Search(key types.PersistentKey[K]) PersistentPayloadNodeInterface[K, P] {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 	// Create a wrapper callback that updates the access time
@@ -426,7 +427,7 @@ func (t *PersistentPayloadTreap[K, P]) Search(key PersistentKey[K]) PersistentPa
 	n, _ := node.(*PersistentPayloadTreapNode[K, P])
 	return n
 } // UpdatePayload updates the payload of the node with the given key.
-func (t *PersistentPayloadTreap[K, P]) UpdatePayload(key PersistentKey[K], newPayload P) error {
+func (t *PersistentPayloadTreap[K, P]) UpdatePayload(key types.PersistentKey[K], newPayload P) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	// Create a wrapper callback that updates the access time
@@ -512,10 +513,10 @@ func (t *PersistentPayloadTreap[K, P]) Persist() error {
 }
 
 // PayloadNodeInfo contains information about a payload node in memory, including its access timestamp.
-type PayloadNodeInfo[K any, P PersistentPayload[P]] struct {
+type PayloadNodeInfo[K any, P types.PersistentPayload[P]] struct {
 	Node           *PersistentPayloadTreapNode[K, P]
 	LastAccessTime int64
-	Key            PersistentKey[K]
+	Key            types.PersistentKey[K]
 }
 
 // GetInMemoryNodes traverses the treap and collects all nodes currently in memory.
@@ -575,7 +576,7 @@ func (t *PersistentPayloadTreap[K, P]) collectInMemoryPayloadNodes(node TreapNod
 	*nodes = append(*nodes, PayloadNodeInfo[K, P]{
 		Node:           pNode,
 		LastAccessTime: pNode.GetLastAccessTime(),
-		Key:            pNode.GetKey().(PersistentKey[K]),
+		Key:            pNode.GetKey().(types.PersistentKey[K]),
 	})
 
 	// Only traverse children that are already in memory
@@ -777,7 +778,7 @@ func (n *PersistentPayloadTreapNode[K, P]) sizeInBytes() int {
 }
 
 // collectPayloadNodesPostOrder ensures children are before parents for batching.
-func collectPayloadNodesPostOrder[K any, P PersistentPayload[P]](node TreapNodeInterface[K], out *[]*PersistentPayloadTreapNode[K, P]) error {
+func collectPayloadNodesPostOrder[K any, P types.PersistentPayload[P]](node TreapNodeInterface[K], out *[]*PersistentPayloadTreapNode[K, P]) error {
 	if node == nil || node.IsNil() {
 		return nil
 	}
@@ -916,8 +917,8 @@ func (t *PersistentPayloadTreap[K, P]) SizeInBytes() int {
 	return objId.SizeInBytes()
 }
 
-// Unmarshal implements the UntypedPersistentPayload interface
-func (t *PersistentPayloadTreap[K, P]) Unmarshal(data []byte) (UntypedPersistentPayload, error) {
+// Unmarshal implements the types.UntypedPersistentPayload interface
+func (t *PersistentPayloadTreap[K, P]) Unmarshal(data []byte) (types.UntypedPersistentPayload, error) {
 	var rootId store.ObjectId
 	err := rootId.Unmarshal(data)
 	if err != nil {

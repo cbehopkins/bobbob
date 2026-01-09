@@ -1,10 +1,6 @@
 package types
 
-import (
-	"encoding/json"
-
-	"github.com/cbehopkins/bobbob/yggdrasil/treap"
-)
+import "encoding/json"
 
 // JsonPayload is a wrapper that provides PersistentPayload interface for any type
 // by using JSON marshaling/unmarshaling. This allows using structs without
@@ -39,7 +35,7 @@ func (j JsonPayload[T]) Marshal() ([]byte, error) {
 }
 
 // Unmarshal implements PersistentPayload using JSON decoding.
-func (j JsonPayload[T]) Unmarshal(data []byte) (treap.UntypedPersistentPayload, error) {
+func (j JsonPayload[T]) Unmarshal(data []byte) (UntypedPersistentPayload, error) {
 	var value T
 	err := json.Unmarshal(data, &value)
 	if err != nil {

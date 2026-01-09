@@ -6,6 +6,7 @@ import (
 
 	collections "github.com/cbehopkins/bobbob/multistore"
 	"github.com/cbehopkins/bobbob/yggdrasil/treap"
+	"github.com/cbehopkins/bobbob/yggdrasil/types"
 )
 
 // This test lives in an external package to avoid the import cycle between
@@ -18,10 +19,10 @@ func TestPersistentTreapBatchPersistWithMultiStore(t *testing.T) {
 	}
 	defer ms.Close()
 
-	var keyTemplate *treap.IntKey = (*treap.IntKey)(new(int32))
-	pt := treap.NewPersistentTreap[treap.IntKey](treap.IntLess, keyTemplate, ms)
+	var keyTemplate *types.IntKey = (*types.IntKey)(new(int32))
+	pt := treap.NewPersistentTreap[types.IntKey](types.IntLess, keyTemplate, ms)
 
-	keys := []*treap.IntKey{(*treap.IntKey)(new(int32)), (*treap.IntKey)(new(int32)), (*treap.IntKey)(new(int32))}
+	keys := []*types.IntKey{(*types.IntKey)(new(int32)), (*types.IntKey)(new(int32)), (*types.IntKey)(new(int32))}
 	*keys[0] = 1
 	*keys[1] = 2
 	*keys[2] = 3
@@ -34,7 +35,7 @@ func TestPersistentTreapBatchPersistWithMultiStore(t *testing.T) {
 		t.Fatalf("BatchPersist failed: %v", err)
 	}
 
-	rootNode, ok := pt.Root().(treap.PersistentTreapNodeInterface[treap.IntKey])
+	rootNode, ok := pt.Root().(treap.PersistentTreapNodeInterface[types.IntKey])
 	if !ok {
 		t.Fatalf("root is not persistent node")
 	}
@@ -43,7 +44,7 @@ func TestPersistentTreapBatchPersistWithMultiStore(t *testing.T) {
 		t.Fatalf("root ObjectId failed: %v", err)
 	}
 
-	reloaded := treap.NewPersistentTreap[treap.IntKey](treap.IntLess, keyTemplate, ms)
+	reloaded := treap.NewPersistentTreap[types.IntKey](types.IntLess, keyTemplate, ms)
 	if err := reloaded.Load(rootId); err != nil {
 		t.Fatalf("Load failed: %v", err)
 	}

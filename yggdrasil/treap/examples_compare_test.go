@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/cbehopkins/bobbob/store"
+	"github.com/cbehopkins/bobbob/yggdrasil/types"
 )
 
 // ExampleTreap_Compare demonstrates how to compare two treaps and find keys that are:
@@ -17,30 +18,30 @@ import (
 // - Only in the second treap
 func ExampleTreap_Compare() {
 	// Create two treaps
-	treapA := NewTreap(IntLess)
-	treapB := NewTreap(IntLess)
+	treapA := NewTreap(types.IntLess)
+	treapB := NewTreap(types.IntLess)
 
 	// Populate treapA with some keys
 	for _, v := range []int{1, 2, 3, 4, 5} {
-		treapA.Insert(IntKey(v))
+		treapA.Insert(types.IntKey(v))
 	}
 
 	// Populate treapB with overlapping keys
 	for _, v := range []int{3, 4, 5, 6, 7} {
-		treapB.Insert(IntKey(v))
+		treapB.Insert(types.IntKey(v))
 	}
 
 	// Compare the treaps
 	err := treapA.Compare(treapB,
-		func(node TreapNodeInterface[IntKey]) error {
+		func(node TreapNodeInterface[types.IntKey]) error {
 			fmt.Printf("Only in A: %d\n", node.GetKey().Value())
 			return nil
 		},
-		func(nodeA, nodeB TreapNodeInterface[IntKey]) error {
+		func(nodeA, nodeB TreapNodeInterface[types.IntKey]) error {
 			fmt.Printf("In both: %d\n", nodeA.GetKey().Value())
 			return nil
 		},
-		func(node TreapNodeInterface[IntKey]) error {
+		func(node TreapNodeInterface[types.IntKey]) error {
 			fmt.Printf("Only in B: %d\n", node.GetKey().Value())
 			return nil
 		},
@@ -61,21 +62,21 @@ func ExampleTreap_Compare() {
 
 // ExampleTreap_Compare_selective demonstrates using nil callbacks to only handle specific cases
 func ExampleTreap_Compare_selective() {
-	treapA := NewTreap(IntLess)
-	treapB := NewTreap(IntLess)
+	treapA := NewTreap(types.IntLess)
+	treapB := NewTreap(types.IntLess)
 
 	for _, v := range []int{1, 2, 3, 4, 5} {
-		treapA.Insert(IntKey(v))
+		treapA.Insert(types.IntKey(v))
 	}
 
 	for _, v := range []int{4, 5, 6, 7, 8} {
-		treapB.Insert(IntKey(v))
+		treapB.Insert(types.IntKey(v))
 	}
 
 	// Only interested in keys that exist in both treaps
 	err := treapA.Compare(treapB,
 		nil, // Don't care about keys only in A
-		func(nodeA, nodeB TreapNodeInterface[IntKey]) error {
+		func(nodeA, nodeB TreapNodeInterface[types.IntKey]) error {
 			fmt.Printf("Common key: %d\n", nodeA.GetKey().Value())
 			return nil
 		},
@@ -96,14 +97,14 @@ type FileMetadata struct {
 	Size int64
 }
 
-// Marshal implements PersistentPayload interface
+// Marshal implements types.PersistentPayload interface
 func (f *FileMetadata) Marshal() ([]byte, error) {
 	data := fmt.Sprintf("%s:%d", f.Name, f.Size)
 	return []byte(data), nil
 }
 
-// Unmarshal implements PersistentPayload interface
-func (f *FileMetadata) Unmarshal(data []byte) (UntypedPersistentPayload, error) {
+// Unmarshal implements types.PersistentPayload interface
+func (f *FileMetadata) Unmarshal(data []byte) (types.UntypedPersistentPayload, error) {
 	var name string
 	var size int64
 	_, err := fmt.Sscanf(string(data), "%s:%d", &name, &size)
@@ -115,7 +116,7 @@ func (f *FileMetadata) Unmarshal(data []byte) (UntypedPersistentPayload, error) 
 	return f, nil
 }
 
-// SizeInBytes implements PersistentPayload interface
+// SizeInBytes implements types.PersistentPayload interface
 func (f *FileMetadata) SizeInBytes() int {
 	data, err := f.Marshal()
 	if err != nil {
@@ -126,15 +127,15 @@ func (f *FileMetadata) SizeInBytes() int {
 
 // FileCollection wraps a PersistentPayloadTreap for file metadata
 type FileCollection struct {
-	treap *PersistentPayloadTreap[MD5Key, *FileMetadata]
+	treap *PersistentPayloadTreap[types.MD5Key, *FileMetadata]
 }
 
 // NewFileCollection creates a new file collection with the given store
 func NewFileCollection(stre store.Storer) *FileCollection {
 	return &FileCollection{
-		treap: NewPersistentPayloadTreap[MD5Key, *FileMetadata](
-			MD5Less,
-			new(MD5Key),
+		treap: NewPersistentPayloadTreap[types.MD5Key, *FileMetadata](
+			types.MD5Less,
+			new(types.MD5Key),
 			stre,
 		),
 	}
@@ -142,20 +143,20 @@ func NewFileCollection(stre store.Storer) *FileCollection {
 
 // AddFile adds a file to the collection using its content to generate the MD5 key
 func (fc *FileCollection) AddFile(content string, metadata *FileMetadata) {
-	hash := MD5Key(md5.Sum([]byte(content)))
+	hash := types.MD5Key(md5.Sum([]byte(content)))
 	fc.treap.Insert(&hash, metadata)
 }
 
 // extractPayload is a helper to extract FileMetadata from a node
-func extractPayload(node TreapNodeInterface[MD5Key]) *FileMetadata {
-	if payloadNode, ok := node.(PersistentPayloadNodeInterface[MD5Key, *FileMetadata]); ok {
+func extractPayload(node TreapNodeInterface[types.MD5Key]) *FileMetadata {
+	if payloadNode, ok := node.(PersistentPayloadNodeInterface[types.MD5Key, *FileMetadata]); ok {
 		return payloadNode.GetPayload()
 	}
 	return nil
 }
 
 // formatHash returns the first 8 characters of the hex-encoded MD5 hash
-func formatHash(key MD5Key) string {
+func formatHash(key types.MD5Key) string {
 	return hex.EncodeToString(key[:])[:8]
 }
 
@@ -173,7 +174,7 @@ func (fc *FileCollection) Compare(other *FileCollection, logger func(string)) (*
 
 	err := fc.treap.Compare(other.treap,
 		// Files only in this collection
-		func(node TreapNodeInterface[MD5Key]) error {
+		func(node TreapNodeInterface[types.MD5Key]) error {
 			payload := extractPayload(node)
 			if payload == nil {
 				return nil
@@ -188,7 +189,7 @@ func (fc *FileCollection) Compare(other *FileCollection, logger func(string)) (*
 			return nil
 		},
 		// Files in both collections
-		func(nodeA, nodeB TreapNodeInterface[MD5Key]) error {
+		func(nodeA, nodeB TreapNodeInterface[types.MD5Key]) error {
 			metaA := extractPayload(nodeA)
 			metaB := extractPayload(nodeB)
 			if metaA == nil || metaB == nil {
@@ -214,7 +215,7 @@ func (fc *FileCollection) Compare(other *FileCollection, logger func(string)) (*
 			return nil
 		},
 		// Files only in other collection
-		func(node TreapNodeInterface[MD5Key]) error {
+		func(node TreapNodeInterface[types.MD5Key]) error {
 			payload := extractPayload(node)
 			if payload == nil {
 				return nil
