@@ -2,9 +2,8 @@ package allocator
 
 import "errors"
 
-// allocatorRef wraps a blockAllocator with its persistent ObjectId for storage management.
+// allocatorRef wraps a blockAllocator with its persistent storage management.
 type allocatorRef struct {
-	ObjectId  ObjectId
 	allocator *blockAllocator
 }
 
@@ -26,6 +25,9 @@ func (r *allocatorRef) setRequestedSize(objId ObjectId, size int) {
 }
 
 func (r *allocatorRef) ContainsObjectId(objId ObjectId) bool {
+	if r == nil {
+		return false
+	}
 	return r.allocator.ContainsObjectId(objId)
 }
 
@@ -45,10 +47,33 @@ func (r *allocatorRef) Marshal() ([]byte, error) {
 	return r.allocator.Marshal()
 }
 
+// GetObjectInfo checks if this allocator contains the ObjectId and returns its metadata.
+// Returns FileOffset and size if found, or an error if not found or invalid.
+func (r *allocatorRef) GetObjectInfo(objId ObjectId, blockSize int) (FileOffset, int, error) {
+	if r == nil {
+		return 0, 0, errors.New("allocatorRef is nil")
+	}
+	if !r.ContainsObjectId(objId) {
+		return 0, 0, errors.New("ObjectId not in allocator range")
+	}
+
+	realOff, allocErr := r.allocator.GetFileOffset(objId)
+	if allocErr != nil {
+		return 0, 0, allocErr
+	}
+
+	sz := blockSize
+	if requested, ok := r.allocator.requestedSize(objId); ok {
+		sz = requested
+	}
+
+	return realOff, sz, nil
+}
+
 type allocatorSlice []*allocatorRef
 
 // Marshal serializes the allocator slice.
-// Returns: [count:4][objId1:8]...[allocatorData...]
+// Returns: [count:4][allocatorData...]
 func (s allocatorSlice) Marshal() ([]byte, error) {
 	data := make([]byte, 0)
 
@@ -58,14 +83,7 @@ func (s allocatorSlice) Marshal() ([]byte, error) {
 		byte(count>>24), byte(count>>16),
 		byte(count>>8), byte(count))
 
-	// Serialize each allocator's ObjectId
-	for _, ref := range s {
-		data = append(data,
-			byte(ref.ObjectId>>56), byte(ref.ObjectId>>48), byte(ref.ObjectId>>40), byte(ref.ObjectId>>32),
-			byte(ref.ObjectId>>24), byte(ref.ObjectId>>16), byte(ref.ObjectId>>8), byte(ref.ObjectId))
-	}
-
-	// Serialize allocator state data
+	// Serialize allocator state data (includes startingFileOffset via blockAllocator.Marshal)
 	for _, allocator := range s {
 		allocatorData, err := allocator.Marshal()
 		if err != nil {
@@ -78,41 +96,32 @@ func (s allocatorSlice) Marshal() ([]byte, error) {
 }
 
 // SizeInBytes returns the size of the serialized allocator slice.
-func (s allocatorSlice) SizeInBytes(blockCount int) int {
-	if len(s) == 0 {
-		return 4 // Just the count
-	}
-	bitCount := (blockCount + 7) / 8
-	allocatorDataSize := 8 + bitCount + 2*blockCount
-	return 4 + (len(s) * 8) + (len(s) * allocatorDataSize)
-}
+// func (s allocatorSlice) SizeInBytes(blockCount int) int {
+// 	if len(s) == 0 {
+// 		return 4 // Just the count
+// 	}
+// 	bitCount := (blockCount + 7) / 8
+// 	allocatorDataSize := 8 + bitCount + 2*blockCount
+// 	return 4 + (len(s) * 8) + (len(s) * allocatorDataSize)
+// }
 
 // GetObjectInfo searches for an ObjectId within this slice's allocators.
 // Returns the FileOffset and size if found, or an error if not found.
 func (s allocatorSlice) GetObjectInfo(objId ObjectId, blockSize int) (FileOffset, int, error) {
 	for _, ref := range s {
-		if ref == nil || ref.allocator == nil {
+		if !ref.ContainsObjectId(objId) {
 			continue
 		}
-		allocator := ref.allocator
-		if !allocator.ContainsObjectId(objId) {
-			continue
+		realOff, sz, err := ref.GetObjectInfo(objId, blockSize)
+		if err == nil {
+			return realOff, sz, nil
 		}
-		realOff, allocErr := allocator.GetFileOffset(objId)
-		if allocErr != nil {
-			return 0, 0, allocErr
-		}
-		sz := blockSize
-		if requested, ok := allocator.requestedSize(objId); ok {
-			sz = requested
-		}
-		return realOff, sz, nil
 	}
 	return 0, 0, errors.New("ObjectId not found in slice")
 }
 
 // Unmarshal deserializes the allocator slice.
-// Reconstructs both ObjectId metadata and allocator state data.
+// Reconstructs allocator state data (ObjectIds are derived from startingFileOffset in blockAllocator).
 // Returns the number of bytes consumed, or an error.
 func (s *allocatorSlice) Unmarshal(data []byte, blockCount int) (int, error) {
 	if len(data) < 4 {
@@ -126,24 +135,12 @@ func (s *allocatorSlice) Unmarshal(data []byte, blockCount int) (int, error) {
 		int(data[offset+2])<<8 | int(data[offset+3])
 	offset += 4
 
-	// Read ObjectIds first
-	objIds := make([]ObjectId, count)
-	for i := 0; i < count; i++ {
-		if len(data) < offset+8 {
-			return 0, errors.New("invalid allocator data")
-		}
-		objId := ObjectId(data[offset])<<56 | ObjectId(data[offset+1])<<48 | ObjectId(data[offset+2])<<40 | ObjectId(data[offset+3])<<32 |
-			ObjectId(data[offset+4])<<24 | ObjectId(data[offset+5])<<16 | ObjectId(data[offset+6])<<8 | ObjectId(data[offset+7])
-		objIds[i] = objId
-		offset += 8
-	}
-
-	// Deserialize allocator state data
+	// Deserialize allocator state data (includes startingFileOffset via blockAllocator.Unmarshal)
 	bitCount := (blockCount + 7) / 8
 	allocatorDataSize := 8 + bitCount + 2*blockCount
 
 	*s = make(allocatorSlice, count)
-	for i := 0; i < count; i++ {
+	for i := range count {
 		if len(data) < offset+allocatorDataSize {
 			return 0, errors.New("invalid allocator state data")
 		}
@@ -158,7 +155,6 @@ func (s *allocatorSlice) Unmarshal(data []byte, blockCount int) (int, error) {
 		}
 		offset += allocatorDataSize
 		(*s)[i] = &allocatorRef{
-			ObjectId:  objIds[i],
 			allocator: allocator,
 		}
 	}

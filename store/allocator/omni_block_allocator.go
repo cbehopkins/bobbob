@@ -109,7 +109,6 @@ func NewOmniBlockAllocator(blockSize []int, blockCount int, parent Allocator, op
 				blockMap[size] = pool
 			}
 			ref := &allocatorRef{
-				ObjectId:  baseObjId,
 				allocator: ba,
 			}
 			pool.available = append(pool.available, ref)
@@ -206,7 +205,6 @@ func (o *omniBlockAllocator) Allocate(size int) (ObjectId, FileOffset, error) {
 			}
 			newAllocator := NewBlockAllocator(blockSize, o.blockCount, fileOffset, baseObjId)
 			newRef := &allocatorRef{
-				ObjectId:  baseObjId,
 				allocator: newAllocator,
 			}
 			pool.available = append(pool.available, newRef)
@@ -298,7 +296,6 @@ func (o *omniBlockAllocator) AllocateRun(size int, count int) ([]ObjectId, []Fil
 			}
 			newAllocator := NewBlockAllocator(blockSize, o.blockCount, fileOffset, baseObjId)
 			newRef := &allocatorRef{
-				ObjectId:  baseObjId,
 				allocator: newAllocator,
 			}
 			pool.available = append(pool.available, newRef)
@@ -496,12 +493,14 @@ func (o *omniBlockAllocator) Unmarshal(data []byte) error {
 
 		// Register with index
 		for _, ref := range pool.available {
-			_ = o.idx.RegisterRange(int64(ref.ObjectId), size, ref.allocator.startingFileOffset)
-			_ = o.idx.UpdateRangeEnd(int64(ref.ObjectId), int64(ref.ObjectId)+int64(o.blockCount))
+			objId := ref.allocator.startingObjectId
+			_ = o.idx.RegisterRange(int64(objId), size, ref.allocator.startingFileOffset)
+			_ = o.idx.UpdateRangeEnd(int64(objId), int64(objId)+int64(o.blockCount))
 		}
 		for _, ref := range pool.full {
-			_ = o.idx.RegisterRange(int64(ref.ObjectId), size, ref.allocator.startingFileOffset)
-			_ = o.idx.UpdateRangeEnd(int64(ref.ObjectId), int64(ref.ObjectId)+int64(o.blockCount))
+			objId := ref.allocator.startingObjectId
+			_ = o.idx.RegisterRange(int64(objId), size, ref.allocator.startingFileOffset)
+			_ = o.idx.UpdateRangeEnd(int64(objId), int64(objId)+int64(o.blockCount))
 		}
 
 		o.blockMap[size] = pool
