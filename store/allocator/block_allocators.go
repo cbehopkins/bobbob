@@ -65,7 +65,8 @@ func (a *blockAllocator) Allocate(size int) (ObjectId, FileOffset, error) {
 }
 
 // AllocateRun reserves a contiguous run of free slots within this block allocator.
-// Returns ErrNoContiguousRange if sufficient contiguous slots are not available.
+// Returns as many contiguous slots as available (up to count), mimicking io.Write semantics.
+// Returns empty slices if no contiguous slots are available.
 func (a *blockAllocator) AllocateRun(size int, count int) ([]ObjectId, []FileOffset, error) {
 	if size != a.blockSize {
 		return nil, nil, errors.New("size must match block size")
@@ -73,37 +74,60 @@ func (a *blockAllocator) AllocateRun(size int, count int) ([]ObjectId, []FileOff
 	if count <= 0 {
 		return nil, nil, errors.New("count must be positive")
 	}
-	if count > a.blockCount {
-		return nil, nil, ErrNoContiguousRange
+
+	// Find the longest contiguous run, up to min(count, blockCount)
+	maxAllocate := count
+	if maxAllocate > a.blockCount {
+		maxAllocate = a.blockCount
 	}
 
-	runStart := -1
-	freeRun := 0
+	bestStart := -1
+	bestLength := 0
+	currentStart := -1
+	currentLength := 0
+
 	for i, allocated := range a.allocatedList {
 		if !allocated {
-			if runStart == -1 {
-				runStart = i
+			if currentStart == -1 {
+				currentStart = i
+				currentLength = 1
+			} else {
+				currentLength++
 			}
-			freeRun++
-			if freeRun == count {
-				objIds := make([]ObjectId, count)
-				offsets := make([]FileOffset, count)
-				for j := 0; j < count; j++ {
-					idx := runStart + j
-					a.allocatedList[idx] = true
-					objIds[j] = a.startingObjectId + ObjectId(idx)
-					offsets[j] = a.startingFileOffset + FileOffset(idx*a.blockSize)
-					a.requestedSizes[idx] = size
-				}
-				return objIds, offsets, nil
+
+			// If we've found enough for the full request, use it immediately
+			if currentLength == maxAllocate {
+				bestStart = currentStart
+				bestLength = currentLength
+				break
 			}
-			continue
+
+			// Track the best run so far
+			if currentLength > bestLength {
+				bestStart = currentStart
+				bestLength = currentLength
+			}
+		} else {
+			currentStart = -1
+			currentLength = 0
 		}
-		runStart = -1
-		freeRun = 0
 	}
 
-	return nil, nil, ErrNoContiguousRange
+	// Return the best contiguous run found (may be 0)
+	if bestLength == 0 {
+		return []ObjectId{}, []FileOffset{}, nil
+	}
+
+	objIds := make([]ObjectId, bestLength)
+	offsets := make([]FileOffset, bestLength)
+	for j := 0; j < bestLength; j++ {
+		idx := bestStart + j
+		a.allocatedList[idx] = true
+		objIds[j] = a.startingObjectId + ObjectId(idx)
+		offsets[j] = a.startingFileOffset + FileOffset(idx*a.blockSize)
+		a.requestedSizes[idx] = size
+	}
+	return objIds, offsets, nil
 }
 
 func (a *blockAllocator) Free(fileOffset FileOffset, size int) error {
@@ -290,40 +314,48 @@ func (m *multiBlockAllocator) Allocate(size int) (ObjectId, FileOffset, error) {
 }
 
 // AllocateRun reserves a contiguous run of blocks within a single sub-allocator.
-// The run cannot span block allocator boundaries; the caller should ensure count
-// is less than or equal to blockCount. Returns ErrNoContiguousRange when no
-// contiguous run is available and ErrRunUnsupported for incompatible sizes.
+// Returns as many contiguous blocks as available (up to count), trying existing
+// allocators first, then creating a new one if needed. Returns empty slices if
+// no contiguous blocks are available and new allocator creation fails.
 func (m *multiBlockAllocator) AllocateRun(size int, count int) ([]ObjectId, []FileOffset, error) {
 	if size != m.blockSize {
 		return nil, nil, ErrRunUnsupported
 	}
-	if count <= 0 || count > m.blockCount {
-		return nil, nil, ErrNoContiguousRange
+	if count <= 0 {
+		return nil, nil, errors.New("count must be positive")
 	}
 
+	// Clamp count to blockCount since runs can't span allocators
+	requestCount := count
+	if requestCount > m.blockCount {
+		requestCount = m.blockCount
+	}
+
+	// Try existing allocators - they now return partial results
 	for _, allocator := range m.allocators {
-		objIds, offsets, err := allocator.AllocateRun(size, count)
-		if err == nil {
-			return objIds, offsets, nil
-		}
-		if !errors.Is(err, ErrNoContiguousRange) && !errors.Is(err, AllAllocated) {
+		objIds, offsets, err := allocator.AllocateRun(size, requestCount)
+		if err != nil && err.Error() != "size must match block size" && err.Error() != "count must be positive" {
 			return nil, nil, err
+		}
+		// Accept any non-zero allocation
+		if len(objIds) > 0 {
+			return objIds, offsets, nil
 		}
 	}
 
 	// Need a new allocator segment
 	if m.preParentAllocate != nil {
 		if err := m.preParentAllocate(size); err != nil {
-			return nil, nil, err
+			return []ObjectId{}, []FileOffset{}, nil
 		}
 	}
 	parentObjectId, parentFileOffset, err := m.parent.Allocate(m.blockSize * m.blockCount)
 	if err != nil {
-		return nil, nil, err
+		return []ObjectId{}, []FileOffset{}, nil
 	}
 	if m.postParentAllocate != nil {
 		if err := m.postParentAllocate(parentObjectId, parentFileOffset); err != nil {
-			return nil, nil, err
+			return []ObjectId{}, []FileOffset{}, nil
 		}
 	}
 
@@ -331,7 +363,7 @@ func (m *multiBlockAllocator) AllocateRun(size int, count int) ([]ObjectId, []Fi
 	m.allocators = append(m.allocators, newAllocator)
 	m.startOffsets = append(m.startOffsets, parentFileOffset)
 
-	return newAllocator.AllocateRun(size, count)
+	return newAllocator.AllocateRun(size, requestCount)
 }
 
 func (m *multiBlockAllocator) Free(fileOffset FileOffset, size int) error {
@@ -669,8 +701,9 @@ func (o *omniBlockAllocator) Allocate(size int) (ObjectId, FileOffset, error) {
 }
 
 // AllocateRun attempts to reserve a contiguous run of blocks for the given size.
-// Only sizes that fit within the managed block sizes are supported; larger sizes
-// defer to the parent if it supports RunAllocator.
+// Returns as many contiguous blocks as available (up to count). Only sizes that
+// fit within the managed block sizes are supported; larger sizes defer to the
+// parent if it supports RunAllocator.
 func (o *omniBlockAllocator) AllocateRun(size int, count int) ([]ObjectId, []FileOffset, error) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
@@ -690,17 +723,20 @@ func (o *omniBlockAllocator) AllocateRun(size int, count int) ([]ObjectId, []Fil
 				o.blockMap[blockSize] = pool
 			}
 
-			for len(pool.available) > 0 {
-				allocator := pool.available[0]
+			// Try available allocators - they now return partial results
+			for i := 0; i < len(pool.available); {
+				allocator := pool.available[i]
 				objIds, offsets, err := allocator.AllocateRun(blockSize, count)
-				if errors.Is(err, AllAllocated) || errors.Is(err, ErrNoContiguousRange) {
-					pool.full = append(pool.full, allocator)
-					pool.available = pool.available[1:]
-					continue
-				}
-				if err != nil {
+				if err != nil && err.Error() != "size must match block size" && err.Error() != "count must be positive" {
 					return nil, nil, err
 				}
+				// If no slots available, move to full list
+				if len(objIds) == 0 {
+					pool.full = append(pool.full, allocator)
+					pool.available = append(pool.available[:i], pool.available[i+1:]...)
+					continue
+				}
+				// Accept partial allocation
 				for _, objId := range objIds {
 					allocator.setRequestedSize(objId, size)
 				}
@@ -710,7 +746,7 @@ func (o *omniBlockAllocator) AllocateRun(size int, count int) ([]ObjectId, []Fil
 			// Need a new allocator segment
 			baseObjId, fileOffset, allocErr := o.parent.Allocate(blockSize * o.blockCount)
 			if allocErr != nil {
-				return nil, nil, allocErr
+				return []ObjectId{}, []FileOffset{}, nil
 			}
 			newAllocator := NewBlockAllocator(blockSize, o.blockCount, fileOffset, baseObjId)
 			pool.available = append(pool.available, newAllocator)
@@ -720,7 +756,7 @@ func (o *omniBlockAllocator) AllocateRun(size int, count int) ([]ObjectId, []Fil
 			}
 
 			objIds, offsets, err := newAllocator.AllocateRun(blockSize, count)
-			if err != nil {
+			if err != nil && err.Error() != "size must match block size" && err.Error() != "count must be positive" {
 				return nil, nil, err
 			}
 			for _, objId := range objIds {

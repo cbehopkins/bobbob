@@ -971,6 +971,8 @@ func flushCollectionOldestPercentile(coll CollectionInterface, percentage int) (
 
 // VaultSession manages a vault with pre-configured collections.
 // Call Close() when done to persist all changes.
+// FIXME this should be removed from the api in favor of direct Vault usage
+// Deprecated: use Vault directly instead.
 type VaultSession struct {
 	Vault *Vault
 	Store store.Storer

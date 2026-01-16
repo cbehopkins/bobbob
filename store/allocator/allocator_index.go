@@ -98,14 +98,28 @@ func (idx *AllocatorIndex) DeleteObject(id ObjectId) {
 // Returns FileOffset, Size, and error. Checks ranges first (fast), then objects.
 func (idx *AllocatorIndex) Get(id ObjectId) (FileOffset, int, error) {
 	// First check if this ObjectId falls within any registered range (block allocator path)
+	// Use binary search since ranges are sorted by StartObjectId
 	idx.mu.Lock()
-	for _, r := range idx.ranges {
-		if int64(id) >= r.StartObjectId && int64(id) < r.EndObjectId {
-			// Compute offset from range metadata
-			offset := r.StartingFileOffset + FileOffset((int64(id)-r.StartObjectId)*int64(r.BlockSize))
-			size := r.BlockSize
-			idx.mu.Unlock()
-			return offset, size, nil
+	ranges := idx.ranges
+	n := len(ranges)
+
+	if n > 0 {
+		// Binary search to find the range that might contain this ObjectId
+		// Find the rightmost range where StartObjectId <= id
+		i := sort.Search(n, func(i int) bool {
+			return ranges[i].StartObjectId > int64(id)
+		})
+
+		// Check the range immediately before (if it exists)
+		if i > 0 {
+			r := ranges[i-1]
+			if int64(id) >= r.StartObjectId && int64(id) < r.EndObjectId {
+				// Compute offset from range metadata
+				offset := r.StartingFileOffset + FileOffset((int64(id)-r.StartObjectId)*int64(r.BlockSize))
+				size := r.BlockSize
+				idx.mu.Unlock()
+				return offset, size, nil
+			}
 		}
 	}
 	idx.mu.Unlock()
@@ -280,15 +294,28 @@ func (idx *AllocatorIndex) UpdateRangeEnd(startObjectId int64, endObjectId int64
 // LookupRange returns the matching range for an objectId.
 func (idx *AllocatorIndex) LookupRange(objectId int64) (*AllocatorRange, error) {
 	idx.mu.Lock()
-	// binary search equivalent
 	ranges := idx.ranges
+	n := len(ranges)
 	idx.mu.Unlock()
-	// linear scan for now; ranges are typically few. Follow-up can add sort.Search.
-	for _, r := range ranges {
+
+	if n == 0 {
+		return nil, errors.New("ObjectId not found in ranges")
+	}
+
+	// Binary search for the range containing this objectId
+	// Find the rightmost range where StartObjectId <= objectId
+	i := sort.Search(n, func(i int) bool {
+		return ranges[i].StartObjectId > objectId
+	})
+
+	// Check the range immediately before (if it exists)
+	if i > 0 {
+		r := ranges[i-1]
 		if objectId >= r.StartObjectId && objectId < r.EndObjectId {
 			return r, nil
 		}
 	}
+
 	return nil, errors.New("ObjectId not found in ranges")
 }
 

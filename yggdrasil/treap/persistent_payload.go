@@ -796,7 +796,9 @@ func collectPayloadNodesPostOrder[K any, P types.PersistentPayload[P]](node Trea
 	return nil
 }
 
-// BatchPersist attempts to persist all nodes using a single contiguous run when supported.
+// BatchPersist attempts to persist all nodes using contiguous runs when supported.
+// Iteratively requests allocations from the RunAllocator, handling partial results
+// (e.g., when BlockAllocator has 400 slots available but 10,000 requested).
 // Falls back to per-node Persist when run allocation is unavailable or sizes differ.
 func (t *PersistentPayloadTreap[K, P]) BatchPersist() error {
 	if t.root == nil {
@@ -823,80 +825,96 @@ func (t *PersistentPayloadTreap[K, P]) BatchPersist() error {
 		return t.Persist()
 	}
 
-	objIds, offsets, err := ra.AllocateRun(size, len(nodes))
-	if err != nil {
-		return t.Persist()
-	}
-
-	// Verify offsets are actually contiguous before attempting batched write
-	contiguous := true
-	for i := 1; i < len(offsets); i++ {
-		expectedOffset := offsets[i-1] + store.FileOffset(size)
-		if offsets[i] != expectedOffset {
-			contiguous = false
-			break
+	// Process nodes in batches based on what the allocator can provide
+	remaining := nodes
+	for len(remaining) > 0 {
+		objIds, offsets, err := ra.AllocateRun(size, len(remaining))
+		if err != nil {
+			// Allocator doesn't support this size or has no space
+			return t.Persist()
 		}
-	}
+		if len(objIds) == 0 {
+			// No space available, fall back to regular persist
+			return t.Persist()
+		}
 
-	for i, n := range nodes {
-		n.SetObjectId(objIds[i])
-	}
+		// Verify this batch is contiguous
+		contiguous := true
+		for i := 1; i < len(offsets); i++ {
+			expectedOffset := offsets[i-1] + store.FileOffset(size)
+			if offsets[i] != expectedOffset {
+				contiguous = false
+				break
+			}
+		}
 
-	// If not contiguous, fall back to regular persist
-	if !contiguous {
-		return t.Persist()
-	}
+		if !contiguous {
+			// This batch isn't contiguous, fall back
+			return t.Persist()
+		}
 
-	objIdsForWrite := make([]store.ObjectId, len(nodes))
-	sizes := make([]int, len(nodes))
-	allData := make([]byte, 0, size*len(nodes))
+		// Process this batch
+		batch := remaining[:len(objIds)]
+		for i, n := range batch {
+			n.SetObjectId(objIds[i])
+		}
 
-	for i, n := range nodes {
-		// Synchronize child object IDs before marshaling so parent references are current.
-		if n.TreapNode.left != nil {
-			if leftNode, ok := n.TreapNode.left.(PersistentTreapNodeInterface[K]); ok {
-				childId, childErr := leftNode.ObjectId()
-				if childErr != nil {
-					return childErr
+		// Prepare batch data for writing
+		objIdsForWrite := make([]store.ObjectId, len(batch))
+		sizes := make([]int, len(batch))
+		batchData := make([]byte, 0, size*len(batch))
+
+		for i, n := range batch {
+			// Synchronize child object IDs before marshaling
+			if n.TreapNode.left != nil {
+				if leftNode, ok := n.TreapNode.left.(PersistentTreapNodeInterface[K]); ok {
+					childId, childErr := leftNode.ObjectId()
+					if childErr != nil {
+						return childErr
+					}
+					n.leftObjectId = childId
 				}
-				n.leftObjectId = childId
 			}
-		}
-		if n.TreapNode.right != nil {
-			if rightNode, ok := n.TreapNode.right.(PersistentTreapNodeInterface[K]); ok {
-				childId, childErr := rightNode.ObjectId()
-				if childErr != nil {
-					return childErr
+			if n.TreapNode.right != nil {
+				if rightNode, ok := n.TreapNode.right.(PersistentTreapNodeInterface[K]); ok {
+					childId, childErr := rightNode.ObjectId()
+					if childErr != nil {
+						return childErr
+					}
+					n.rightObjectId = childId
 				}
-				n.rightObjectId = childId
+			}
+
+			data, marshalErr := n.Marshal()
+			if marshalErr != nil {
+				return marshalErr
+			}
+			objId, idErr := n.ObjectId()
+			if idErr != nil {
+				return idErr
+			}
+			objIdsForWrite[i] = objId
+			sizes[i] = len(data)
+			batchData = append(batchData, data...)
+		}
+
+		// Write this batch
+		if err := t.Store.WriteBatchedObjs(objIdsForWrite, batchData, sizes); err != nil {
+			// Fallback to per-node writes for this batch
+			for i, objId := range objIdsForWrite {
+				start := i * size
+				end := start + sizes[i]
+				if end > len(batchData) {
+					return fmt.Errorf("batched buffer bounds error")
+				}
+				if writeErr := store.WriteBytesToObj(t.Store, batchData[start:end], objId); writeErr != nil {
+					return writeErr
+				}
 			}
 		}
 
-		data, marshalErr := n.Marshal()
-		if marshalErr != nil {
-			return marshalErr
-		}
-		objId, idErr := n.ObjectId()
-		if idErr != nil {
-			return idErr
-		}
-		objIdsForWrite[i] = objId
-		sizes[i] = len(data)
-		allData = append(allData, data...)
-	}
-
-	if err := t.Store.WriteBatchedObjs(objIdsForWrite, allData, sizes); err != nil {
-		// Fallback to per-node writes for robustness
-		for i, objId := range objIdsForWrite {
-			start := i * size
-			end := start + sizes[i]
-			if end > len(allData) {
-				return fmt.Errorf("batched buffer bounds error")
-			}
-			if writeErr := store.WriteBytesToObj(t.Store, allData[start:end], objId); writeErr != nil {
-				return writeErr
-			}
-		}
+		// Move to next batch
+		remaining = remaining[len(objIds):]
 	}
 
 	return nil
