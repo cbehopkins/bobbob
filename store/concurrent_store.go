@@ -157,7 +157,7 @@ func (s *concurrentStore) WriteBatchedObjs(objIds []ObjectId, data []byte, sizes
 		sortedIndices[i] = i
 	}
 	// Sort indices by their corresponding ObjectId values
-	for i := 0; i < len(sortedIndices); i++ {
+	for i := range sortedIndices {
 		for j := i + 1; j < len(sortedIndices); j++ {
 			if objIds[sortedIndices[i]] > objIds[sortedIndices[j]] {
 				sortedIndices[i], sortedIndices[j] = sortedIndices[j], sortedIndices[i]

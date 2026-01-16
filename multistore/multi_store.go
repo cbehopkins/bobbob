@@ -29,11 +29,78 @@ import (
 	"errors"
 	"io"
 	"os"
+	"sync"
 
 	"github.com/cbehopkins/bobbob/store"
 	"github.com/cbehopkins/bobbob/store/allocator"
 	"github.com/cbehopkins/bobbob/yggdrasil/treap"
 )
+
+type deleteQueue struct {
+	q       chan store.ObjectId
+	wg      sync.WaitGroup
+	closed  sync.Once
+	flushCh chan chan struct{} // For flush synchronization
+}
+
+func newDeleteQueue(bufferSize int, delCallback func(store.ObjectId)) *deleteQueue {
+	dq := &deleteQueue{
+		q:       make(chan store.ObjectId, bufferSize),
+		flushCh: make(chan chan struct{}),
+	}
+	dq.wg.Add(1)
+	go dq.worker(delCallback)
+	return dq
+}
+
+func (dq *deleteQueue) worker(delCallback func(store.ObjectId)) {
+	defer dq.wg.Done()
+	for {
+		select {
+		case objId, ok := <-dq.q:
+			if !ok {
+				// Channel closed, exit
+				return
+			}
+			delCallback(objId)
+		case done := <-dq.flushCh:
+			// Drain all pending items before signaling flush complete
+			for {
+				select {
+				case objId, ok := <-dq.q:
+					if !ok {
+						// Channel closed during flush
+						close(done)
+						return
+					}
+					delCallback(objId)
+				default:
+					// Queue is empty, flush complete
+					close(done)
+					goto continueMainLoop
+				}
+			}
+		continueMainLoop:
+		}
+	}
+}
+
+func (dq *deleteQueue) Enqueue(objId store.ObjectId) {
+	dq.q <- objId
+}
+
+func (dq *deleteQueue) Close() {
+	dq.closed.Do(func() {
+		close(dq.q)
+		dq.wg.Wait()
+	})
+}
+
+func (dq *deleteQueue) Flush() {
+	done := make(chan struct{})
+	dq.flushCh <- done
+	<-done
+}
 
 // multiStore implements a store with multiple allocators for different object sizes.
 // It uses a root allocator and a block allocator optimized for persistent treap nodes.
@@ -42,6 +109,7 @@ type multiStore struct {
 	file         *os.File
 	allocators   []allocator.Allocator
 	tokenManager *store.DiskTokenManager // nil for unlimited, otherwise limits concurrent disk ops
+	deleteQueue  *deleteQueue
 }
 
 // NewMultiStore creates a new multiStore at the given file path.
@@ -95,6 +163,7 @@ func NewMultiStore(filePath string, maxDiskTokens int) (*multiStore, error) {
 		allocators:   []allocator.Allocator{rootAllocator, omniAllocator},
 		tokenManager: store.NewDiskTokenManager(maxDiskTokens),
 	}
+	ms.deleteQueue = newDeleteQueue(1024, ms.deleteObj)
 	return ms, nil
 }
 
@@ -134,6 +203,7 @@ func LoadMultiStore(filePath string, maxDiskTokens int) (*multiStore, error) {
 		allocators:   []allocator.Allocator{rootAllocator, omniAllocator},
 		tokenManager: store.NewDiskTokenManager(maxDiskTokens),
 	}
+	ms.deleteQueue = newDeleteQueue(1024, ms.deleteObj)
 
 	return ms, nil
 }
@@ -287,6 +357,9 @@ func readInt32(buf []byte, offset int) (int, int) {
 //   - omniAllocator marshaled state
 //   - rootAllocator marshaled state
 func (s *multiStore) Close() error {
+	if s.deleteQueue != nil {
+		s.deleteQueue.Close()
+	}
 	if s.file == nil {
 		return nil
 	}
@@ -434,19 +507,22 @@ func (s *multiStore) DeleteObj(objId store.ObjectId) error {
 	if !store.IsValidObjectId(objId) {
 		return nil
 	}
-
-	// Retrieve object info from allocator
-	objectInfo, err := s.getObjectInfo(objId)
-	if err != nil {
-		return nil // Object not found, nothing to delete
-	}
-
-	// Free the space in the allocator
-	if err := s.allocators[1].Free(objectInfo.Offset, objectInfo.Size); err != nil {
-		// Log error but continue
-		_ = err
-	}
+	s.deleteQueue.Enqueue(objId)
 	return nil
+}
+
+// flushDeletes waits for all pending deletions to complete.
+// This is primarily useful for testing.
+func (s *multiStore) flushDeletes() {
+	if s.deleteQueue != nil {
+		s.deleteQueue.Flush()
+	}
+}
+func (s *multiStore) deleteObj(objId store.ObjectId) {
+	// Retrieve object info from allocator
+	// err means not found == nothing to delete
+	objectInfo, _ := s.getObjectInfo(objId)
+	_ = s.allocators[1].Free(objectInfo.Offset, objectInfo.Size)
 }
 
 // PrimeObject returns a dedicated ObjectId for application metadata.

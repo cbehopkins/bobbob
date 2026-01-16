@@ -380,6 +380,8 @@ func TestMultiStoreSpaceReuse(t *testing.T) {
 				t.Fatalf("Cycle %d: Failed to delete object %d: %v", cycle, i, err)
 			}
 		}
+		// Wait for async deletions to complete before next cycle
+		ms.flushDeletes()
 	}
 
 	// Check final file size - it shouldn't have grown much if reuse is working
@@ -599,6 +601,7 @@ func TestMultiStorePersistenceAcrossSessionsWithMixedOps(t *testing.T) {
 		if err := ms.DeleteObj(obj2); err != nil {
 			t.Fatalf("Session 2: Failed to delete: %v", err)
 		}
+		ms.flushDeletes() // Wait for async deletion
 		t.Logf("Session 2: Deleted obj2, checking if it's gone...")
 
 		// Verify it's gone immediately

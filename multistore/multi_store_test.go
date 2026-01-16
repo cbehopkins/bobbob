@@ -57,6 +57,9 @@ func TestMultiStoreDeleteObjFreesAllocation(t *testing.T) {
 		t.Fatalf("Failed to delete object: %v", err)
 	}
 
+	// Wait for async deletion to complete
+	ms.flushDeletes()
+
 	// Verify the object is no longer in the allocator
 	_, found = ms.GetObjectInfo(objId)
 	if found {
@@ -113,6 +116,9 @@ func TestMultiStoreAllocateAndDelete(t *testing.T) {
 			t.Fatalf("Failed to delete object %d: %v", i, err)
 		}
 	}
+
+	// Wait for async deletions to complete
+	ms.flushDeletes()
 
 	// Verify deleted objects are gone
 	for i := 0; i < numObjects/2; i++ {
@@ -175,6 +181,9 @@ func TestMultiStoreDeleteAddsToFreeList(t *testing.T) {
 		t.Fatalf("Failed to delete first object: %v", err)
 	}
 	t.Logf("Deleted first object")
+
+	// Wait for async deletion to complete
+	ms.flushDeletes()
 
 	// Verify it's gone from the allocator
 	_, found = ms.GetObjectInfo(objId1)
