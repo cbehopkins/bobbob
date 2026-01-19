@@ -3,6 +3,7 @@ package vault
 import (
 	"fmt"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -34,10 +35,9 @@ func TestAutoBackgroundMonitoringEnabledByDefault(t *testing.T) {
 		t.Fatalf("unexpected collection type: %T", colls["testColl"])
 	}
 
-	shouldFlushCalls := 0
-	onFlushCalls := 0
-	shouldFlushDebug := func(stats MemoryStats, shouldFlush bool) { shouldFlushCalls++ }
-	onFlushDebug := func(stats MemoryStats, flushed int) { onFlushCalls++ }
+	var shouldFlushCalls, onFlushCalls int32
+	shouldFlushDebug := func(stats MemoryStats, shouldFlush bool) { atomic.AddInt32(&shouldFlushCalls, 1) }
+	onFlushDebug := func(stats MemoryStats, flushed int) { atomic.AddInt32(&onFlushCalls, 1) }
 
 	// Set memory budget; background monitoring should auto-start by default
 	session.Vault.SetMemoryBudgetWithPercentileWithCallbacks(50, 50, shouldFlushDebug, onFlushDebug)
@@ -53,10 +53,10 @@ func TestAutoBackgroundMonitoringEnabledByDefault(t *testing.T) {
 	// Allow background checks to run
 	time.Sleep(500 * time.Millisecond)
 
-	if shouldFlushCalls == 0 {
+	if atomic.LoadInt32(&shouldFlushCalls) == 0 {
 		t.Error("expected auto background monitoring to invoke shouldFlushDebug")
 	}
-	if onFlushCalls == 0 {
+	if atomic.LoadInt32(&onFlushCalls) == 0 {
 		t.Error("expected auto background monitoring to invoke onFlushDebug")
 	}
 }

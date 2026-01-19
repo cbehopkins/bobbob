@@ -1249,6 +1249,8 @@ type NodeInfo[T any] struct {
 // Returns a slice of NodeInfo containing each node and its last access time.
 func (t *PersistentTreap[T]) GetInMemoryNodes() []NodeInfo[T] {
 	var nodes []NodeInfo[T]
+	t.mu.RLock()
+	defer t.mu.RUnlock()
 	t.collectInMemoryNodes(t.root, &nodes)
 	return nodes
 }
@@ -1256,6 +1258,8 @@ func (t *PersistentTreap[T]) GetInMemoryNodes() []NodeInfo[T] {
 // CountInMemoryNodes returns the count of nodes currently loaded in memory.
 // This is more efficient than len(GetInMemoryNodes()) as it doesn't allocate the slice.
 func (t *PersistentTreap[T]) CountInMemoryNodes() int {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
 	return t.countInMemoryNodes(t.root)
 }
 

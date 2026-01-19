@@ -17,6 +17,50 @@ type allocatorRef struct {
 	synced  bool
 	// File handle for direct I/O operations
 	file *os.File
+	// Metadata for lazy loading (set during UnmarshalMultiple)
+	blockSize  int // blockSize of the allocator (needed for lazy load)
+	blockCount int // blockCount of the allocator (needed for lazy load)
+}
+
+// ensureLoaded lazily loads the allocator from disk if it hasn't been loaded yet.
+// This is called transparently when accessing the allocator.
+func (r *allocatorRef) ensureLoaded() error {
+	if r.allocator != nil {
+		return nil // Already loaded
+	}
+	if r.fileOff < 1 {
+		return errors.New("allocatorRef not persisted")
+	}
+	if r.file == nil {
+		return errors.New("no file handle for lazy load")
+	}
+
+	// Calculate size and read from disk
+	bitCount := (r.blockCount + 7) / 8
+	allocatorDataSize := 8 + bitCount + 2*r.blockCount
+	allocData := make([]byte, allocatorDataSize)
+
+	n, err := r.file.ReadAt(allocData, int64(r.fileOff))
+	if err != nil {
+		return err
+	}
+	if n != allocatorDataSize {
+		return errors.New("incomplete read from file")
+	}
+
+	// Unmarshal the block allocator
+	allocator := &blockAllocator{
+		blockSize:      r.blockSize,
+		blockCount:     r.blockCount,
+		allocatedList:  make([]bool, r.blockCount),
+		requestedSizes: make([]int, r.blockCount),
+	}
+	if err := allocator.Unmarshal(allocData); err != nil {
+		return err
+	}
+
+	r.allocator = allocator
+	return nil
 }
 
 // sizeInBytes returns the number of bytes required to marshal this allocatorRef.
@@ -28,14 +72,23 @@ func (r *allocatorRef) sizeInBytes(blockCount int) int {
 
 // Delegation methods for allocatorRef to blockAllocator methods
 func (r *allocatorRef) Allocate(size int) (ObjectId, FileOffset, error) {
+	if err := r.ensureLoaded(); err != nil {
+		return 0, 0, err
+	}
 	return r.allocator.Allocate(size)
 }
 
 func (r *allocatorRef) AllocateRun(size int, count int) ([]ObjectId, []FileOffset, error) {
+	if err := r.ensureLoaded(); err != nil {
+		return nil, nil, err
+	}
 	return r.allocator.AllocateRun(size, count)
 }
 
 func (r *allocatorRef) Free(fileOffset FileOffset, size int) error {
+	if err := r.ensureLoaded(); err != nil {
+		return err
+	}
 	return r.allocator.Free(fileOffset, size)
 }
 
@@ -43,14 +96,23 @@ func (r *allocatorRef) ContainsObjectId(objId ObjectId) bool {
 	if r == nil {
 		return false
 	}
+	if err := r.ensureLoaded(); err != nil {
+		return false
+	}
 	return r.allocator.ContainsObjectId(objId)
 }
 
 func (r *allocatorRef) GetFileOffset(objId ObjectId) (FileOffset, error) {
+	if err := r.ensureLoaded(); err != nil {
+		return 0, err
+	}
 	return r.allocator.GetFileOffset(objId)
 }
 
 func (r *allocatorRef) Marshal() ([]byte, error) {
+	if err := r.ensureLoaded(); err != nil {
+		return nil, err
+	}
 	return r.allocator.Marshal()
 }
 
@@ -62,6 +124,11 @@ func (r *allocatorRef) GetObjectInfo(objId ObjectId, blockSize int) (FileOffset,
 	}
 	if !r.ContainsObjectId(objId) {
 		return 0, 0, errors.New("ObjectId not in allocator range")
+	}
+
+	// Ensure allocator is loaded before accessing it
+	if err := r.ensureLoaded(); err != nil {
+		return 0, 0, err
 	}
 
 	realOff, allocErr := r.allocator.GetFileOffset(objId)
@@ -217,25 +284,17 @@ func (p *allocatorPool) populateObjIds(objIds []ObjectId) error {
 	return nil
 }
 
-// MarshalMultiple serializes all allocatorRefs in the pool for persistence.
-// Each allocatorRef is written to its assigned fileOff location.
-// The identity object contains a lookup table: [availCount:4][fullCount:4][fileOff1:8][fileOff2:8]...
-// Returns an identity function (returning the first objId for the LUT),
-// the list of objects to write, and any error.
-
-func (p *allocatorPool) MarshalMultiple(objIds []ObjectId) (func() ObjectId, []ObjectAndByteFunc, error) {
-	if len(objIds) == 0 {
-		return nil, nil, errors.New("no ObjectIds allocated")
-	}
-
-	// First ObjectId is reserved for LUT; remaining for allocatorRefs
-	allocIds := objIds[1:]
-	if err := p.populateObjIds(allocIds); err != nil {
-		return nil, nil, err
-	}
+// buildLookupTable constructs the serialized lookup table containing counts and fileOffsets
+// for all allocators. Returns the LUT bytes and a slice of all allocatorRefs.
+// Assumes all refs have been populated with valid fileOff values.
+func (p *allocatorPool) buildLookupTable() ([]byte, []*allocatorRef, error) {
+	// Collect all allocatorRefs
+	allRefs := make([]*allocatorRef, 0, len(p.available)+len(p.full))
+	allRefs = append(allRefs, p.available...)
+	allRefs = append(allRefs, p.full...)
 
 	// Build the lookup table: [availCount:4][fullCount:4][fileOff1:8][fileOff2:8]...
-	lutSize := 8 + (len(p.available)+len(p.full))*8
+	lutSize := 8 + len(allRefs)*8
 	lut := make([]byte, lutSize)
 	offset := 0
 
@@ -254,11 +313,7 @@ func (p *allocatorPool) MarshalMultiple(objIds []ObjectId) (func() ObjectId, []O
 	lut[offset+3] = byte(fullCount)
 	offset += 4
 
-	// Collect all allocatorRefs and write their fileOffsets to LUT
-	allRefs := make([]*allocatorRef, 0, len(p.available)+len(p.full))
-	allRefs = append(allRefs, p.available...)
-	allRefs = append(allRefs, p.full...)
-
+	// Write fileOffsets for all allocatorRefs
 	for _, ref := range allRefs {
 		if ref.fileOff < 1 {
 			return nil, nil, internal.ErrRePreAllocate
@@ -276,6 +331,61 @@ func (p *allocatorPool) MarshalMultiple(objIds []ObjectId) (func() ObjectId, []O
 		offset += 8
 	}
 
+	return lut, allRefs, nil
+}
+
+// prepareAllocatorWrites creates a list of ObjectAndByteFunc for writing unsynced allocators.
+// This list is ready to be passed to the store's batch write mechanism or a background worker.
+// Allocators are marked as synced after their marshal closure executes successfully.
+func (p *allocatorPool) prepareAllocatorWrites(allRefs []*allocatorRef) []ObjectAndByteFunc {
+	objectAndByteFuncs := make([]ObjectAndByteFunc, 0, len(allRefs))
+
+	for _, ref := range allRefs {
+		if ref.synced {
+			// Skip any entries that have already been written
+			continue
+		}
+		// Capture ref in local variable for closure
+		localRef := ref
+		objectAndByteFuncs = append(objectAndByteFuncs, ObjectAndByteFunc{
+			ObjectId: ObjectId(localRef.fileOff),
+			ByteFunc: func() ([]byte, error) {
+				data, err := localRef.Marshal()
+				if err == nil {
+					// Mark as synced after successful marshal
+					localRef.synced = true
+				}
+				return data, err
+			},
+		})
+	}
+
+	return objectAndByteFuncs
+}
+
+// MarshalMultiple serializes all allocatorRefs in the pool for persistence.
+// Each allocatorRef is written to its assigned fileOff location.
+// The identity object contains a lookup table: [availCount:4][fullCount:4][fileOff1:8][fileOff2:8]...
+// Returns an identity function (returning the first objId for the LUT),
+// the list of objects to write, and any error.
+
+func (p *allocatorPool) MarshalMultiple(objIds []ObjectId) (func() ObjectId, []ObjectAndByteFunc, error) {
+	if len(objIds) == 0 {
+		return nil, nil, errors.New("no ObjectIds allocated")
+	}
+
+	// First ObjectId is reserved for LUT; remaining for allocatorRefs
+	allocIds := objIds[1:]
+	if err := p.populateObjIds(allocIds); err != nil {
+		return nil, nil, err
+	}
+
+	// Build lookup table
+	lut, allRefs, err := p.buildLookupTable()
+	if err != nil {
+		return nil, nil, err
+	}
+
 	// The first objId is for the LUT itself
 	lutObjId := objIds[0]
 
@@ -290,25 +400,9 @@ func (p *allocatorPool) MarshalMultiple(objIds []ObjectId) (func() ObjectId, []O
 		ByteFunc: func() ([]byte, error) { return lutCopy, nil },
 	})
 
-	// Then write each allocatorRef
-	for _, ref := range allRefs {
-		localRef := ref
-		if localRef.synced {
-			// Skip any entries that have already been written
-			continue
-		}
-		objectAndByteFuncs = append(objectAndByteFuncs, ObjectAndByteFunc{
-			ObjectId: ObjectId(localRef.fileOff),
-			ByteFunc: func() ([]byte, error) {
-				data, err := localRef.Marshal()
-				if err == nil {
-					// Mark as synced after successful marshal
-					localRef.synced = true
-				}
-				return data, err
-			},
-		})
-	}
+	// Then prepare writes for unsynced allocators
+	allocatorWrites := p.prepareAllocatorWrites(allRefs)
+	objectAndByteFuncs = append(objectAndByteFuncs, allocatorWrites...)
 
 	// Identity function returns the LUT ObjectId
 	return func() ObjectId { return lutObjId }, objectAndByteFuncs, nil
@@ -337,19 +431,11 @@ func (p *allocatorPool) Delete() error {
 	return nil
 }
 
-// UnmarshalMultiple deserializes allocatorRefs from the store and populates the pool.
+// UnmarshalMultiple deserializes allocatorRefs from the store and populates the pool lazily.
 // The objData reader contains a lookup table: [availCount:4][fullCount:4][fileOff1:8][fileOff2:8]...
-// The objReader parameter should implement LateReadObj to fetch each allocatorRef's data.
+// Individual block allocators are NOT loaded into memory. Instead, metadata is stored and
+// allocators are loaded on-demand when first accessed via ensureLoaded().
 func (p *allocatorPool) UnmarshalMultiple(objData io.Reader, objReader any) error {
-	type objReaderInterface interface {
-		LateReadObj(ObjectId) (io.Reader, func() error, error)
-	}
-
-	reader, ok := objReader.(objReaderInterface)
-	if !ok {
-		return errors.New("objReader does not implement required interface")
-	}
-
 	// Read the LUT header: [availCount:4][fullCount:4]
 	header := make([]byte, 8)
 	if _, err := io.ReadFull(objData, header); err != nil {
@@ -374,75 +460,31 @@ func (p *allocatorPool) UnmarshalMultiple(objData io.Reader, objReader any) erro
 		fileOffsets[i] = FileOffset(fileOff)
 	}
 
-	// Unmarshal available allocators
+	// Create available allocatorRefs with lazy-load metadata (don't load allocators yet)
 	p.available = make(allocatorSlice, availCount)
 	for i := range availCount {
 		fileOff := fileOffsets[i]
-
-		// Read the allocator data from the store
-		allocReader, finisher, err := reader.LateReadObj(ObjectId(fileOff))
-		if err != nil {
-			return err
-		}
-
-		allocData, err := io.ReadAll(allocReader)
-		finisher()
-		if err != nil {
-			return err
-		}
-
-		// Unmarshal the block allocator
-		allocator := &blockAllocator{
-			blockSize:      p.blockSize,
-			blockCount:     p.blockCount,
-			allocatedList:  make([]bool, p.blockCount),
-			requestedSizes: make([]int, p.blockCount),
-		}
-		if err := allocator.Unmarshal(allocData); err != nil {
-			return err
-		}
-
 		p.available[i] = &allocatorRef{
-			allocator: allocator,
-			fileOff:   fileOff,
-			file:      p.file,
-			synced:    true,
+			allocator:  nil, // Lazy load on first access
+			fileOff:    fileOff,
+			file:       p.file,
+			synced:     true,
+			blockSize:  p.blockSize,
+			blockCount: p.blockCount,
 		}
 	}
 
-	// Unmarshal full allocators
+	// Create full allocatorRefs with lazy-load metadata (don't load allocators yet)
 	p.full = make(allocatorSlice, fullCount)
 	for i := range fullCount {
 		fileOff := fileOffsets[availCount+i]
-
-		// Read the allocator data from the store
-		allocReader, finisher, err := reader.LateReadObj(ObjectId(fileOff))
-		if err != nil {
-			return err
-		}
-
-		allocData, err := io.ReadAll(allocReader)
-		finisher()
-		if err != nil {
-			return err
-		}
-
-		// Unmarshal the block allocator
-		allocator := &blockAllocator{
-			blockSize:      p.blockSize,
-			blockCount:     p.blockCount,
-			allocatedList:  make([]bool, p.blockCount),
-			requestedSizes: make([]int, p.blockCount),
-		}
-		if err := allocator.Unmarshal(allocData); err != nil {
-			return err
-		}
-
 		p.full[i] = &allocatorRef{
-			allocator: allocator,
-			fileOff:   fileOff,
-			file:      p.file,
-			synced:    true,
+			allocator:  nil, // Lazy load on first access
+			fileOff:    fileOff,
+			file:       p.file,
+			synced:     true,
+			blockSize:  p.blockSize,
+			blockCount: p.blockCount,
 		}
 	}
 
@@ -467,12 +509,12 @@ type allocatorPool struct {
 // ContainsObjectId checks if any allocator in this pool owns the given ObjectId.
 func (p *allocatorPool) ContainsObjectId(objId ObjectId) bool {
 	for _, ref := range p.available {
-		if ref != nil && ref.allocator != nil && ref.allocator.ContainsObjectId(objId) {
+		if ref != nil && ref.ContainsObjectId(objId) {
 			return true
 		}
 	}
 	for _, ref := range p.full {
-		if ref != nil && ref.allocator != nil && ref.allocator.ContainsObjectId(objId) {
+		if ref != nil && ref.ContainsObjectId(objId) {
 			return true
 		}
 	}
@@ -530,7 +572,8 @@ func (p *allocatorPool) Unmarshal(data []byte, blockCount int) (int, error) {
 	}
 	offset += fullBytes
 
-	// Set blockSize on all unmarshaled allocators
+	// No need to set blockSize on unmarshaled allocators - they'll have it when lazy-loaded
+	// But if any were already loaded (shouldn't happen), ensure blockSize is set
 	for _, ref := range p.available {
 		if ref != nil && ref.allocator != nil {
 			ref.allocator.blockSize = p.blockSize
@@ -552,8 +595,11 @@ func (p *allocatorPool) Unmarshal(data []byte, blockCount int) (int, error) {
 func (p *allocatorPool) freeFromPool(fileOffset FileOffset, blockSize int, postFree func(FileOffset, int) error) error {
 	// Check available allocators first
 	for _, ref := range p.available {
-		if ref == nil || ref.allocator == nil {
+		if ref == nil {
 			continue
+		}
+		if err := ref.ensureLoaded(); err != nil {
+			continue // Skip allocators that can't be loaded
 		}
 		allocator := ref.allocator
 		if fileOffset < allocator.startingFileOffset || fileOffset >= allocator.startingFileOffset+FileOffset(allocator.blockCount*allocator.blockSize) {
@@ -577,8 +623,11 @@ func (p *allocatorPool) freeFromPool(fileOffset FileOffset, blockSize int, postF
 
 	// Then check allocators previously marked full; once a slot is freed, move it back to available
 	for i, ref := range p.full {
-		if ref == nil || ref.allocator == nil {
+		if ref == nil {
 			continue
+		}
+		if err := ref.ensureLoaded(); err != nil {
+			continue // Skip allocators that can't be loaded
 		}
 		allocator := ref.allocator
 		if fileOffset < allocator.startingFileOffset || fileOffset >= allocator.startingFileOffset+FileOffset(allocator.blockCount*allocator.blockSize) {
@@ -629,8 +678,10 @@ func (p *allocatorPool) Allocate() (ObjectId, FileOffset, *allocatorRef, error) 
 	// Try available allocators first
 	for len(p.available) > 0 {
 		ref := p.available[0]
-		allocator := ref.allocator
-		id, offset, err := allocator.Allocate(p.blockSize)
+		if err := ref.ensureLoaded(); err != nil {
+			return 0, 0, nil, err
+		}
+		id, offset, err := ref.allocator.Allocate(p.blockSize)
 		if errors.Is(err, AllAllocated) {
 			// Move to full list
 			p.full = append(p.full, ref)
@@ -671,20 +722,26 @@ func (p *allocatorPool) Allocate() (ObjectId, FileOffset, *allocatorRef, error) 
 func (p *allocatorPool) SetRequestedSize(objId ObjectId, size int) {
 	// Check available allocators
 	for _, ref := range p.available {
-		if ref.allocator.ContainsObjectId(objId) {
-			ref.allocator.setRequestedSize(objId, size)
-			// Mark as unsynced since allocator state changed
-			ref.synced = false
+		if ref.ContainsObjectId(objId) {
+			// Ensure it's loaded and then set the requested size
+			if err := ref.ensureLoaded(); err == nil {
+				ref.allocator.setRequestedSize(objId, size)
+				// Mark as unsynced since allocator state changed
+				ref.synced = false
+			}
 			return
 		}
 	}
 
 	// Check full allocators
 	for _, ref := range p.full {
-		if ref.allocator.ContainsObjectId(objId) {
-			ref.allocator.setRequestedSize(objId, size)
-			// Mark as unsynced since allocator state changed
-			ref.synced = false
+		if ref.ContainsObjectId(objId) {
+			// Ensure it's loaded and then set the requested size
+			if err := ref.ensureLoaded(); err == nil {
+				ref.allocator.setRequestedSize(objId, size)
+				// Mark as unsynced since allocator state changed
+				ref.synced = false
+			}
 			return
 		}
 	}
@@ -701,6 +758,9 @@ func (p *allocatorPool) AllocateRun(requestCount int) ([]ObjectId, []FileOffset,
 	// Try available allocators - they now return partial results
 	for i := 0; i < len(p.available); {
 		ref := p.available[i]
+		if err := ref.ensureLoaded(); err != nil {
+			return nil, nil, nil, err
+		}
 		allocator := ref.allocator
 		objIds, offsets, err := allocator.AllocateRun(p.blockSize, requestCount)
 		if err != nil && err.Error() != "size must match block size" && err.Error() != "count must be positive" {

@@ -118,6 +118,9 @@ type MemoryMonitor struct {
 
 	// operationCount tracks operations since last check
 	operationCount int
+
+	// mu protects operationCount from concurrent access
+	mu sync.Mutex
 }
 
 // Vault is the top-level abstraction for working with multiple collections
@@ -720,7 +723,9 @@ func (v *Vault) GetMemoryStats() MemoryStats {
 	}
 
 	if v.memoryMonitor != nil {
+		v.memoryMonitor.mu.Lock()
 		stats.OperationsSinceLastFlush = v.memoryMonitor.operationCount
+		v.memoryMonitor.mu.Unlock()
 	}
 
 	// Calculate memory breakdown
@@ -857,9 +862,12 @@ func (v *Vault) checkMemoryAndFlush() error {
 		return nil
 	}
 
+	v.memoryMonitor.mu.Lock()
 	v.memoryMonitor.operationCount++
+	count := v.memoryMonitor.operationCount
+	v.memoryMonitor.mu.Unlock()
 
-	if v.memoryMonitor.operationCount < v.memoryMonitor.CheckInterval {
+	if count < v.memoryMonitor.CheckInterval {
 		return nil
 	}
 
@@ -922,7 +930,9 @@ func (v *Vault) backgroundMemoryMonitor() {
 						// Log error but continue monitoring
 						_ = err
 					}
+					v.memoryMonitor.mu.Lock()
 					v.memoryMonitor.operationCount = 0
+					v.memoryMonitor.mu.Unlock()
 				}
 			}()
 		}

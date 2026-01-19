@@ -3,6 +3,7 @@ package vault
 import (
 	"fmt"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -175,13 +176,12 @@ func TestBackgroundMemoryMonitoring(t *testing.T) {
 		t.Fatalf("unexpected collection type: %T", colls["testColl"])
 	}
 
-	shouldFlushCalls := 0
-	onFlushCalls := 0
+	var shouldFlushCalls, onFlushCalls int32
 	shouldFlushDebug := func(stats MemoryStats, shouldFlush bool) {
-		shouldFlushCalls++
+		atomic.AddInt32(&shouldFlushCalls, 1)
 	}
 	onFlushDebug := func(stats MemoryStats, flushed int) {
-		onFlushCalls++
+		atomic.AddInt32(&onFlushCalls, 1)
 		t.Logf("Background flush: %d nodes flushed", flushed)
 	}
 
@@ -206,16 +206,16 @@ func TestBackgroundMemoryMonitoring(t *testing.T) {
 	time.Sleep(500 * time.Millisecond)
 
 	t.Logf("Inserted %d items with max budget of 50 nodes (automatic background monitoring)", numInserts)
-	t.Logf("shouldFlushDebug called: %d times", shouldFlushCalls)
-	t.Logf("onFlushDebug called: %d times", onFlushCalls)
+	t.Logf("shouldFlushDebug called: %d times", atomic.LoadInt32(&shouldFlushCalls))
+	t.Logf("onFlushDebug called: %d times", atomic.LoadInt32(&onFlushCalls))
 
 	// Verify the background goroutine was active and flushing
 	// Since we inserted 500 items with a 50-node budget and the background goroutine
 	// checks every 100ms, we should definitely see some flush callbacks
-	if shouldFlushCalls == 0 {
+	if atomic.LoadInt32(&shouldFlushCalls) == 0 {
 		t.Error("expected background goroutine to invoke shouldFlushDebug, but it was never called")
 	}
-	if onFlushCalls == 0 {
+	if atomic.LoadInt32(&onFlushCalls) == 0 {
 		t.Error("expected background goroutine to invoke onFlushDebug, but it was never called")
 	}
 

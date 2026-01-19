@@ -189,8 +189,7 @@ func (n *PersistentPayloadTreapNode[K, P]) IsObjectIdInvalid() bool {
 // PersistentPayloadTreap represents a persistent treap with payloads.
 type PersistentPayloadTreap[K any, P types.PersistentPayload[P]] struct {
 	PersistentTreap[K]
-	mu          sync.RWMutex // Protects concurrent access to the treap
-	payloadPool sync.Pool    // Pool for *PersistentPayloadTreapNode[K,P]
+	payloadPool sync.Pool // Pool for *PersistentPayloadTreapNode[K,P]
 }
 
 // NewPersistentPayloadTreapNode creates a new PersistentPayloadTreapNode with the given key, priority, and payload.
@@ -294,8 +293,8 @@ func (t *PersistentPayloadTreap[K, P]) insert(node TreapNodeInterface[K], newNod
 // Use this method when you need to specify a custom priority value.
 // If a key already exists, this will update its payload instead of creating a duplicate.
 func (t *PersistentPayloadTreap[K, P]) InsertComplex(key types.PersistentKey[K], priority Priority, payload P) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
+	t.PersistentTreap.mu.Lock()
+	defer t.PersistentTreap.mu.Unlock()
 	newNode := NewPersistentPayloadTreapNode(key, priority, payload, t.Store, t)
 	var tmp TreapNodeInterface[K]
 	tmp = t.insert(t.root, newNode)
@@ -314,8 +313,8 @@ func (t *PersistentPayloadTreap[K, P]) Insert(key types.PersistentKey[K], payloa
 	} else {
 		priority = randomPriority()
 	}
-	t.mu.Lock()
-	defer t.mu.Unlock()
+	t.PersistentTreap.mu.Lock()
+	defer t.PersistentTreap.mu.Unlock()
 	newNode := NewPersistentPayloadTreapNode(key, priority, payload, t.Store, t)
 	var tmp TreapNodeInterface[K]
 	tmp = t.insert(t.root, newNode)
@@ -325,8 +324,8 @@ func (t *PersistentPayloadTreap[K, P]) Insert(key types.PersistentKey[K], payloa
 // Delete removes the node with the given key and frees any dependent objects
 // (key object and payload-owned objects) even when the subtree root becomes nil.
 func (t *PersistentPayloadTreap[K, P]) Delete(key types.PersistentKey[K]) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
+	t.PersistentTreap.mu.Lock()
+	defer t.PersistentTreap.mu.Unlock()
 
 	var target *PersistentPayloadTreapNode[K, P]
 	if found, _ := t.searchComplex(t.root, key.Value(), nil); found != nil {
@@ -377,8 +376,8 @@ func (t *PersistentPayloadTreap[K, P]) Load(objId store.ObjectId) error {
 // This method automatically updates the lastAccessTime on each accessed node.
 // The callback can return an error to abort the search.
 func (t *PersistentPayloadTreap[K, P]) SearchComplex(key types.PersistentKey[K], callback func(TreapNodeInterface[K]) error) (PersistentPayloadNodeInterface[K, P], error) {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
+	t.PersistentTreap.mu.RLock()
+	defer t.PersistentTreap.mu.RUnlock()
 	// Create a wrapper callback that updates the access time
 	wrappedCallback := func(node TreapNodeInterface[K]) error {
 		// Update the access time if this is a persistent node
@@ -409,8 +408,8 @@ func (t *PersistentPayloadTreap[K, P]) SearchComplex(key types.PersistentKey[K],
 // Search searches for the node with the given key in the persistent treap.
 // It calls SearchComplex with a nil callback.
 func (t *PersistentPayloadTreap[K, P]) Search(key types.PersistentKey[K]) PersistentPayloadNodeInterface[K, P] {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
+	t.PersistentTreap.mu.RLock()
+	defer t.PersistentTreap.mu.RUnlock()
 	// Create a wrapper callback that updates the access time
 	wrappedCallback := func(node TreapNodeInterface[K]) error {
 		// Update the access time if this is a persistent node
@@ -428,8 +427,8 @@ func (t *PersistentPayloadTreap[K, P]) Search(key types.PersistentKey[K]) Persis
 	return n
 } // UpdatePayload updates the payload of the node with the given key.
 func (t *PersistentPayloadTreap[K, P]) UpdatePayload(key types.PersistentKey[K], newPayload P) error {
-	t.mu.Lock()
-	defer t.mu.Unlock()
+	t.PersistentTreap.mu.Lock()
+	defer t.PersistentTreap.mu.Unlock()
 	// Create a wrapper callback that updates the access time
 	wrappedCallback := func(node TreapNodeInterface[K]) error {
 		// Update the access time if this is a persistent node
@@ -444,7 +443,7 @@ func (t *PersistentPayloadTreap[K, P]) UpdatePayload(key types.PersistentKey[K],
 		payloadNode, ok := node.(*PersistentPayloadTreapNode[K, P])
 		if ok {
 			payloadNode.SetPayload(newPayload)
-			return payloadNode.Persist()
+			return payloadNode.persist(false)
 		}
 	}
 	return nil
@@ -487,15 +486,15 @@ func (t *PersistentPayloadTreap[K, P]) Compare(
 	// Lock both treaps for reading in a consistent order to avoid deadlocks.
 	// Order is determined by the underlying PersistentTreap's data-driven comparison.
 	if t.PersistentTreap.shouldLockFirst(&other.PersistentTreap) {
-		t.mu.RLock()
-		defer t.mu.RUnlock()
-		other.mu.RLock()
-		defer other.mu.RUnlock()
+		t.PersistentTreap.mu.RLock()
+		defer t.PersistentTreap.mu.RUnlock()
+		other.PersistentTreap.mu.RLock()
+		defer other.PersistentTreap.mu.RUnlock()
 	} else {
-		other.mu.RLock()
-		defer other.mu.RUnlock()
-		t.mu.RLock()
-		defer t.mu.RUnlock()
+		other.PersistentTreap.mu.RLock()
+		defer other.PersistentTreap.mu.RUnlock()
+		t.PersistentTreap.mu.RLock()
+		defer t.PersistentTreap.mu.RUnlock()
 	}
 
 	return t.PersistentTreap.Treap.Compare(&other.PersistentTreap.Treap, onlyInA, inBoth, onlyInB)
@@ -507,7 +506,7 @@ func (t *PersistentPayloadTreap[K, P]) Persist() error {
 		if !ok {
 			return fmt.Errorf("root is not a PersistentPayloadTreapNode")
 		}
-		return rootNode.Persist()
+		return rootNode.persist(true)
 	}
 	return nil
 }
@@ -525,6 +524,8 @@ type PayloadNodeInfo[K any, P types.PersistentPayload[P]] struct {
 // Returns a slice of PayloadNodeInfo containing each node and its last access time.
 func (t *PersistentPayloadTreap[K, P]) GetInMemoryNodes() []PayloadNodeInfo[K, P] {
 	var nodes []PayloadNodeInfo[K, P]
+	t.mu.RLock()
+	defer t.mu.RUnlock()
 	t.collectInMemoryPayloadNodes(t.root, &nodes)
 	return nodes
 }
@@ -532,6 +533,8 @@ func (t *PersistentPayloadTreap[K, P]) GetInMemoryNodes() []PayloadNodeInfo[K, P
 // CountInMemoryNodes returns the count of nodes currently loaded in memory.
 // This is more efficient than len(GetInMemoryNodes()) as it doesn't allocate the slice.
 func (t *PersistentPayloadTreap[K, P]) CountInMemoryNodes() int {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
 	return t.countInMemoryPayloadNodes(t.root)
 }
 
@@ -717,7 +720,15 @@ func (k *PersistentPayloadTreapNode[K, P]) UnmarshalFromObjectId(id store.Object
 	return store.ReadGeneric(stre, k, id)
 }
 
-func (n *PersistentPayloadTreapNode[K, P]) Persist() error {
+// persist walks and writes the subtree rooted at this node.
+// If lockTree is true, it acquires the parent treap mutex; callers that
+// already hold the treap lock must pass lockTree=false to avoid deadlock.
+func (n *PersistentPayloadTreapNode[K, P]) persist(lockTree bool) error {
+	if lockTree && n.parent != nil {
+		n.parent.mu.Lock()
+		defer n.parent.mu.Unlock()
+	}
+
 	// Iterative post-order traversal to persist children before parent,
 	// avoiding deep recursion that can cause stack overflows.
 	type nodePtr = *PersistentPayloadTreapNode[K, P]
@@ -764,6 +775,11 @@ func (n *PersistentPayloadTreapNode[K, P]) Persist() error {
 	}
 
 	return nil
+}
+
+// Persist persists the subtree, acquiring the treap lock internally.
+func (n *PersistentPayloadTreapNode[K, P]) Persist() error {
+	return n.persist(true)
 }
 
 func (n *PersistentPayloadTreapNode[K, P]) sizeInBytes() int {
