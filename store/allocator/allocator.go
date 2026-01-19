@@ -336,8 +336,13 @@ func (a *BasicAllocator) Free(fileOffset FileOffset, size int) error {
 // GetObjectInfo returns the FileOffset and Size for an allocated ObjectId.
 // Returns an error if the ObjectId is not allocated or invalid.
 func (a *BasicAllocator) GetObjectInfo(objId ObjectId) (FileOffset, int, error) {
-	// First check cache
 	a.mu.Lock()
+	// Check if pending deletion
+	if _, deleted := a.pendingDel[objId]; deleted {
+		a.mu.Unlock()
+		return 0, 0, errors.New("object has been deleted")
+	}
+	// Check cache
 	region, found := a.Allocations[objId]
 	a.mu.Unlock()
 	if found {
@@ -345,6 +350,13 @@ func (a *BasicAllocator) GetObjectInfo(objId ObjectId) (FileOffset, int, error) 
 	}
 	// Check unified index first
 	if a.idx != nil {
+		a.mu.Lock()
+		// Double-check pendingDel before returning index result
+		if _, deleted := a.pendingDel[objId]; deleted {
+			a.mu.Unlock()
+			return 0, 0, errors.New("object has been deleted")
+		}
+		a.mu.Unlock()
 		off, sz, err := a.idx.Get(objId)
 		if err == nil {
 			return off, sz, nil

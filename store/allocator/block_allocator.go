@@ -214,6 +214,11 @@ func (a *blockAllocator) GetFileOffset(objId ObjectId) (FileOffset, error) {
 	return a.startingFileOffset + FileOffset(slotIndex*a.blockSize), nil
 }
 
+func (a *blockAllocator) SizeInBytes() int {
+	bitCount := (a.blockCount + 7) / 8
+	return 8 + bitCount + 2*a.blockCount
+}
+
 func (a *blockAllocator) Marshal() ([]byte, error) {
 	bitCount := (a.blockCount + 7) / 8
 	data := make([]byte, 8+bitCount+2*a.blockCount)

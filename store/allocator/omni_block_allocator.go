@@ -21,7 +21,6 @@ type omniBlockAllocator struct {
 	postAllocate func(id ObjectId, offset FileOffset) error
 	preFree      func(offset FileOffset, size int) error
 	postFree     func(offset FileOffset, size int) error
-	rangeCache   *AllocatorIndex
 	maxBlockSize int        // largest block size, objects larger than this use parent
 	mu           sync.Mutex // guards pool state for concurrent callers
 	// OnAllocate is called after a successful allocation (for testing/monitoring).
@@ -96,7 +95,6 @@ func NewOmniBlockAllocator(blockSize []int, blockCount int, parent Allocator, fi
 	sort.Ints(uniqueSizes)
 
 	blockMap := make(map[int]*allocatorPool)
-	idx := NewAllocatorIndex("")
 	var maxBlockSize int
 	if len(uniqueSizes) > 0 {
 		maxBlockSize = uniqueSizes[len(uniqueSizes)-1]
@@ -117,7 +115,7 @@ func NewOmniBlockAllocator(blockSize []int, blockCount int, parent Allocator, fi
 			ba := NewBlockAllocator(size, blockCount, fileOffset, baseObjId, file)
 			pool, ok := blockMap[size]
 			if !ok {
-				pool = &allocatorPool{file: file}
+				pool = NewAllocatorPool(size, blockCount, parent, file)
 				blockMap[size] = pool
 			}
 			ref := &allocatorRef{
@@ -125,10 +123,6 @@ func NewOmniBlockAllocator(blockSize []int, blockCount int, parent Allocator, fi
 				file:      file,
 			}
 			pool.available = append(pool.available, ref)
-
-			// Register the range with the unified index
-			_ = idx.RegisterRange(int64(baseObjId), size, fileOffset)
-			_ = idx.UpdateRangeEnd(int64(baseObjId), int64(baseObjId)+int64(blockCount))
 		}
 	}
 
@@ -137,7 +131,6 @@ func NewOmniBlockAllocator(blockSize []int, blockCount int, parent Allocator, fi
 		sortedSizes:  uniqueSizes,
 		blockCount:   blockCount,
 		parent:       parent,
-		rangeCache:   idx,
 		maxBlockSize: maxBlockSize,
 		file:         file,
 	}, nil
@@ -169,10 +162,6 @@ func (o *omniBlockAllocator) Allocate(size int) (ObjectId, FileOffset, error) {
 		}
 	}
 
-	var id ObjectId
-	var offset FileOffset
-	var err error
-
 	// Try best-fit: find the smallest block size that can hold this object
 	if size <= o.maxBlockSize {
 		// Binary search for the first block size >= requested size
@@ -182,70 +171,38 @@ func (o *omniBlockAllocator) Allocate(size int) (ObjectId, FileOffset, error) {
 			blockSize := o.sortedSizes[idx]
 			pool := o.blockMap[blockSize]
 			if pool == nil {
-				pool = &allocatorPool{}
+				pool = NewAllocatorPool(blockSize, o.blockCount, o.parent, o.file)
 				o.blockMap[blockSize] = pool
 			}
 
-			// Try available allocators first
-			for len(pool.available) > 0 {
-				ref := pool.available[0]
-				allocator := ref.allocator
-				id, offset, err = allocator.Allocate(blockSize)
-				if errors.Is(err, AllAllocated) {
-					// move to full list
-					pool.full = append(pool.full, ref)
-					pool.available = pool.available[1:]
-					continue
-				}
-				if err == nil {
-					allocator.setRequestedSize(id, size)
-					if o.postAllocate != nil {
-						if postErr := o.postAllocate(id, offset); postErr != nil {
-							return 0, 0, postErr
-						}
-					}
-					if o.OnAllocate != nil {
-						o.OnAllocate(id, offset, size)
-					}
-					return id, offset, nil
-				}
+			// Delegate to pool for allocation
+			id, offset, _, err := pool.Allocate()
+			if err != nil {
 				return 0, 0, err
 			}
 
-			// No available allocators or all were full: provision a new allocator from parent
-			baseObjId, fileOffset, allocErr := o.parent.Allocate(blockSize * o.blockCount)
-			if allocErr != nil {
-				return 0, 0, fmt.Errorf("parent allocate for block size %d failed: %w", blockSize, allocErr)
-			}
-			newAllocator := NewBlockAllocator(blockSize, o.blockCount, fileOffset, baseObjId, o.file)
-			newRef := &allocatorRef{
-				allocator: newAllocator,
-				file:      o.file,
-			}
-			pool.available = append(pool.available, newRef)
-			if o.rangeCache != nil {
-				_ = o.rangeCache.RegisterRange(int64(baseObjId), blockSize, fileOffset)
-				_ = o.rangeCache.UpdateRangeEnd(int64(baseObjId), int64(baseObjId)+int64(o.blockCount))
-			}
-			id, offset, err = newRef.allocator.Allocate(blockSize)
-			if err == nil {
-				newRef.allocator.setRequestedSize(id, size)
-				if o.postAllocate != nil {
-					if postErr := o.postAllocate(id, offset); postErr != nil {
-						return 0, 0, postErr
-					}
+			// Call postAllocate callback if set
+			if o.postAllocate != nil {
+				if postErr := o.postAllocate(id, offset); postErr != nil {
+					return 0, 0, postErr
 				}
-				if o.OnAllocate != nil {
-					o.OnAllocate(id, offset, size)
-				}
-				return id, offset, nil
 			}
+
+			// Set requested size on the allocator that owns this ID
+			o.setRequestedSize(id, size, blockSize)
+			if o.OnAllocate != nil {
+				o.OnAllocate(id, offset, size)
+			}
+			return id, offset, nil
+
 		}
 	}
 
-	// Object too large or all suitable block allocators are full:
-	// Defer to the parent allocator
-	id, offset, err = o.parent.Allocate(size)
+	// Object too large: defer to parent allocator
+	id, offset, err := o.parent.Allocate(size)
+	if err != nil {
+		return 0, 0, err
+	}
 
 	if o.postAllocate != nil {
 		if postErr := o.postAllocate(id, offset); postErr != nil {
@@ -258,6 +215,15 @@ func (o *omniBlockAllocator) Allocate(size int) (ObjectId, FileOffset, error) {
 	}
 
 	return id, offset, err
+}
+
+// setRequestedSize finds the pool for the given blockSize and delegates to it.
+func (o *omniBlockAllocator) setRequestedSize(objId ObjectId, size, blockSize int) {
+	pool := o.blockMap[blockSize]
+	if pool == nil {
+		return
+	}
+	pool.SetRequestedSize(objId, size)
 }
 
 // AllocateRun attempts to reserve a contiguous run of blocks for the given size.
@@ -279,53 +245,19 @@ func (o *omniBlockAllocator) AllocateRun(size int, count int) ([]ObjectId, []Fil
 			blockSize := o.sortedSizes[idx]
 			pool := o.blockMap[blockSize]
 			if pool == nil {
-				pool = &allocatorPool{}
+				pool = NewAllocatorPool(blockSize, o.blockCount, o.parent, o.file)
 				o.blockMap[blockSize] = pool
 			}
 
-			// Try available allocators - they now return partial results
-			for i := 0; i < len(pool.available); {
-				ref := pool.available[i]
-				allocator := ref.allocator
-				objIds, offsets, err := allocator.AllocateRun(blockSize, count)
-				if err != nil && err.Error() != "size must match block size" && err.Error() != "count must be positive" {
-					return nil, nil, err
-				}
-				// If no slots available, move to full list
-				if len(objIds) == 0 {
-					pool.full = append(pool.full, ref)
-					pool.available = append(pool.available[:i], pool.available[i+1:]...)
-					continue
-				}
-				// Accept partial allocation
-				for _, objId := range objIds {
-					allocator.setRequestedSize(objId, size)
-				}
-				return objIds, offsets, nil
-			}
-
-			// Need a new allocator segment
-			baseObjId, fileOffset, allocErr := o.parent.Allocate(blockSize * o.blockCount)
-			if allocErr != nil {
-				return []ObjectId{}, []FileOffset{}, nil
-			}
-			newAllocator := NewBlockAllocator(blockSize, o.blockCount, fileOffset, baseObjId, o.file)
-			newRef := &allocatorRef{
-				allocator: newAllocator,
-				file:      o.file,
-			}
-			pool.available = append(pool.available, newRef)
-			if o.rangeCache != nil {
-				_ = o.rangeCache.RegisterRange(int64(baseObjId), blockSize, fileOffset)
-				_ = o.rangeCache.UpdateRangeEnd(int64(baseObjId), int64(baseObjId)+int64(o.blockCount))
-			}
-
-			objIds, offsets, err := newRef.allocator.AllocateRun(blockSize, count)
+			// Delegate to pool for run allocation
+			objIds, offsets, _, err := pool.AllocateRun(count)
 			if err != nil && err.Error() != "size must match block size" && err.Error() != "count must be positive" {
 				return nil, nil, err
 			}
+
+			// Set requested size for all allocated objects
 			for _, objId := range objIds {
-				newRef.allocator.setRequestedSize(objId, size)
+				o.setRequestedSize(objId, size, blockSize)
 			}
 			return objIds, offsets, nil
 		}
@@ -349,8 +281,6 @@ func (o *omniBlockAllocator) Free(fileOffset FileOffset, size int) error {
 		}
 	}
 
-	var err error
-
 	// Try best-fit: find the smallest block size that would have held this object
 	if size <= o.maxBlockSize {
 		idx := sort.SearchInts(o.sortedSizes, size)
@@ -359,9 +289,9 @@ func (o *omniBlockAllocator) Free(fileOffset FileOffset, size int) error {
 			blockSize := o.sortedSizes[idx]
 			pool := o.blockMap[blockSize]
 
-			// Check available and full allocators
+			// Delegate to pool for freeing
 			if pool != nil {
-				err = pool.freeFromPool(fileOffset, blockSize, o.postFree)
+				err := pool.freeFromPool(fileOffset, blockSize, o.postFree)
 				if err == nil {
 					// Successfully freed from this pool
 					return nil
@@ -372,11 +302,7 @@ func (o *omniBlockAllocator) Free(fileOffset FileOffset, size int) error {
 	}
 
 	// Object either too large for block allocators, or not found in the best-fit pool.
-	// This can happen if:
-	// - size > maxBlockSize (delegates to parent from the start)
-	// - Object was allocated by parent directly for large sizes
-	// - Pool lookup didn't find it (shouldn't happen in normal usage)
-	err = o.parent.Free(fileOffset, size)
+	err := o.parent.Free(fileOffset, size)
 
 	if o.postFree != nil {
 		if postErr := o.postFree(fileOffset, size); postErr != nil {
@@ -388,24 +314,28 @@ func (o *omniBlockAllocator) Free(fileOffset FileOffset, size int) error {
 }
 
 // GetObjectInfo returns the FileOffset and Size for an allocated ObjectId.
-// It uses the unified AllocatorIndex for O(log n) range lookup.
-// Falls back to parent allocator if ObjectId not found in local allocators.
+// With rangeCache removed we now scan pools in sorted size order and only fall
+// back to the parent if no pool claims ownership. This prevents parent
+// allocators from reporting objects that belong to block pools (e.g., after a
+// slot was freed). Falls back to parent allocator if ObjectId not found in
+// local allocators.
 func (o *omniBlockAllocator) GetObjectInfo(objId ObjectId) (FileOffset, int, error) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 
-	// Try the index first for O(log n) lookup
-	if o.rangeCache != nil {
-		_, blockSize, err := o.rangeCache.Get(objId)
-		if err == nil {
-			pool := o.blockMap[blockSize]
-			if pool != nil {
-				return pool.GetObjectInfo(objId, blockSize)
-			}
+	// Search pools in deterministic (sorted) block-size order; only consult parent
+	// if no pool claims the ObjectId.
+	for _, blockSize := range o.sortedSizes {
+		pool := o.blockMap[blockSize]
+		if pool == nil {
+			continue
+		}
+		if pool.ContainsObjectId(objId) {
+			return pool.GetObjectInfo(objId, blockSize)
 		}
 	}
 
-	// Not in cache, fall back to parent allocator
+	// Not found in pools, fall back to parent allocator
 	if parentHasGetObjectInfo, ok := o.parent.(interface {
 		GetObjectInfo(ObjectId) (FileOffset, int, error)
 	}); ok {
@@ -478,7 +408,6 @@ func (o *omniBlockAllocator) Unmarshal(data []byte) error {
 
 	// Initialize blockMap and common metadata
 	o.blockMap = make(map[int]*allocatorPool)
-	o.rangeCache = NewAllocatorIndex("")
 	existingSizes := o.sortedSizes
 
 	sizes := make([]int, 0, numSizes)
@@ -491,33 +420,13 @@ func (o *omniBlockAllocator) Unmarshal(data []byte) error {
 			int(data[offset+2])<<8 | int(data[offset+3])
 		offset += 4
 
-		// Unmarshal pool and get bytes consumed
-		pool := &allocatorPool{}
+		// Create pool with proper initialization
+		pool := NewAllocatorPool(size, o.blockCount, o.parent, o.file)
 		poolBytes, err := pool.Unmarshal(data[offset:], o.blockCount)
 		if err != nil {
 			return err
 		}
 		offset += poolBytes
-
-		// Set blockSize on all allocators in the pool
-		for _, ref := range pool.available {
-			ref.allocator.blockSize = size
-		}
-		for _, ref := range pool.full {
-			ref.allocator.blockSize = size
-		}
-
-		// Register with index
-		for _, ref := range pool.available {
-			objId := ref.allocator.startingObjectId
-			_ = o.rangeCache.RegisterRange(int64(objId), size, ref.allocator.startingFileOffset)
-			_ = o.rangeCache.UpdateRangeEnd(int64(objId), int64(objId)+int64(o.blockCount))
-		}
-		for _, ref := range pool.full {
-			objId := ref.allocator.startingObjectId
-			_ = o.rangeCache.RegisterRange(int64(objId), size, ref.allocator.startingFileOffset)
-			_ = o.rangeCache.UpdateRangeEnd(int64(objId), int64(objId)+int64(o.blockCount))
-		}
 
 		o.blockMap[size] = pool
 		sizes = append(sizes, size)
