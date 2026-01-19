@@ -9,7 +9,7 @@ import (
 type allocatorRef struct {
 	allocator *blockAllocator
 	// File handle for direct I/O operations
-	file      *os.File
+	file *os.File
 }
 
 // Delegation methods for allocatorRef to blockAllocator methods
@@ -31,7 +31,6 @@ func (r *allocatorRef) ContainsObjectId(objId ObjectId) bool {
 	}
 	return r.allocator.ContainsObjectId(objId)
 }
-
 
 func (r *allocatorRef) GetFileOffset(objId ObjectId) (FileOffset, error) {
 	return r.allocator.GetFileOffset(objId)
@@ -152,7 +151,7 @@ type allocatorPool struct {
 	available allocatorSlice
 	full      allocatorSlice
 	// File handle for direct I/O operations
-	file      *os.File
+	file *os.File
 }
 
 // Marshal serializes the complete allocator pool state.

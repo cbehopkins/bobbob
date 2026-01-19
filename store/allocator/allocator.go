@@ -2,7 +2,6 @@ package allocator
 
 import (
 	"container/heap"
-	"encoding/binary"
 	"errors"
 	"io"
 	"os"
@@ -10,46 +9,24 @@ import (
 	"sort"
 	"sync"
 	"time"
+
+	"github.com/cbehopkins/bobbob/internal"
 )
 
-// ObjectId is an identifier unique within the store for an object.
-type ObjectId int64
+// ObjectId and FileOffset are aliases to internal definitions to avoid import cycles.
+type ObjectId = internal.ObjectId
+type FileOffset = internal.FileOffset
 
-// FileOffset represents a byte offset within a file.
-type FileOffset int64
-
-// SizeInBytes returns the number of bytes required to marshal this ObjectId.
-// It must satisfy the PersistentKey interface.
-func (id ObjectId) SizeInBytes() int {
-	return 8
+// Gap represents a free (unused) region in the file.
+type Gap struct {
+	Start int64
+	End   int64
 }
 
-// Equals reports whether this ObjectId equals another.
-func (id ObjectId) Equals(other ObjectId) bool {
-	return id == other
-}
-
-// Marshal converts the ObjectId into a fixed length bytes encoding
-func (id ObjectId) Marshal() ([]byte, error) {
-	buf := make([]byte, 8)
-	binary.LittleEndian.PutUint64(buf, uint64(id))
-	return buf, nil
-}
-
-// Unmarshal converts a fixed length bytes encoding into an ObjectId
-func (id *ObjectId) Unmarshal(data []byte) error {
-	if len(data) < 8 {
-		return errors.New("invalid data length for ObjectId")
-	}
-	*id = ObjectId(binary.LittleEndian.Uint64(data[:8]))
-	return nil
-}
-
-// PreMarshal returns the sizes of sub-objects needed to store the ObjectId.
-// For ObjectId, this is a single 8-byte value.
-func (id ObjectId) PreMarshal() []int {
-	return []int{8}
-}
+// Marshal interface type aliases to internal definitions.
+type MarshalComplex = internal.MarshalComplex
+type UnmarshalComplex = internal.UnmarshalComplex
+type ObjectAndByteFunc = internal.ObjectAndByteFunc
 
 // Allocator manages the allocation and deallocation of file space.
 // It tracks which regions of a file are in use and which are free for reuse.
@@ -67,12 +44,6 @@ type Allocator interface {
 // cannot guarantee contiguity.
 type RunAllocator interface {
 	AllocateRun(size int, count int) ([]ObjectId, []FileOffset, error)
-}
-
-// Gap represents an unused region of file space between Start and End offsets.
-type Gap struct {
-	Start int64
-	End   int64
 }
 
 // gapHeap is a min-heap of Gaps (internal use only)

@@ -366,7 +366,7 @@ func ExampleVault() {
 
 	// ===== Session 1: Create vault and add data =====
 	{
-		session, colls, _ := vault.OpenVault(
+		session, colls, err := vault.OpenVault(
 			tmpFile,
 			vault.PayloadCollectionSpec[types.StringKey, types.JsonPayload[UserProfile]]{
 				Name:            "users",
@@ -375,6 +375,10 @@ func ExampleVault() {
 				PayloadTemplate: types.JsonPayload[UserProfile]{},
 			},
 		)
+		if err != nil {
+			fmt.Printf("OpenVault session1 error: %v\n", err)
+			return
+		}
 		users := colls[0].(*treap.PersistentPayloadTreap[types.StringKey, types.JsonPayload[UserProfile]])
 
 		// Add some users
@@ -394,7 +398,7 @@ func ExampleVault() {
 
 	// ===== Session 2: Reload vault and access data =====
 	{
-		session, colls, _ := vault.OpenVault(
+		session, colls, err := vault.OpenVault(
 			tmpFile,
 			vault.PayloadCollectionSpec[types.StringKey, types.JsonPayload[UserProfile]]{
 				Name:            "users",
@@ -403,6 +407,10 @@ func ExampleVault() {
 				PayloadTemplate: types.JsonPayload[UserProfile]{},
 			},
 		)
+		if err != nil {
+			fmt.Printf("OpenVault session2 error: %v\n", err)
+			return
+		}
 		users := colls[0].(*treap.PersistentPayloadTreap[types.StringKey, types.JsonPayload[UserProfile]])
 
 		// Search for alice

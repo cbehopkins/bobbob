@@ -3,6 +3,7 @@ package allocator
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"sort"
 	"sync"
@@ -20,7 +21,7 @@ type omniBlockAllocator struct {
 	postAllocate func(id ObjectId, offset FileOffset) error
 	preFree      func(offset FileOffset, size int) error
 	postFree     func(offset FileOffset, size int) error
-	idx          *AllocatorIndex
+	rangeCache   *AllocatorIndex
 	maxBlockSize int        // largest block size, objects larger than this use parent
 	mu           sync.Mutex // guards pool state for concurrent callers
 	// OnAllocate is called after a successful allocation (for testing/monitoring).
@@ -136,7 +137,7 @@ func NewOmniBlockAllocator(blockSize []int, blockCount int, parent Allocator, fi
 		sortedSizes:  uniqueSizes,
 		blockCount:   blockCount,
 		parent:       parent,
-		idx:          idx,
+		rangeCache:   idx,
 		maxBlockSize: maxBlockSize,
 		file:         file,
 	}, nil
@@ -222,9 +223,9 @@ func (o *omniBlockAllocator) Allocate(size int) (ObjectId, FileOffset, error) {
 				file:      o.file,
 			}
 			pool.available = append(pool.available, newRef)
-			if o.idx != nil {
-				_ = o.idx.RegisterRange(int64(baseObjId), blockSize, fileOffset)
-				_ = o.idx.UpdateRangeEnd(int64(baseObjId), int64(baseObjId)+int64(o.blockCount))
+			if o.rangeCache != nil {
+				_ = o.rangeCache.RegisterRange(int64(baseObjId), blockSize, fileOffset)
+				_ = o.rangeCache.UpdateRangeEnd(int64(baseObjId), int64(baseObjId)+int64(o.blockCount))
 			}
 			id, offset, err = newRef.allocator.Allocate(blockSize)
 			if err == nil {
@@ -314,9 +315,9 @@ func (o *omniBlockAllocator) AllocateRun(size int, count int) ([]ObjectId, []Fil
 				file:      o.file,
 			}
 			pool.available = append(pool.available, newRef)
-			if o.idx != nil {
-				_ = o.idx.RegisterRange(int64(baseObjId), blockSize, fileOffset)
-				_ = o.idx.UpdateRangeEnd(int64(baseObjId), int64(baseObjId)+int64(o.blockCount))
+			if o.rangeCache != nil {
+				_ = o.rangeCache.RegisterRange(int64(baseObjId), blockSize, fileOffset)
+				_ = o.rangeCache.UpdateRangeEnd(int64(baseObjId), int64(baseObjId)+int64(o.blockCount))
 			}
 
 			objIds, offsets, err := newRef.allocator.AllocateRun(blockSize, count)
@@ -394,8 +395,8 @@ func (o *omniBlockAllocator) GetObjectInfo(objId ObjectId) (FileOffset, int, err
 	defer o.mu.Unlock()
 
 	// Try the index first for O(log n) lookup
-	if o.idx != nil {
-		_, blockSize, err := o.idx.Get(objId)
+	if o.rangeCache != nil {
+		_, blockSize, err := o.rangeCache.Get(objId)
 		if err == nil {
 			pool := o.blockMap[blockSize]
 			if pool != nil {
@@ -477,7 +478,7 @@ func (o *omniBlockAllocator) Unmarshal(data []byte) error {
 
 	// Initialize blockMap and common metadata
 	o.blockMap = make(map[int]*allocatorPool)
-	o.idx = NewAllocatorIndex("")
+	o.rangeCache = NewAllocatorIndex("")
 	existingSizes := o.sortedSizes
 
 	sizes := make([]int, 0, numSizes)
@@ -509,13 +510,13 @@ func (o *omniBlockAllocator) Unmarshal(data []byte) error {
 		// Register with index
 		for _, ref := range pool.available {
 			objId := ref.allocator.startingObjectId
-			_ = o.idx.RegisterRange(int64(objId), size, ref.allocator.startingFileOffset)
-			_ = o.idx.UpdateRangeEnd(int64(objId), int64(objId)+int64(o.blockCount))
+			_ = o.rangeCache.RegisterRange(int64(objId), size, ref.allocator.startingFileOffset)
+			_ = o.rangeCache.UpdateRangeEnd(int64(objId), int64(objId)+int64(o.blockCount))
 		}
 		for _, ref := range pool.full {
 			objId := ref.allocator.startingObjectId
-			_ = o.idx.RegisterRange(int64(objId), size, ref.allocator.startingFileOffset)
-			_ = o.idx.UpdateRangeEnd(int64(objId), int64(objId)+int64(o.blockCount))
+			_ = o.rangeCache.RegisterRange(int64(objId), size, ref.allocator.startingFileOffset)
+			_ = o.rangeCache.UpdateRangeEnd(int64(objId), int64(objId)+int64(o.blockCount))
 		}
 
 		o.blockMap[size] = pool
@@ -536,5 +537,57 @@ func (o *omniBlockAllocator) Unmarshal(data []byte) error {
 		o.maxBlockSize = 0
 	}
 
+	return nil
+}
+
+// UnmarshalMultiple implements a simple UnmarshalComplex-style loader for a single object payload.
+// It reads all bytes from objData and delegates to Unmarshal.
+// The ObjReader is unused in this implementation because the omni allocator serializes
+// to a single blob.
+func (o *omniBlockAllocator) UnmarshalMultiple(objData io.Reader, _ any) error {
+	bytes, err := io.ReadAll(objData)
+	if err != nil {
+		return err
+	}
+	return o.Unmarshal(bytes)
+}
+
+// PreMarshal implements the MarshalComplex interface by serializing the allocator
+// and returning the resulting size as a single allocation request.
+func (o *omniBlockAllocator) PreMarshal() ([]int, error) {
+	data, err := o.Marshal()
+	if err != nil {
+		return nil, err
+	}
+	return []int{len(data)}, nil
+}
+
+// MarshalMultiple implements the MarshalComplex interface for a single-object payload.
+// It writes the serialized allocator into the provided object ID and returns that ID
+// as the identity function result.
+func (o *omniBlockAllocator) MarshalMultiple(objectIds []ObjectId) (func() ObjectId, []ObjectAndByteFunc, error) {
+	if len(objectIds) == 0 {
+		return nil, nil, errors.New("no objectIds provided to MarshalMultiple")
+	}
+
+	data, err := o.Marshal()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	objId := objectIds[0]
+	identityFunc := func() ObjectId { return objId }
+	objectAndByteFuncs := []ObjectAndByteFunc{
+		{
+			ObjectId: objId,
+			ByteFunc: func() ([]byte, error) { return data, nil },
+		},
+	}
+
+	return identityFunc, objectAndByteFuncs, nil
+}
+
+// Delete is a no-op for the allocator implementation.
+func (o *omniBlockAllocator) Delete() error {
 	return nil
 }

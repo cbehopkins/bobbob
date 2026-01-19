@@ -59,7 +59,7 @@ func TestMemoryMonitorCallbacksAreInvoked(t *testing.T) {
 		key := types.IntKey(i)
 		payload := types.JsonPayload[string]{Value: fmt.Sprintf("item-%d", i)}
 		coll.Insert(&key, payload)
-		
+
 		// The memory monitor checks at intervals (default: every 100 operations)
 		// In practice, you'd call this periodically or have a background task do it
 		if err := session.Vault.checkMemoryAndFlush(); err != nil {
@@ -120,7 +120,7 @@ func TestMemoryMonitorDoesNotFlushIfUnderBudget(t *testing.T) {
 
 	// Set high memory budget: max 10000 nodes (we'll only insert 50)
 	session.Vault.SetMemoryBudgetWithPercentileWithCallbacks(10000, 50, shouldFlushDebug, onFlushDebug)
-	
+
 	// Lower the check interval so we actually check during our small test
 	session.Vault.SetCheckInterval(10)
 
@@ -131,7 +131,7 @@ func TestMemoryMonitorDoesNotFlushIfUnderBudget(t *testing.T) {
 		key := types.IntKey(i)
 		payload := types.JsonPayload[string]{Value: fmt.Sprintf("item-%d", i)}
 		coll.Insert(&key, payload)
-		
+
 		if err := session.Vault.checkMemoryAndFlush(); err != nil {
 			t.Fatalf("checkMemoryAndFlush failed: %v", err)
 		}
@@ -187,7 +187,7 @@ func TestBackgroundMemoryMonitoring(t *testing.T) {
 
 	// Enable memory monitoring with low budget - background goroutine takes over from here
 	session.Vault.SetMemoryBudgetWithPercentileWithCallbacks(50, 50, shouldFlushDebug, onFlushDebug)
-	
+
 	// Start the background monitoring goroutine to automatically check memory periodically
 	session.Vault.StartBackgroundMonitoring()
 

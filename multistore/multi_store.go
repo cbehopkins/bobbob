@@ -393,26 +393,52 @@ func (s *multiStore) Close() error {
 
 // marshalComponents marshals all store components (allocators only).
 func (s *multiStore) marshalComponents() (omniData, rootData []byte, err error) {
-	type marshaler interface {
-		Marshal() ([]byte, error)
-	}
 
 	// Marshal omniAllocator
-	omniMarshaler, ok := s.allocators[1].(marshaler)
-	if !ok {
+
+	if omniComplexMarshaler, ok := s.Allocator().(store.MarshalComplex); ok {
+		// MarshalComplex is currently single-object: use MarshalMultiple() output directly.
+		sizes, err := omniComplexMarshaler.PreMarshal()
+		if err != nil {
+			return nil, nil, err
+		}
+		// Expect a single payload size; fall back if empty.
+		var objIds []allocator.ObjectId
+		if len(sizes) > 0 {
+			objIds = []allocator.ObjectId{allocator.ObjectId(1)}
+		} else {
+			objIds = []allocator.ObjectId{allocator.ObjectId(1)}
+		}
+		identityFn, byteFuncs, err := omniComplexMarshaler.MarshalMultiple(objIds)
+		if err != nil {
+			return nil, nil, err
+		}
+		_ = identityFn // identity unused in metadata storage
+		if len(byteFuncs) == 0 {
+			return nil, nil, errors.New("MarshalMultiple returned no payloads")
+		}
+		if len(byteFuncs) != 1 {
+			return nil, nil, errors.New("MarshalMultiple expected single payload")
+		}
+		omniData, err = byteFuncs[0].ByteFunc()
+		if err != nil {
+			return nil, nil, err
+		}
+	} else if omniSimpleMarshaler, ok := s.Allocator().(store.MarshalSimple); ok {
+		omniData, err = omniSimpleMarshaler.Marshal()
+		if err != nil {
+			return nil, nil, err
+		}
+	} else {
 		return nil, nil, errors.New("omniAllocator does not support marshaling")
-	}
-	omniData, err = omniMarshaler.Marshal()
-	if err != nil {
-		return nil, nil, err
 	}
 
 	// Marshal rootAllocator
-	rootMarshaler, ok := s.allocators[0].(marshaler)
+	rootSimpleMarshaler, ok := s.allocators[0].(store.MarshalSimple)
 	if !ok {
 		return nil, nil, errors.New("rootAllocator does not support marshaling")
 	}
-	rootData, err = rootMarshaler.Marshal()
+	rootData, err = rootSimpleMarshaler.Marshal()
 	if err != nil {
 		return nil, nil, err
 	}

@@ -4,49 +4,18 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
-	"io"
+
+	"github.com/cbehopkins/bobbob/internal"
 )
 
 var ErrorNoData = fmt.Errorf("no data to unmarshal")
 
-// MarshalSimple is an interface for basic types that can be marshalled in one step.
-// Types implementing this interface can convert themselves to a byte slice.
-type MarshalSimple interface {
-	// Marshal converts the object to a byte slice.
-	Marshal() ([]byte, error)
-}
-
-// UnmarshalSimple is an interface for basic types that can be unmarshalled in one step.
-// Types implementing this interface can populate themselves from a byte slice.
-type UnmarshalSimple interface {
-	// Unmarshal populates the object from a byte slice.
-	Unmarshal([]byte) error
-}
-
-// MarshalComplex is an interface for complex types that need to be marshalled in multiple steps.
-// This is used for types that contain references to other objects in the store.
-type MarshalComplex interface {
-	// PreMarshal returns the sizes of sub-objects that need to be allocated.
-	PreMarshal() ([]int, error)
-	// MarshalMultiple returns functions to marshal this object and its children.
-	// It takes the pre-allocated ObjectIds for the sub-objects.
-	MarshalMultiple([]ObjectId) (func() ObjectId, []ObjectAndByteFunc, error)
-	// Delete removes this object and all its children from the store.
-	Delete() error
-}
-
-// UnmarshalComplex is an interface for complex types that need to be unmarshalled in multiple steps.
-type UnmarshalComplex interface {
-	// UnmarshalMultiple populates the object by reading from the store.
-	UnmarshalMultiple(objData io.Reader, reader ObjReader) error
-}
-
-// ObjectAndByteFunc holds an ObjectId and a function that returns the bytes to write to it.
-// This is used during complex marshaling to associate pre-allocated objects with their data.
-type ObjectAndByteFunc struct {
-	ObjectId ObjectId
-	ByteFunc func() ([]byte, error)
-}
+// Type aliases for clarity at call sites (internal types directly)
+type MarshalSimple = internal.MarshalSimple
+type UnmarshalSimple = internal.UnmarshalSimple
+type MarshalComplex = internal.MarshalComplex
+type UnmarshalComplex = internal.UnmarshalComplex
+type ObjectAndByteFunc = internal.ObjectAndByteFunc
 
 // allocateObjects allocates objects in the store and returns a list of ObjectIds
 func allocateObjects(s Storer, sizes []int) ([]ObjectId, error) {

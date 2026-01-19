@@ -8,16 +8,16 @@ import (
 	"slices"
 	"sync"
 
+	"github.com/cbehopkins/bobbob/internal"
 	"github.com/cbehopkins/bobbob/store/allocator"
 )
 
 // ObjectId is an identifier unique within the store for an object.
 // A user refers to an object by its ObjectId.
-// It is up to the store how this is handled internally.
-type ObjectId = allocator.ObjectId
+type ObjectId = internal.ObjectId
 
 // FileOffset represents a byte offset within a file.
-type FileOffset = allocator.FileOffset
+type FileOffset = internal.FileOffset
 
 // ObjectIdLut represents a lookup table of ObjectIds.
 // It provides marshaling support for a slice of ObjectIds.

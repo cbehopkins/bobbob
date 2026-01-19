@@ -15,7 +15,7 @@ type blockAllocator struct {
 	startingObjectId   ObjectId
 	allAllocated       bool
 	// File handle for direct I/O operations
-	file               *os.File
+	file *os.File
 }
 
 // NewBlockAllocator creates a new block allocator for fixed-size blocks.
