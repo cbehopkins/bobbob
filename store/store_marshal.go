@@ -3,6 +3,7 @@ package store
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"fmt"
 
 	"github.com/cbehopkins/bobbob/internal"
@@ -202,12 +203,28 @@ func writeComplexTypes(s Storer, obj MarshalComplex) (ObjectId, error) {
 		return ObjNotAllocated, err
 	}
 
-	identityFunction, objectAndByteFuncs, err := obj.MarshalMultiple(objectIds)
-	if err != nil {
-		return ObjNotWritten, err
-	}
+	for range 10 {
+		identityFunction, objectAndByteFuncs, err := obj.MarshalMultiple(objectIds)
+		if err == nil {
+			return identityFunction(), writeObjects(s, objectAndByteFuncs)
+		}
+		// One may keep retrying if re-preallocation is needed
+		if errors.Is(err, internal.ErrRePreAllocate) {
+			// Re-allocate objects as needed
+			sizes, err := obj.PreMarshal()
+			if err != nil {
+				return ObjNotAllocated, err
+			}
 
-	return identityFunction(), writeObjects(s, objectAndByteFuncs)
+			objectIds, err = allocateObjects(s, sizes)
+			if err != nil {
+				return ObjNotAllocated, err
+			}
+			continue
+		}
+		return ObjNotAllocated, err
+	}
+	return ObjNotAllocated, fmt.Errorf("too many re-preallocation attempts")
 }
 
 // marshalGeneric marshals a generic object

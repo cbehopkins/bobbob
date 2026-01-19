@@ -240,8 +240,14 @@ func (a *blockAllocator) Marshal() ([]byte, error) {
 func (a *blockAllocator) Unmarshal(data []byte) error {
 	bitCount := (a.blockCount + 7) / 8
 	expected := 8 + bitCount + 2*a.blockCount
-	if len(data) != expected {
-		return errors.New("invalid data length")
+	if len(data) < expected {
+		// Pad with zeros to expected length
+		padded := make([]byte, expected)
+		copy(padded, data)
+		data = padded
+	}
+	if len(data) > expected {
+		data = data[:expected]
 	}
 	a.startingFileOffset = FileOffset(binary.LittleEndian.Uint64(data[0:8]))
 	a.startingObjectId = ObjectId(a.startingFileOffset)

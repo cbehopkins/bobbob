@@ -2,14 +2,27 @@ package allocator
 
 import (
 	"errors"
+	"io"
 	"os"
+
+	"github.com/cbehopkins/bobbob/internal"
 )
 
 // allocatorRef wraps a blockAllocator with its persistent storage management.
 type allocatorRef struct {
 	allocator *blockAllocator
+	// File Offset that this allocator is stored at in the store
+	// Offset of <1 means not yet persisted
+	fileOff FileOffset
 	// File handle for direct I/O operations
 	file *os.File
+}
+
+// sizeInBytes returns the number of bytes required to marshal this allocatorRef.
+// Not our normal signature for this - but that's fine for now.
+func (r *allocatorRef) sizeInBytes(blockCount int) int {
+	bitCount := (blockCount + 7) / 8
+	return 8 + bitCount + 2*blockCount
 }
 
 // Delegation methods for allocatorRef to blockAllocator methods
@@ -143,6 +156,291 @@ func (s *allocatorSlice) Unmarshal(data []byte, blockCount int) (int, error) {
 	}
 
 	return offset, nil
+}
+func (p *allocatorPool) PreMarshal() ([]int, error) {
+	// Count unpersisted allocatorRefs
+	count := 0
+	for _, ref := range p.available {
+		if ref.fileOff < 1 {
+			count++
+		}
+	}
+	for _, ref := range p.full {
+		if ref.fileOff < 1 {
+			count++
+		}
+	}
+
+	// First size is for the LUT: [availCount:4][fullCount:4][fileOff1:8][fileOff2:8]...
+	lutSize := 8 + (len(p.available)+len(p.full))*8
+	arr := make([]int, 0, count+1)
+	arr = append(arr, lutSize)
+
+	// Then add sizes for each unpersisted allocatorRef
+	for _, ref := range p.available {
+		if ref.fileOff < 1 {
+			arr = append(arr, ref.sizeInBytes(p.blockCount))
+		}
+	}
+	for _, ref := range p.full {
+		if ref.fileOff < 1 {
+			arr = append(arr, ref.sizeInBytes(p.blockCount))
+		}
+	}
+	return arr, nil
+}
+
+func (p *allocatorPool) populateObjIds(objIds []ObjectId) error {
+	index := 0
+	for _, ref := range p.available {
+		if ref.fileOff < 1 {
+			if index >= len(objIds) {
+				return internal.ErrRePreAllocate
+			}
+			ref.fileOff = FileOffset(objIds[index])
+			index++
+		}
+	}
+	for _, ref := range p.full {
+		if ref.fileOff < 1 {
+			if index >= len(objIds) {
+				return internal.ErrRePreAllocate
+			}
+			ref.fileOff = FileOffset(objIds[index])
+			index++
+		}
+	}
+	if index != len(objIds) {
+		return errors.New("allocated more than needed")
+	}
+	return nil
+}
+
+// MarshalMultiple serializes all allocatorRefs in the pool for persistence.
+// Each allocatorRef is written to its assigned fileOff location.
+// The identity object contains a lookup table: [availCount:4][fullCount:4][fileOff1:8][fileOff2:8]...
+// Returns an identity function (returning the first objId for the LUT),
+// the list of objects to write, and any error.
+
+func (p *allocatorPool) MarshalMultiple(objIds []ObjectId) (func() ObjectId, []ObjectAndByteFunc, error) {
+	if len(objIds) == 0 {
+		return nil, nil, errors.New("no ObjectIds allocated")
+	}
+
+	// First ObjectId is reserved for LUT; remaining for allocatorRefs
+	allocIds := objIds[1:]
+	if err := p.populateObjIds(allocIds); err != nil {
+		return nil, nil, err
+	}
+
+	// Build the lookup table: [availCount:4][fullCount:4][fileOff1:8][fileOff2:8]...
+	lutSize := 8 + (len(p.available)+len(p.full))*8
+	lut := make([]byte, lutSize)
+	offset := 0
+
+	// Write counts
+	availCount := int32(len(p.available))
+	fullCount := int32(len(p.full))
+	lut[offset] = byte(availCount >> 24)
+	lut[offset+1] = byte(availCount >> 16)
+	lut[offset+2] = byte(availCount >> 8)
+	lut[offset+3] = byte(availCount)
+	offset += 4
+
+	lut[offset] = byte(fullCount >> 24)
+	lut[offset+1] = byte(fullCount >> 16)
+	lut[offset+2] = byte(fullCount >> 8)
+	lut[offset+3] = byte(fullCount)
+	offset += 4
+
+	// Collect all allocatorRefs and write their fileOffsets to LUT
+	allRefs := make([]*allocatorRef, 0, len(p.available)+len(p.full))
+	allRefs = append(allRefs, p.available...)
+	allRefs = append(allRefs, p.full...)
+
+	for _, ref := range allRefs {
+		if ref.fileOff < 1 {
+			return nil, nil, internal.ErrRePreAllocate
+		}
+		// Write fileOff to LUT (8 bytes, big-endian)
+		fileOff := int64(ref.fileOff)
+		lut[offset] = byte(fileOff >> 56)
+		lut[offset+1] = byte(fileOff >> 48)
+		lut[offset+2] = byte(fileOff >> 40)
+		lut[offset+3] = byte(fileOff >> 32)
+		lut[offset+4] = byte(fileOff >> 24)
+		lut[offset+5] = byte(fileOff >> 16)
+		lut[offset+6] = byte(fileOff >> 8)
+		lut[offset+7] = byte(fileOff)
+		offset += 8
+	}
+
+	// The first objId is for the LUT itself
+	lutObjId := objIds[0]
+
+	// Build the list of objects to write
+	objectAndByteFuncs := make([]ObjectAndByteFunc, 0, len(allRefs)+1)
+
+	// First, write the LUT
+	lutCopy := make([]byte, len(lut))
+	copy(lutCopy, lut)
+	objectAndByteFuncs = append(objectAndByteFuncs, ObjectAndByteFunc{
+		ObjectId: lutObjId,
+		ByteFunc: func() ([]byte, error) { return lutCopy, nil },
+	})
+
+	// Then write each allocatorRef
+	for _, ref := range allRefs {
+		localRef := ref
+		objectAndByteFuncs = append(objectAndByteFuncs, ObjectAndByteFunc{
+			ObjectId: ObjectId(localRef.fileOff),
+			ByteFunc: func() ([]byte, error) {
+				return localRef.Marshal()
+			},
+		})
+	}
+
+	// Identity function returns the LUT ObjectId
+	return func() ObjectId { return lutObjId }, objectAndByteFuncs, nil
+}
+
+// Delete frees all allocated fileOffsets from the parent allocator.
+func (p *allocatorPool) Delete() error {
+	// Free all available allocator storage
+	for _, ref := range p.available {
+		if ref.fileOff >= 1 {
+			size := ref.sizeInBytes(p.blockCount)
+			if err := p.parent.Free(ref.fileOff, size); err != nil {
+				return err
+			}
+		}
+	}
+	// Free all full allocator storage
+	for _, ref := range p.full {
+		if ref.fileOff >= 1 {
+			size := ref.sizeInBytes(p.blockCount)
+			if err := p.parent.Free(ref.fileOff, size); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// UnmarshalMultiple deserializes allocatorRefs from the store and populates the pool.
+// The objData reader contains a lookup table: [availCount:4][fullCount:4][fileOff1:8][fileOff2:8]...
+// The objReader parameter should implement LateReadObj to fetch each allocatorRef's data.
+func (p *allocatorPool) UnmarshalMultiple(objData io.Reader, objReader any) error {
+	type objReaderInterface interface {
+		LateReadObj(ObjectId) (io.Reader, func() error, error)
+	}
+
+	reader, ok := objReader.(objReaderInterface)
+	if !ok {
+		return errors.New("objReader does not implement required interface")
+	}
+
+	// Read the LUT header: [availCount:4][fullCount:4]
+	header := make([]byte, 8)
+	if _, err := io.ReadFull(objData, header); err != nil {
+		return err
+	}
+
+	availCount := int(header[0])<<24 | int(header[1])<<16 | int(header[2])<<8 | int(header[3])
+	fullCount := int(header[4])<<24 | int(header[5])<<16 | int(header[6])<<8 | int(header[7])
+	totalCount := availCount + fullCount
+
+	// Read all fileOffsets from LUT
+	fileOffsets := make([]FileOffset, totalCount)
+	for i := 0; i < totalCount; i++ {
+		offsetBytes := make([]byte, 8)
+		if _, err := io.ReadFull(objData, offsetBytes); err != nil {
+			return err
+		}
+		fileOff := int64(offsetBytes[0])<<56 | int64(offsetBytes[1])<<48 |
+			int64(offsetBytes[2])<<40 | int64(offsetBytes[3])<<32 |
+			int64(offsetBytes[4])<<24 | int64(offsetBytes[5])<<16 |
+			int64(offsetBytes[6])<<8 | int64(offsetBytes[7])
+		fileOffsets[i] = FileOffset(fileOff)
+	}
+
+	// Unmarshal available allocators
+	p.available = make(allocatorSlice, availCount)
+	for i := 0; i < availCount; i++ {
+		fileOff := fileOffsets[i]
+
+		// Read the allocator data from the store
+		allocReader, finisher, err := reader.LateReadObj(ObjectId(fileOff))
+		if err != nil {
+			return err
+		}
+
+		allocData, err := io.ReadAll(allocReader)
+		finisher()
+		if err != nil {
+			return err
+		}
+
+		// Unmarshal the block allocator
+		allocator := &blockAllocator{
+			blockSize:      p.blockSize,
+			blockCount:     p.blockCount,
+			allocatedList:  make([]bool, p.blockCount),
+			requestedSizes: make([]int, p.blockCount),
+		}
+		if err := allocator.Unmarshal(allocData); err != nil {
+			return err
+		}
+
+		p.available[i] = &allocatorRef{
+			allocator: allocator,
+			fileOff:   fileOff,
+			file:      p.file,
+		}
+	}
+
+	// Unmarshal full allocators
+	p.full = make(allocatorSlice, fullCount)
+	for i := 0; i < fullCount; i++ {
+		fileOff := fileOffsets[availCount+i]
+
+		// Read the allocator data from the store
+		allocReader, finisher, err := reader.LateReadObj(ObjectId(fileOff))
+		if err != nil {
+			return err
+		}
+
+		allocData, err := io.ReadAll(allocReader)
+		finisher()
+		if err != nil {
+			return err
+		}
+
+		// Unmarshal the block allocator
+		allocator := &blockAllocator{
+			blockSize:      p.blockSize,
+			blockCount:     p.blockCount,
+			allocatedList:  make([]bool, p.blockCount),
+			requestedSizes: make([]int, p.blockCount),
+		}
+		if err := allocator.Unmarshal(allocData); err != nil {
+			return err
+		}
+
+		p.full[i] = &allocatorRef{
+			allocator: allocator,
+			fileOff:   fileOff,
+			file:      p.file,
+		}
+	}
+
+	return nil
+}
+
+// sizeInBytesForAllocator returns the size needed for a single allocator.
+func (p *allocatorPool) sizeInBytesForAllocator() int {
+	bitCount := (p.blockCount + 7) / 8
+	return 8 + bitCount + 2*p.blockCount
 }
 
 // allocatorPool keeps available and full block allocators for a given size.

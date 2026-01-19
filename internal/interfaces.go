@@ -55,6 +55,9 @@ type UnmarshalSimple interface {
 	Unmarshal([]byte) error
 }
 
+// ErrRePreAllocate is returned when an object needs more ObjectIds than initially allocated
+var ErrRePreAllocate = errors.New("object requires re-preallocation")
+
 // MarshalComplex defines the multi-step marshaling contract.
 type MarshalComplex interface {
 	PreMarshal() ([]int, error)
