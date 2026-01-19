@@ -1,13 +1,43 @@
 package allocator
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"sort"
 	"sync"
+
+	"github.com/cbehopkins/bobbob/internal"
 )
+
+// fileOffsetReader provides LateReadObj by reading directly from FileOffsets in the file.
+// This is used during unmarshal when allocators are not yet functional.
+type fileOffsetReader struct {
+	file *os.File
+}
+
+// LateReadObj reads allocatorRef metadata from a FileOffset (passed as ObjectId for interface compatibility).
+// Returns a SectionReader positioned at the blockAllocator's marshaled data.
+func (r *fileOffsetReader) LateReadObj(id ObjectId) (io.Reader, func() error, error) {
+	// The "ObjectId" here is actually a FileOffset from the LUT
+	fileOff := FileOffset(id)
+
+	// Read the blockAllocator metadata header to determine size
+	// blockAllocator.Marshal format: [startingFileOffset:8][blockCount:4][blockSize:4][allocatedBitmap:blockCount bytes][requestedSizes:blockCount*4 bytes]
+	headerSize := 16 // startingFileOffset + blockCount + blockSize
+	header := make([]byte, headerSize)
+	if _, err := r.file.ReadAt(header, int64(fileOff)); err != nil {
+		return nil, nil, err
+	}
+
+	blockCount := int(header[8])<<24 | int(header[9])<<16 | int(header[10])<<8 | int(header[11])
+	metadataSize := headerSize + blockCount + (blockCount * 4) // header + bitmap + requestedSizes
+
+	reader := io.NewSectionReader(r.file, int64(fileOff), int64(metadataSize))
+	return reader, func() error { return nil }, nil
+}
 
 type omniBlockAllocator struct {
 	// blockMap holds per-size pools split into available vs full allocators. This keeps
@@ -346,8 +376,11 @@ func (o *omniBlockAllocator) GetObjectInfo(objId ObjectId) (FileOffset, int, err
 }
 
 // Marshal serializes the omniBlockAllocator's state.
-// Format: [blockCount:4][numSizes:4][size1:4][size2:4]...[allocator1 data][allocator2 data]...
+// Format: [blockCount:4][numSizes:4][size1:4][poolObjId1:8][size2:4][poolObjId2:8]...
+// Each pool is now stored using MarshalComplex and referenced by its identity ObjectId.
 func (o *omniBlockAllocator) Marshal() ([]byte, error) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
 	data := make([]byte, 0)
 
 	// Serialize blockCount
@@ -373,16 +406,64 @@ func (o *omniBlockAllocator) Marshal() ([]byte, error) {
 		if pool == nil {
 			continue
 		}
-		// size
+		// Serialize block size
 		data = append(data,
 			byte(size>>24), byte(size>>16),
 			byte(size>>8), byte(size))
-		// Serialize complete pool (metadata + allocator data)
-		poolData, err := pool.Marshal()
-		if err != nil {
-			return nil, err
+
+		// Marshal pool using MarshalComplex with retry
+		allocFunc := func(poolSizes []int) ([]ObjectId, error) {
+			objIds := make([]ObjectId, len(poolSizes))
+			for i, sz := range poolSizes {
+				objId, _, err := o.parent.Allocate(sz)
+				if err != nil {
+					return nil, err
+				}
+				objIds[i] = objId
+			}
+			return objIds, nil
 		}
-		data = append(data, poolData...)
+
+		poolObjId, objectAndByteFuncs, err := internal.MarshalComplexWithRetry(pool, allocFunc, 10)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal pool for size %d: %w", size, err)
+		}
+
+		// Write pool data to parent allocator and get FileOffset for LUT
+		var lutFileOffset FileOffset
+		for _, obj := range objectAndByteFuncs {
+			bytes, err := obj.ByteFunc()
+			if err != nil {
+				return nil, fmt.Errorf("failed to get bytes for pool object: %w", err)
+			}
+			offset, _, err := o.parent.(interface {
+				GetObjectInfo(ObjectId) (FileOffset, int, error)
+			}).GetObjectInfo(obj.ObjectId)
+			if err != nil {
+				return nil, fmt.Errorf("failed to get object info: %w", err)
+			}
+			if _, err := o.file.WriteAt(bytes, int64(offset)); err != nil {
+				return nil, fmt.Errorf("failed to write pool data: %w", err)
+			}
+			// The first object is the LUT - save its FileOffset
+			if obj.ObjectId == poolObjId {
+				lutFileOffset = offset
+			}
+		}
+
+		// Serialize the LUT's FileOffset (8 bytes) so unmarshal can read directly
+		data = append(data,
+			byte(lutFileOffset>>56), byte(lutFileOffset>>48),
+			byte(lutFileOffset>>40), byte(lutFileOffset>>32),
+			byte(lutFileOffset>>24), byte(lutFileOffset>>16),
+			byte(lutFileOffset>>8), byte(lutFileOffset))
+	}
+
+	// Flush parent allocator cache to backing store so pool ObjectIds are persisted
+	if flusher, ok := o.parent.(interface {
+		FlushCacheToBacking(percent int)
+	}); ok {
+		flusher.FlushCacheToBacking(100)
 	}
 
 	return data, nil
@@ -390,6 +471,9 @@ func (o *omniBlockAllocator) Marshal() ([]byte, error) {
 
 // Unmarshal deserializes the omniBlockAllocator's state.
 func (o *omniBlockAllocator) Unmarshal(data []byte) error {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
 	if len(data) < 8 {
 		return errors.New("invalid data length")
 	}
@@ -412,21 +496,50 @@ func (o *omniBlockAllocator) Unmarshal(data []byte) error {
 
 	sizes := make([]int, 0, numSizes)
 
+	// Create a FileOffset-based reader for unmarshal (allocators not functional yet)
+	reader := &fileOffsetReader{file: o.file}
+
 	for i := 0; i < numSizes; i++ {
-		if len(data) < offset+4 {
-			return errors.New("invalid data length for size header")
+		if len(data) < offset+12 {
+			return errors.New("invalid data length for size and FileOffset header")
 		}
 		size := int(data[offset])<<24 | int(data[offset+1])<<16 |
 			int(data[offset+2])<<8 | int(data[offset+3])
 		offset += 4
 
+		// Read LUT FileOffset (8 bytes) - this is where the LUT data is in the file
+		lutFileOffset := FileOffset(int64(data[offset])<<56 | int64(data[offset+1])<<48 |
+			int64(data[offset+2])<<40 | int64(data[offset+3])<<32 |
+			int64(data[offset+4])<<24 | int64(data[offset+5])<<16 |
+			int64(data[offset+6])<<8 | int64(data[offset+7]))
+		offset += 8
+
 		// Create pool with proper initialization
 		pool := NewAllocatorPool(size, o.blockCount, o.parent, o.file)
-		poolBytes, err := pool.Unmarshal(data[offset:], o.blockCount)
-		if err != nil {
-			return err
+
+		// Read LUT header to determine size
+		lutHeader := make([]byte, 8)
+		if _, err := o.file.ReadAt(lutHeader, int64(lutFileOffset)); err != nil {
+			return fmt.Errorf("failed to read LUT header for size %d: %w", size, err)
 		}
-		offset += poolBytes
+
+		availCount := int(lutHeader[0])<<24 | int(lutHeader[1])<<16 | int(lutHeader[2])<<8 | int(lutHeader[3])
+		fullCount := int(lutHeader[4])<<24 | int(lutHeader[5])<<16 | int(lutHeader[6])<<8 | int(lutHeader[7])
+		totalCount := availCount + fullCount
+
+		// Calculate LUT size: header (8 bytes) + (totalCount * 8 bytes for each FileOffset)
+		lutSize := 8 + (totalCount * 8)
+
+		// Read full LUT data from file
+		lutData := make([]byte, lutSize)
+		if _, err := o.file.ReadAt(lutData, int64(lutFileOffset)); err != nil {
+			return fmt.Errorf("failed to read pool LUT for size %d: %w", size, err)
+		}
+
+		// Unmarshal pool using UnmarshalMultiple
+		if err := pool.UnmarshalMultiple(io.NopCloser(bytes.NewReader(lutData)), reader); err != nil {
+			return fmt.Errorf("failed to unmarshal pool for size %d: %w", size, err)
+		}
 
 		o.blockMap[size] = pool
 		sizes = append(sizes, size)

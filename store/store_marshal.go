@@ -3,7 +3,6 @@ package store
 import (
 	"bytes"
 	"encoding/binary"
-	"errors"
 	"fmt"
 
 	"github.com/cbehopkins/bobbob/internal"
@@ -193,38 +192,16 @@ func writeSingleObject(s Storer, obj ObjectAndByteFunc) error {
 
 // writeComplexTypes writes complex types to the store
 func writeComplexTypes(s Storer, obj MarshalComplex) (ObjectId, error) {
-	sizes, err := obj.PreMarshal()
+	allocFunc := func(sizes []int) ([]ObjectId, error) {
+		return allocateObjects(s, sizes)
+	}
+
+	identityObjId, objectAndByteFuncs, err := internal.MarshalComplexWithRetry(obj, allocFunc, 10)
 	if err != nil {
 		return ObjNotAllocated, err
 	}
 
-	objectIds, err := allocateObjects(s, sizes)
-	if err != nil {
-		return ObjNotAllocated, err
-	}
-
-	for range 10 {
-		identityFunction, objectAndByteFuncs, err := obj.MarshalMultiple(objectIds)
-		if err == nil {
-			return identityFunction(), writeObjects(s, objectAndByteFuncs)
-		}
-		// One may keep retrying if re-preallocation is needed
-		if errors.Is(err, internal.ErrRePreAllocate) {
-			// Re-allocate objects as needed
-			sizes, err := obj.PreMarshal()
-			if err != nil {
-				return ObjNotAllocated, err
-			}
-
-			objectIds, err = allocateObjects(s, sizes)
-			if err != nil {
-				return ObjNotAllocated, err
-			}
-			continue
-		}
-		return ObjNotAllocated, err
-	}
-	return ObjNotAllocated, fmt.Errorf("too many re-preallocation attempts")
+	return identityObjId, writeObjects(s, objectAndByteFuncs)
 }
 
 // marshalGeneric marshals a generic object

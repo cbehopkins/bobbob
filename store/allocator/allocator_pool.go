@@ -366,7 +366,7 @@ func (p *allocatorPool) UnmarshalMultiple(objData io.Reader, objReader any) erro
 
 	// Unmarshal available allocators
 	p.available = make(allocatorSlice, availCount)
-	for i := 0; i < availCount; i++ {
+	for i := range availCount {
 		fileOff := fileOffsets[i]
 
 		// Read the allocator data from the store
@@ -401,7 +401,7 @@ func (p *allocatorPool) UnmarshalMultiple(objData io.Reader, objReader any) erro
 
 	// Unmarshal full allocators
 	p.full = make(allocatorSlice, fullCount)
-	for i := 0; i < fullCount; i++ {
+	for i := range fullCount {
 		fileOff := fileOffsets[availCount+i]
 
 		// Read the allocator data from the store
@@ -435,12 +435,6 @@ func (p *allocatorPool) UnmarshalMultiple(objData io.Reader, objReader any) erro
 	}
 
 	return nil
-}
-
-// sizeInBytesForAllocator returns the size needed for a single allocator.
-func (p *allocatorPool) sizeInBytesForAllocator() int {
-	bitCount := (p.blockCount + 7) / 8
-	return 8 + bitCount + 2*p.blockCount
 }
 
 // allocatorPool keeps available and full block allocators for a given size.

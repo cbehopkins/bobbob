@@ -58,6 +58,44 @@ type UnmarshalSimple interface {
 // ErrRePreAllocate is returned when an object needs more ObjectIds than initially allocated
 var ErrRePreAllocate = errors.New("object requires re-preallocation")
 
+// MarshalComplexWithRetry marshals a MarshalComplex object with automatic retry on ErrRePreAllocate.
+// allocFunc should allocate ObjectIds for the given sizes.
+// Returns the identity ObjectId and any error.
+func MarshalComplexWithRetry(obj MarshalComplex, allocFunc func([]int) ([]ObjectId, error), maxRetries int) (ObjectId, []ObjectAndByteFunc, error) {
+	sizes, err := obj.PreMarshal()
+	if err != nil {
+		return 0, nil, err
+	}
+
+	objectIds, err := allocFunc(sizes)
+	if err != nil {
+		return 0, nil, err
+	}
+
+	for i := 0; i < maxRetries; i++ {
+		identityFunction, objectAndByteFuncs, err := obj.MarshalMultiple(objectIds)
+		if err == nil {
+			return identityFunction(), objectAndByteFuncs, nil
+		}
+		// Retry if re-preallocation is needed
+		if errors.Is(err, ErrRePreAllocate) {
+			// Re-allocate objects as needed
+			sizes, err := obj.PreMarshal()
+			if err != nil {
+				return 0, nil, err
+			}
+
+			objectIds, err = allocFunc(sizes)
+			if err != nil {
+				return 0, nil, err
+			}
+			continue
+		}
+		return 0, nil, err
+	}
+	return 0, nil, errors.New("too many re-preallocation attempts")
+}
+
 // MarshalComplex defines the multi-step marshaling contract.
 type MarshalComplex interface {
 	PreMarshal() ([]int, error)

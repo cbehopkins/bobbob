@@ -373,6 +373,18 @@ func (a *BasicAllocator) GetObjectInfo(objId ObjectId) (FileOffset, int, error) 
 	return off, sz, nil
 }
 
+// LateReadObj returns an io.Reader positioned at the object's data in the file.
+// Returns a reader, a finisher function (no-op for BasicAllocator), and any error.
+// This method enables reading object data without loading it entirely into memory.
+func (a *BasicAllocator) LateReadObj(objId ObjectId) (io.Reader, func() error, error) {
+	offset, size, err := a.GetObjectInfo(objId)
+	if err != nil {
+		return nil, nil, err
+	}
+	reader := io.NewSectionReader(a.file, int64(offset), int64(size))
+	return reader, func() error { return nil }, nil
+}
+
 // Marshal serializes the BasicAllocator's state to a byte slice.
 // Format: [end:8][freeListCount:8][gaps...][allocCount:8][allocations...]
 func (a *BasicAllocator) Marshal() ([]byte, error) {
