@@ -18,7 +18,7 @@ func TestOmniBlockAllocatorExpandsWhenFull(t *testing.T) {
 	})
 
 	blockCount := 10 // Small count for faster test
-	omni, err := NewOmniBlockAllocator(nil, blockCount, parent)
+	omni, err := NewOmniBlockAllocator(nil, blockCount, parent, nil)
 	if err != nil {
 		t.Fatalf("NewOmniBlockAllocator: %v", err)
 	}
@@ -90,7 +90,7 @@ func TestOmniBlockAllocatorMultipleExpansions(t *testing.T) {
 	})
 
 	blockCount := 5
-	omni, err := NewOmniBlockAllocator(nil, blockCount, parent)
+	omni, err := NewOmniBlockAllocator(nil, blockCount, parent, nil)
 	if err != nil {
 		t.Fatalf("NewOmniBlockAllocator: %v", err)
 	}

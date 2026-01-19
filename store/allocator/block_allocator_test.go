@@ -41,7 +41,7 @@ func TestOmniBlockAllocatorWithCache(t *testing.T) {
 
 	blockSizes := []int{256, 512, 1024}
 	blockCount := 10
-	omni, err := NewOmniBlockAllocator(blockSizes, blockCount, parentAllocator)
+	omni, err := NewOmniBlockAllocator(blockSizes, blockCount, parentAllocator, nil)
 	if err != nil {
 		t.Fatalf("NewOmniBlockAllocator failed: %v", err)
 	}
@@ -90,7 +90,7 @@ func TestOmniBlockAllocatorWithoutPreallocation(t *testing.T) {
 	blockSizes := []int{256}
 	blockCount := 4
 
-	omni, err := NewOmniBlockAllocator(blockSizes, blockCount, parent, WithoutPreallocation())
+	omni, err := NewOmniBlockAllocator(blockSizes, blockCount, parent, nil, WithoutPreallocation())
 	if err != nil {
 		t.Fatalf("NewOmniBlockAllocator failed: %v", err)
 	}
@@ -142,7 +142,7 @@ func TestOmniBlockAllocatorCachePerformance(t *testing.T) {
 	// Create omni allocator with many different block sizes to increase cache complexity
 	blockSizes := []int{64, 128, 256, 512, 1024, 2048, 4096}
 	blockCount := 5
-	omni, err := NewOmniBlockAllocator(blockSizes, blockCount, parentAllocator)
+	omni, err := NewOmniBlockAllocator(blockSizes, blockCount, parentAllocator, nil)
 	if err != nil {
 		t.Fatalf("NewOmniBlockAllocator failed: %v", err)
 	}
@@ -176,7 +176,7 @@ func TestOmniBlockAllocatorCacheFallback(t *testing.T) {
 
 	blockSizes := []int{256}
 	blockCount := 2
-	omni, err := NewOmniBlockAllocator(blockSizes, blockCount, parentAllocator)
+	omni, err := NewOmniBlockAllocator(blockSizes, blockCount, parentAllocator, nil)
 	if err != nil {
 		t.Fatalf("NewOmniBlockAllocator failed: %v", err)
 	}

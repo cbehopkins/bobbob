@@ -48,7 +48,7 @@ func TestAllocatorRoutingWithVariableLengthStrings(t *testing.T) {
 	})
 
 	// Create OmniBlockAllocator with the BasicAllocator as parent
-	omniAlloc, err := NewOmniBlockAllocator([]int{}, 10000, basicAlloc)
+	omniAlloc, err := NewOmniBlockAllocator([]int{}, 10000, basicAlloc, nil)
 	if err != nil {
 		t.Fatalf("NewOmniBlockAllocator failed: %v", err)
 	}
@@ -165,7 +165,7 @@ func TestStringPathAllocations(t *testing.T) {
 		t.Fatalf("NewBasicAllocator failed: %v", err)
 	}
 
-	omniAlloc, err := NewOmniBlockAllocator([]int{}, 10000, basicAlloc)
+	omniAlloc, err := NewOmniBlockAllocator([]int{}, 10000, basicAlloc, nil)
 	if err != nil {
 		t.Fatalf("NewOmniBlockAllocator failed: %v", err)
 	}

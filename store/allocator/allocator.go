@@ -117,6 +117,8 @@ type BasicAllocator struct {
 	Allocations map[ObjectId]allocatedRegion
 	// Persistent backing store for the full allocation table.
 	backing AllocationStore
+	// File handle for direct I/O operations
+	file *os.File
 	// Unified allocator index (objects + ranges); BasicAllocator uses objects segment.
 	idx *AllocatorIndex
 	// Pending deletions to flush to backing store.
@@ -148,6 +150,7 @@ func NewBasicAllocator(file *os.File) (*BasicAllocator, error) {
 		Allocations: make(map[ObjectId]allocatedRegion),
 		backing:     NewFileAllocationStore(allocPath),
 		idx:         NewAllocatorIndex(indexPath),
+		file:        file,
 		pendingDel:  make(map[ObjectId]struct{}),
 		stopFlush:   make(chan struct{}),
 	}, nil
@@ -163,6 +166,12 @@ func NewEmptyBasicAllocator() *BasicAllocator {
 		pendingDel:  make(map[ObjectId]struct{}),
 		stopFlush:   make(chan struct{}),
 	}
+}
+
+// SetFile sets the file handle for the allocator.
+// This is used when loading from a serialized state.
+func (a *BasicAllocator) SetFile(file *os.File) {
+	a.file = file
 }
 
 // StartBackgroundFlush starts periodic flushing of cache entries to the backing store.

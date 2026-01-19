@@ -55,7 +55,7 @@ func TestOmniBlockAllocatorMemoryOverhead(t *testing.T) {
 	// Create an OmniBlockAllocator
 	parent := &MockAllocator{}
 	blockSizes := []int{64, 128, 256, 512, 1024}
-	omni, err := NewOmniBlockAllocator(blockSizes, itemsPerBlock, parent)
+	omni, err := NewOmniBlockAllocator(blockSizes, itemsPerBlock, parent, nil)
 	if err != nil {
 		t.Fatalf("NewOmniBlockAllocator failed: %v", err)
 	}
@@ -138,7 +138,7 @@ func TestMemoryComparisonObjectMapVsBlockAllocator(t *testing.T) {
 	t.Logf("")
 
 	// New BlockAllocator approach: bool array
-	ba := NewBlockAllocator(1024, itemCount, 0, 1000)
+	ba := NewBlockAllocator(1024, itemCount, 0, 1000, nil)
 	structSize := int(unsafe.Sizeof(*ba))
 	boolArraySize := itemCount * 1 // 1 byte per bool
 	blockAllocatorTotalBytes := structSize + boolArraySize

@@ -3,6 +3,7 @@ package allocator
 import (
 	"errors"
 	"fmt"
+	"os"
 	"sort"
 	"sync"
 )
@@ -24,6 +25,8 @@ type omniBlockAllocator struct {
 	mu           sync.Mutex // guards pool state for concurrent callers
 	// OnAllocate is called after a successful allocation (for testing/monitoring).
 	OnAllocate func(objId ObjectId, offset FileOffset, size int)
+	// File handle for direct I/O operations
+	file *os.File
 }
 
 type omniBlockAllocatorOptions struct {
@@ -49,7 +52,11 @@ func defaultBlockSizes() []int {
 type OmniBlockAllocatorOption func(*omniBlockAllocatorOptions)
 
 // WithoutPreallocation builds the allocator metadata without reserving space from the parent.
-// Useful when immediately calling Unmarshal on persisted data to avoid mutating the parent state.
+// CRITICAL: Use this when loading persisted data via Unmarshal to prevent double allocation.
+// When unmarshaling, BlockAllocators already have their file ranges stored in the serialized data.
+// If we called parent.Allocate() again during construction, we would duplicate space reservations
+// in the parent's internal maps, causing file offset conflicts and potential data corruption.
+// Default behavior (preallocate=true) is correct for new allocators, which need upfront space.
 func WithoutPreallocation() OmniBlockAllocatorOption {
 	return func(o *omniBlockAllocatorOptions) { o.preallocate = false }
 }
@@ -63,8 +70,9 @@ func WithoutPreallocation() OmniBlockAllocatorOption {
 // blockSize is a slice of additional block sizes to support beyond the defaults.
 // blockCount is the number of blocks in each sub-allocator.
 // parent is the fallback allocator for sizes not in the block allocator range.
+// file is the file handle for direct I/O operations (can be nil if not needed).
 // opts can be used to disable upfront parent allocations (e.g., when unmarshaling persisted data).
-func NewOmniBlockAllocator(blockSize []int, blockCount int, parent Allocator, opts ...OmniBlockAllocatorOption) (*omniBlockAllocator, error) {
+func NewOmniBlockAllocator(blockSize []int, blockCount int, parent Allocator, file *os.File, opts ...OmniBlockAllocatorOption) (*omniBlockAllocator, error) {
 	config := omniBlockAllocatorOptions{preallocate: true}
 	for _, opt := range opts {
 		opt(&config)
@@ -95,6 +103,9 @@ func NewOmniBlockAllocator(blockSize []int, blockCount int, parent Allocator, op
 
 	if config.preallocate {
 		// Assign non-overlapping ObjectId ranges to each block allocator using the parent allocator.
+		// NOTE: This is skipped when loading persisted data (WithoutPreallocation option) because
+		// Unmarshal will restore BlockAllocators with their existing file ranges. Re-allocating here
+		// would cause the parent to reserve the same space twice, leading to file corruption.
 		for _, size := range uniqueSizes {
 			totalSize := blockCount * size
 			baseObjId, fileOffset, err := parent.Allocate(totalSize)
@@ -102,14 +113,15 @@ func NewOmniBlockAllocator(blockSize []int, blockCount int, parent Allocator, op
 				return nil, fmt.Errorf("prealloc block size %d: %w", size, err)
 			}
 
-			ba := NewBlockAllocator(size, blockCount, fileOffset, baseObjId)
+			ba := NewBlockAllocator(size, blockCount, fileOffset, baseObjId, file)
 			pool, ok := blockMap[size]
 			if !ok {
-				pool = &allocatorPool{}
+				pool = &allocatorPool{file: file}
 				blockMap[size] = pool
 			}
 			ref := &allocatorRef{
 				allocator: ba,
+				file:      file,
 			}
 			pool.available = append(pool.available, ref)
 
@@ -126,6 +138,7 @@ func NewOmniBlockAllocator(blockSize []int, blockCount int, parent Allocator, op
 		parent:       parent,
 		idx:          idx,
 		maxBlockSize: maxBlockSize,
+		file:         file,
 	}, nil
 }
 
@@ -203,9 +216,10 @@ func (o *omniBlockAllocator) Allocate(size int) (ObjectId, FileOffset, error) {
 			if allocErr != nil {
 				return 0, 0, fmt.Errorf("parent allocate for block size %d failed: %w", blockSize, allocErr)
 			}
-			newAllocator := NewBlockAllocator(blockSize, o.blockCount, fileOffset, baseObjId)
+			newAllocator := NewBlockAllocator(blockSize, o.blockCount, fileOffset, baseObjId, o.file)
 			newRef := &allocatorRef{
 				allocator: newAllocator,
+				file:      o.file,
 			}
 			pool.available = append(pool.available, newRef)
 			if o.idx != nil {
@@ -294,9 +308,10 @@ func (o *omniBlockAllocator) AllocateRun(size int, count int) ([]ObjectId, []Fil
 			if allocErr != nil {
 				return []ObjectId{}, []FileOffset{}, nil
 			}
-			newAllocator := NewBlockAllocator(blockSize, o.blockCount, fileOffset, baseObjId)
+			newAllocator := NewBlockAllocator(blockSize, o.blockCount, fileOffset, baseObjId, o.file)
 			newRef := &allocatorRef{
 				allocator: newAllocator,
+				file:      o.file,
 			}
 			pool.available = append(pool.available, newRef)
 			if o.idx != nil {

@@ -3,6 +3,7 @@ package allocator
 import (
 	"encoding/binary"
 	"errors"
+	"os"
 )
 
 type blockAllocator struct {
@@ -13,6 +14,8 @@ type blockAllocator struct {
 	startingFileOffset FileOffset
 	startingObjectId   ObjectId
 	allAllocated       bool
+	// File handle for direct I/O operations
+	file               *os.File
 }
 
 // NewBlockAllocator creates a new block allocator for fixed-size blocks.
@@ -22,7 +25,8 @@ type blockAllocator struct {
 // blockCount is the number of blocks in the allocator.
 // startingFileOffset is the file offset where the first block begins.
 // startingObjectId is the ObjectId for the first block.
-func NewBlockAllocator(blockSize, blockCount int, startingFileOffset FileOffset, startingObjectId ObjectId) *blockAllocator {
+// file is the file handle for direct I/O operations (can be nil if not needed).
+func NewBlockAllocator(blockSize, blockCount int, startingFileOffset FileOffset, startingObjectId ObjectId, file *os.File) *blockAllocator {
 	allocatedList := make([]bool, blockCount)
 	requestedSizes := make([]int, blockCount)
 	return &blockAllocator{
@@ -32,6 +36,7 @@ func NewBlockAllocator(blockSize, blockCount int, startingFileOffset FileOffset,
 		requestedSizes:     requestedSizes,
 		startingFileOffset: startingFileOffset,
 		startingObjectId:   startingObjectId,
+		file:               file,
 	}
 }
 

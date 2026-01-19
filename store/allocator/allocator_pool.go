@@ -1,10 +1,15 @@
 package allocator
 
-import "errors"
+import (
+	"errors"
+	"os"
+)
 
 // allocatorRef wraps a blockAllocator with its persistent storage management.
 type allocatorRef struct {
 	allocator *blockAllocator
+	// File handle for direct I/O operations
+	file      *os.File
 }
 
 // Delegation methods for allocatorRef to blockAllocator methods
@@ -20,10 +25,6 @@ func (r *allocatorRef) Free(fileOffset FileOffset, size int) error {
 	return r.allocator.Free(fileOffset, size)
 }
 
-func (r *allocatorRef) setRequestedSize(objId ObjectId, size int) {
-	r.allocator.setRequestedSize(objId, size)
-}
-
 func (r *allocatorRef) ContainsObjectId(objId ObjectId) bool {
 	if r == nil {
 		return false
@@ -31,16 +32,9 @@ func (r *allocatorRef) ContainsObjectId(objId ObjectId) bool {
 	return r.allocator.ContainsObjectId(objId)
 }
 
-func (r *allocatorRef) objectIdForOffset(fileOffset FileOffset) (ObjectId, bool) {
-	return r.allocator.objectIdForOffset(fileOffset)
-}
 
 func (r *allocatorRef) GetFileOffset(objId ObjectId) (FileOffset, error) {
 	return r.allocator.GetFileOffset(objId)
-}
-
-func (r *allocatorRef) requestedSize(objId ObjectId) (int, bool) {
-	return r.allocator.requestedSize(objId)
 }
 
 func (r *allocatorRef) Marshal() ([]byte, error) {
@@ -94,16 +88,6 @@ func (s allocatorSlice) Marshal() ([]byte, error) {
 
 	return data, nil
 }
-
-// SizeInBytes returns the size of the serialized allocator slice.
-// func (s allocatorSlice) SizeInBytes(blockCount int) int {
-// 	if len(s) == 0 {
-// 		return 4 // Just the count
-// 	}
-// 	bitCount := (blockCount + 7) / 8
-// 	allocatorDataSize := 8 + bitCount + 2*blockCount
-// 	return 4 + (len(s) * 8) + (len(s) * allocatorDataSize)
-// }
 
 // GetObjectInfo searches for an ObjectId within this slice's allocators.
 // Returns the FileOffset and size if found, or an error if not found.
@@ -167,6 +151,8 @@ func (s *allocatorSlice) Unmarshal(data []byte, blockCount int) (int, error) {
 type allocatorPool struct {
 	available allocatorSlice
 	full      allocatorSlice
+	// File handle for direct I/O operations
+	file      *os.File
 }
 
 // Marshal serializes the complete allocator pool state.

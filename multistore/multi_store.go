@@ -150,6 +150,7 @@ func NewMultiStore(filePath string, maxDiskTokens int) (*multiStore, error) {
 		treap.PersistentTreapObjectSizes(),
 		blockCount,
 		rootAllocator,
+		file,
 		allocator.WithoutPreallocation(),
 	)
 	if err != nil {
@@ -191,7 +192,7 @@ func LoadMultiStore(filePath string, maxDiskTokens int) (*multiStore, error) {
 	}
 
 	// Restore allocators (allocations tracked internally by allocators)
-	rootAllocator, omniAllocator, err := unmarshalComponents(rootData, omniData)
+	rootAllocator, omniAllocator, err := unmarshalComponents(rootData, omniData, file)
 	if err != nil {
 		_ = file.Close()
 		return nil, err
@@ -300,13 +301,14 @@ func readMetadata(file *os.File, metadataOffset int64) (omniData, rootData []byt
 }
 
 // unmarshalComponents deserializes the allocators from their byte representations.
-func unmarshalComponents(rootData, omniData []byte) (*allocator.BasicAllocator, allocator.Allocator, error) {
+func unmarshalComponents(rootData, omniData []byte, file *os.File) (*allocator.BasicAllocator, allocator.Allocator, error) {
 	type unmarshaler interface {
 		Unmarshal([]byte) error
 	}
 
 	// Create and unmarshal rootAllocator
 	rootAllocator := allocator.NewEmptyBasicAllocator()
+	rootAllocator.SetFile(file)
 
 	rootUnmarshaler, ok := any(rootAllocator).(unmarshaler)
 	if !ok {
@@ -323,6 +325,7 @@ func unmarshalComponents(rootData, omniData []byte) (*allocator.BasicAllocator, 
 		treap.PersistentTreapObjectSizes(),
 		blockCount,
 		rootAllocator,
+		file,
 		allocator.WithoutPreallocation(),
 	)
 	if err != nil {
