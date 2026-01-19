@@ -362,7 +362,15 @@ type UserProfile struct {
 // This shows how to create a collection, save data, close it, and reload it later.
 func ExampleVault() {
 	tmpFile := filepath.Join(os.TempDir(), "example_vault.db")
-	defer os.Remove(tmpFile)
+	// Clean up any leftover files from previous test runs
+	os.Remove(tmpFile)
+	os.Remove(tmpFile + ".allocs.json")
+	os.Remove(tmpFile + ".allocs.idx")
+	defer func() {
+		os.Remove(tmpFile)
+		os.Remove(tmpFile + ".allocs.json")
+		os.Remove(tmpFile + ".allocs.idx")
+	}()
 
 	// ===== Session 1: Create vault and add data =====
 	{

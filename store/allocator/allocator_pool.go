@@ -14,6 +14,7 @@ type allocatorRef struct {
 	// File Offset that this allocator is stored at in the store
 	// Offset of <1 means not yet persisted
 	fileOff FileOffset
+	synced  bool
 	// File handle for direct I/O operations
 	file *os.File
 }
@@ -292,10 +293,19 @@ func (p *allocatorPool) MarshalMultiple(objIds []ObjectId) (func() ObjectId, []O
 	// Then write each allocatorRef
 	for _, ref := range allRefs {
 		localRef := ref
+		if localRef.synced {
+			// Skip any entries that have already been written
+			continue
+		}
 		objectAndByteFuncs = append(objectAndByteFuncs, ObjectAndByteFunc{
 			ObjectId: ObjectId(localRef.fileOff),
 			ByteFunc: func() ([]byte, error) {
-				return localRef.Marshal()
+				data, err := localRef.Marshal()
+				if err == nil {
+					// Mark as synced after successful marshal
+					localRef.synced = true
+				}
+				return data, err
 			},
 		})
 	}
@@ -352,7 +362,7 @@ func (p *allocatorPool) UnmarshalMultiple(objData io.Reader, objReader any) erro
 
 	// Read all fileOffsets from LUT
 	fileOffsets := make([]FileOffset, totalCount)
-	for i := 0; i < totalCount; i++ {
+	for i := range totalCount {
 		offsetBytes := make([]byte, 8)
 		if _, err := io.ReadFull(objData, offsetBytes); err != nil {
 			return err
@@ -396,6 +406,7 @@ func (p *allocatorPool) UnmarshalMultiple(objData io.Reader, objReader any) erro
 			allocator: allocator,
 			fileOff:   fileOff,
 			file:      p.file,
+			synced:    true,
 		}
 	}
 
@@ -431,6 +442,7 @@ func (p *allocatorPool) UnmarshalMultiple(objData io.Reader, objReader any) erro
 			allocator: allocator,
 			fileOff:   fileOff,
 			file:      p.file,
+			synced:    true,
 		}
 	}
 
@@ -552,6 +564,8 @@ func (p *allocatorPool) freeFromPool(fileOffset FileOffset, blockSize int, postF
 		}
 		err := allocator.Free(fileOffset, blockSize)
 		if err == nil {
+			// Mark as unsynced since allocator state changed
+			ref.synced = false
 			if postFree != nil {
 				if postErr := postFree(fileOffset, blockSize); postErr != nil {
 					return postErr
@@ -575,6 +589,8 @@ func (p *allocatorPool) freeFromPool(fileOffset FileOffset, blockSize int, postF
 		}
 		err := allocator.Free(fileOffset, blockSize)
 		if err == nil {
+			// Mark as unsynced since allocator state changed
+			ref.synced = false
 			p.available = append(p.available, ref)
 			p.full = append(p.full[:i], p.full[i+1:]...)
 			if postFree != nil {
@@ -624,6 +640,8 @@ func (p *allocatorPool) Allocate() (ObjectId, FileOffset, *allocatorRef, error) 
 		if err != nil {
 			return 0, 0, nil, err
 		}
+		// Mark as unsynced since allocator state changed
+		ref.synced = false
 		return id, offset, nil, nil
 	}
 
@@ -655,6 +673,8 @@ func (p *allocatorPool) SetRequestedSize(objId ObjectId, size int) {
 	for _, ref := range p.available {
 		if ref.allocator.ContainsObjectId(objId) {
 			ref.allocator.setRequestedSize(objId, size)
+			// Mark as unsynced since allocator state changed
+			ref.synced = false
 			return
 		}
 	}
@@ -663,6 +683,8 @@ func (p *allocatorPool) SetRequestedSize(objId ObjectId, size int) {
 	for _, ref := range p.full {
 		if ref.allocator.ContainsObjectId(objId) {
 			ref.allocator.setRequestedSize(objId, size)
+			// Mark as unsynced since allocator state changed
+			ref.synced = false
 			return
 		}
 	}
@@ -690,7 +712,8 @@ func (p *allocatorPool) AllocateRun(requestCount int) ([]ObjectId, []FileOffset,
 			p.available = append(p.available[:i], p.available[i+1:]...)
 			continue
 		}
-		// Accept partial allocation
+		// Accept partial allocation - mark as unsynced since allocator state changed
+		ref.synced = false
 		return objIds, offsets, nil, nil
 	}
 
