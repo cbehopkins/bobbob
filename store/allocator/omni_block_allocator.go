@@ -8,6 +8,7 @@ import (
 	"os"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/cbehopkins/bobbob/internal"
 )
@@ -53,6 +54,8 @@ type omniBlockAllocator struct {
 	postFree     func(offset FileOffset, size int) error
 	maxBlockSize int        // largest block size, objects larger than this use parent
 	mu           sync.Mutex // guards pool state for concurrent callers
+	stopPersist  chan struct{}
+	persistWG    sync.WaitGroup
 	// OnAllocate is called after a successful allocation (for testing/monitoring).
 	OnAllocate func(objId ObjectId, offset FileOffset, size int)
 	// File handle for direct I/O operations
@@ -170,6 +173,80 @@ func NewOmniBlockAllocator(blockSize []int, blockCount int, parent Allocator, fi
 // Useful for testing and monitoring allocator usage patterns.
 func (o *omniBlockAllocator) SetOnAllocate(cb func(objId ObjectId, offset FileOffset, size int)) {
 	o.OnAllocate = cb
+}
+
+// StartBackgroundPersist launches a ticker-driven loop that periodically persists
+// unsynced allocator metadata across all pools. No-op if an interval is non-positive
+// or a loop is already running.
+func (o *omniBlockAllocator) StartBackgroundPersist(interval time.Duration) {
+	if interval <= 0 {
+		return
+	}
+
+	o.mu.Lock()
+	if o.stopPersist != nil {
+		o.mu.Unlock()
+		return // already running
+	}
+	stop := make(chan struct{})
+	o.stopPersist = stop
+	o.persistWG.Add(1)
+	o.mu.Unlock()
+
+	go o.runPersistLoop(interval, stop)
+}
+
+// StopBackgroundPersist terminates the persistence loop and waits for exit.
+func (o *omniBlockAllocator) StopBackgroundPersist() {
+	o.mu.Lock()
+	stop := o.stopPersist
+	o.stopPersist = nil
+	o.mu.Unlock()
+
+	if stop != nil {
+		close(stop)
+		o.persistWG.Wait()
+	}
+}
+
+// persistUnsyncedOnce flushes pending allocator metadata updates once.
+func (o *omniBlockAllocator) persistUnsyncedOnce() (int, error) {
+	o.mu.Lock()
+	pools := make([]*allocatorPool, 0, len(o.blockMap))
+	for _, pool := range o.blockMap {
+		if pool != nil {
+			pools = append(pools, pool)
+		}
+	}
+	o.mu.Unlock()
+
+	total := 0
+	for _, pool := range pools {
+		n, err := pool.PersistUnsynced()
+		total += n
+		if err != nil {
+			return total, err
+		}
+	}
+
+	return total, nil
+}
+
+func (o *omniBlockAllocator) runPersistLoop(interval time.Duration, stop <-chan struct{}) {
+	ticker := time.NewTicker(interval)
+	defer func() {
+		ticker.Stop()
+		o.persistWG.Done()
+	}()
+
+	for {
+		select {
+		case <-ticker.C:
+			_, _ = o.persistUnsyncedOnce()
+		case <-stop:
+			return
+		}
+	}
 }
 
 // Parent returns the parent allocator, allowing external code to configure it.

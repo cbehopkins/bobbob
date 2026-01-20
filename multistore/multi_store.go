@@ -27,6 +27,7 @@ package collections
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"sync"
@@ -562,7 +563,7 @@ func (s *multiStore) deleteObj(objId store.ObjectId) {
 // specifically so this ID is predictable and stable across reloads.
 func (s *multiStore) PrimeObject(size int) (store.ObjectId, error) {
 	// Sanity check: prevent unreasonably large prime objects
-	const maxPrimeObjectSize = 1024 * 1024 // 1MB should be plenty for metadata
+	const maxPrimeObjectSize = (1 << 20) // 1MB should be plenty for metadata
 	if size < 0 || size > maxPrimeObjectSize {
 		return store.ObjNotAllocated, errors.New("invalid prime object size")
 	}
@@ -579,6 +580,7 @@ func (s *multiStore) PrimeObject(size int) (store.ObjectId, error) {
 	}
 
 	// Allocate the prime object - this should be the very first allocation
+	// Use the omni allocator to avoid ObjectId collisions
 	objId, fileOffset, err := s.allocators[1].Allocate(size)
 	if err != nil {
 		return store.ObjNotAllocated, err
@@ -586,7 +588,7 @@ func (s *multiStore) PrimeObject(size int) (store.ObjectId, error) {
 
 	// Verify we got the expected ObjectId (should be headerSize for first allocation)
 	if objId != primeObjectId {
-		return store.ObjNotAllocated, errors.New("expected prime object to be first allocation")
+		return store.ObjNotAllocated, fmt.Errorf("expected prime object to be first allocation at offset %d, got %d", primeObjectId, objId)
 	}
 
 	// Initialize the object with zeros

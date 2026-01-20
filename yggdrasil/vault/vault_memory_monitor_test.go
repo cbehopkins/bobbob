@@ -119,6 +119,9 @@ func TestMemoryMonitorDoesNotFlushIfUnderBudget(t *testing.T) {
 		onFlushCalls++
 	}
 
+	// Disable background monitoring for deterministic testing
+	session.Vault.SetBackgroundMonitoring(false)
+
 	// Set high memory budget: max 10000 nodes (we'll only insert 50)
 	session.Vault.SetMemoryBudgetWithPercentileWithCallbacks(10000, 50, shouldFlushDebug, onFlushDebug)
 
@@ -169,7 +172,13 @@ func TestBackgroundMemoryMonitoring(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenVaultWithIdentity failed: %v", err)
 	}
-	defer session.Close()
+	t.Cleanup(func() {
+		if err := session.Close(); err != nil {
+			t.Errorf("session.Close: %v", err)
+		}
+		// Small delay to ensure Windows releases file handles
+		time.Sleep(10 * time.Millisecond)
+	})
 
 	coll, ok := colls["testColl"].(*treap.PersistentPayloadTreap[types.IntKey, types.JsonPayload[string]])
 	if !ok {

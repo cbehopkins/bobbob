@@ -363,6 +363,41 @@ func (p *allocatorPool) prepareAllocatorWrites(allRefs []*allocatorRef) []Object
 	return objectAndByteFuncs
 }
 
+// PersistUnsynced writes any unsynced allocators that already have a fileOff assigned.
+// This allows a background worker to keep allocator metadata current without re-running
+// MarshalComplex. Returns the number of allocators persisted.
+func (p *allocatorPool) PersistUnsynced() (int, error) {
+	if p.file == nil {
+		return 0, errors.New("allocator pool has no file handle")
+	}
+
+	persisted := 0
+
+	for _, ref := range append(append(make([]*allocatorRef, 0, len(p.available)+len(p.full)), p.available...), p.full...) {
+		if ref == nil || ref.synced || ref.fileOff < 1 {
+			continue
+		}
+
+		data, err := ref.Marshal()
+		if err != nil {
+			return persisted, err
+		}
+
+		n, err := p.file.WriteAt(data, int64(ref.fileOff))
+		if err != nil {
+			return persisted, err
+		}
+		if n != len(data) {
+			return persisted, errors.New("partial write when persisting allocator")
+		}
+
+		ref.synced = true
+		persisted++
+	}
+
+	return persisted, nil
+}
+
 // MarshalMultiple serializes all allocatorRefs in the pool for persistence.
 // Each allocatorRef is written to its assigned fileOff location.
 // The identity object contains a lookup table: [availCount:4][fullCount:4][fileOff1:8][fileOff2:8]...

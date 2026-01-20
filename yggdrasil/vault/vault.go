@@ -464,12 +464,25 @@ func (v *Vault) PersistCollection(collectionName string) error {
 // Close persists all active collections and closes the underlying store.
 // You should call this when you're done with the vault.
 // If any collections fail to persist, it continues and returns all errors.
-func (v *Vault) Close() error {
+func (v *Vault) Close() (err error) {
 	// Stop background memory monitoring if it's running
 	if v.monitorStopChan != nil {
 		close(v.monitorStopChan)
 		v.monitorWg.Wait()
 		v.monitorStopChan = nil
+	}
+
+	// Always attempt to close the store, even if we encounter errors earlier.
+	if v.Store != nil {
+		defer func() {
+			if cerr := v.Store.Close(); cerr != nil {
+				if err != nil {
+					err = fmt.Errorf("%w; store close: %v", err, cerr)
+				} else {
+					err = fmt.Errorf("store close: %w", cerr)
+				}
+			}
+		}()
 	}
 
 	// Persist all active collections - accumulate errors instead of failing fast
@@ -530,8 +543,7 @@ func (v *Vault) Close() error {
 		return fmt.Errorf("failed to write metadata to prime object: %w", err)
 	}
 
-	// Close the store
-	return v.Store.Close()
+	return nil
 }
 
 // ListCollections returns the names of all collections in the vault.

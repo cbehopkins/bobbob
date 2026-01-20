@@ -5,7 +5,6 @@ import (
 	"errors"
 	"io"
 	"os"
-	"path/filepath"
 	"sort"
 	"sync"
 	"time"
@@ -111,9 +110,10 @@ func NewBasicAllocator(file *os.File) (*BasicAllocator, error) {
 		return nil, err
 	}
 	// Derive default paths for disk-backed metadata (alongside the data file).
-	baseName := filepath.Base(file.Name())
-	allocPath := filepath.Join(os.TempDir(), baseName+".allocs.json")
-	indexPath := filepath.Join(os.TempDir(), baseName+".allocs.idx")
+	// Use the full file path to ensure uniqueness across different test directories.
+	dataFilePath := file.Name()
+	allocPath := dataFilePath + ".allocs.json"
+	indexPath := dataFilePath + ".allocs.idx"
 	return &BasicAllocator{
 		End:         offset,
 		FreeList:    make(gapHeap, 0),
