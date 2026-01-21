@@ -9,7 +9,7 @@ import (
 // falling back to the parent for subsequent small allocations.
 func TestOmniBlockAllocatorExpandsWhenFull(t *testing.T) {
 	parent := NewEmptyBasicAllocator()
-	
+
 	// Track parent allocations: first allocations provision block allocators,
 	// subsequent small allocations should NOT go to parent (bug shows they do).
 	parentAllocations := make([]int, 0)
@@ -18,7 +18,7 @@ func TestOmniBlockAllocatorExpandsWhenFull(t *testing.T) {
 	})
 
 	blockCount := 10 // Small count for faster test
-	omni, err := NewOmniBlockAllocator(nil, blockCount, parent)
+	omni, err := NewOmniBlockAllocator(nil, blockCount, parent, nil)
 	if err != nil {
 		t.Fatalf("NewOmniBlockAllocator: %v", err)
 	}
@@ -81,7 +81,7 @@ func TestOmniBlockAllocatorExpandsWhenFull(t *testing.T) {
 // for the same block size, creating a pool/list of block allocators.
 func TestOmniBlockAllocatorMultipleExpansions(t *testing.T) {
 	parent := NewEmptyBasicAllocator()
-	
+
 	parentLargeAllocations := 0 // Count of block allocator provisions
 	parent.SetOnAllocate(func(_ ObjectId, _ FileOffset, size int) {
 		if size > 100 { // Large allocations are block allocator provisions
@@ -90,7 +90,7 @@ func TestOmniBlockAllocatorMultipleExpansions(t *testing.T) {
 	})
 
 	blockCount := 5
-	omni, err := NewOmniBlockAllocator(nil, blockCount, parent)
+	omni, err := NewOmniBlockAllocator(nil, blockCount, parent, nil)
 	if err != nil {
 		t.Fatalf("NewOmniBlockAllocator: %v", err)
 	}

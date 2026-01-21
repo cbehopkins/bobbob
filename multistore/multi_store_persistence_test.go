@@ -1,16 +1,16 @@
-package collections
+package multistore
 
 import (
-	"os"
 	"testing"
 
+	"github.com/cbehopkins/bobbob/internal/testutil"
 	"github.com/cbehopkins/bobbob/store"
 )
 
 func TestMultiStorePersistence(t *testing.T) {
 	// Create a temporary file for the test
 	filePath := "test_multistore_persistence.dat"
-	defer os.Remove(filePath)
+	defer testutil.CleanupTempFile(t, filePath)
 
 	// Create a new multiStore and write some objects
 	ms1, err := NewMultiStore(filePath, 0)
@@ -143,7 +143,7 @@ func TestMultiStorePersistence(t *testing.T) {
 func TestMultiStorePersistenceWithDeletion(t *testing.T) {
 	// Create a temporary file for the test
 	filePath := "test_multistore_deletion.dat"
-	defer os.Remove(filePath)
+	defer testutil.CleanupTempFile(t, filePath)
 
 	// Create a new multiStore
 	ms1, err := NewMultiStore(filePath, 0)

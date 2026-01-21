@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"testing"
 	"time"
 
+	"github.com/cbehopkins/bobbob/multistore"
 	"github.com/cbehopkins/bobbob/store"
 	"github.com/cbehopkins/bobbob/yggdrasil/treap"
 	"github.com/cbehopkins/bobbob/yggdrasil/types"
@@ -196,6 +198,55 @@ func ExamplePersistentPayloadTreap() {
 	// Output: Value at key 200: 99
 }
 
+// TestPersistentTreapCompaction demonstrates cleaning up nodes stored
+// in sub-optimal block allocators and forcing them to be reallocated in more
+// efficient allocators on the next persist.
+func TestPersistentTreapCompaction(t *testing.T) {
+	tmpFile := filepath.Join(os.TempDir(), "example_compaction.bin")
+	defer os.Remove(tmpFile)
+
+	// Use multistore which has block allocators for efficient storage
+	s, _ := multistore.NewConcurrentMultiStore(tmpFile, 0)
+	defer s.Close()
+
+	// Create a persistent treap
+	treap := treap.NewPersistentPayloadTreap[types.IntKey, SimplePayload](types.IntLess, (*types.IntKey)(new(int32)), s)
+
+	// Insert some key-value pairs with explicit priorities
+	for i := 0; i < 10; i++ {
+		key := types.IntKey(i)
+		// Priority is implicit from hash or we can omit by using Insert instead
+		treap.Insert(&key, SimplePayload(i*10))
+	}
+
+	// Persist initial state
+	treap.Persist()
+	initialCount := treap.CountInMemoryNodes()
+	fmt.Printf("Initial state: %d nodes in memory\n", initialCount)
+
+	// Simulate pool configuration change: if block allocator had smaller
+	// blockCount from an earlier session, CompactSuboptimalAllocations
+	// would identify and clean those nodes up.
+	//
+	// In a real scenario, this happens when:
+	// 1. Earlier sessions created allocators with blockCount=128
+	// 2. Current session needs blockCount=256
+	// 3. Calling CompactSuboptimalAllocations finds the old allocators
+	// 4. Nodes are deleted and invalidated
+	// 5. Next Persist() reallocates in the new optimal allocator
+
+	deleted, err := treap.CompactSuboptimalAllocations()
+	if err != nil {
+		fmt.Printf("Compaction error: %v\n", err)
+	}
+
+	// In this example, no sub-optimal allocators exist, so nothing deleted
+	fmt.Printf("Compacted nodes: %d (reallocation happens on next Persist)\n", deleted)
+
+	// Persist again - any compacted nodes would be reallocated here
+	treap.Persist()
+}
+
 // ExampleTypeMap demonstrates the type mapping system.
 func ExampleTypeMap() {
 	// Create an empty types.TypeMap without built-in types
@@ -362,11 +413,19 @@ type UserProfile struct {
 // This shows how to create a collection, save data, close it, and reload it later.
 func ExampleVault() {
 	tmpFile := filepath.Join(os.TempDir(), "example_vault.db")
-	defer os.Remove(tmpFile)
+	// Clean up any leftover files from previous test runs
+	os.Remove(tmpFile)
+	os.Remove(tmpFile + ".allocs.json")
+	os.Remove(tmpFile + ".allocs.idx")
+	defer func() {
+		os.Remove(tmpFile)
+		os.Remove(tmpFile + ".allocs.json")
+		os.Remove(tmpFile + ".allocs.idx")
+	}()
 
 	// ===== Session 1: Create vault and add data =====
 	{
-		session, colls, _ := vault.OpenVault(
+		session, colls, err := vault.OpenVault(
 			tmpFile,
 			vault.PayloadCollectionSpec[types.StringKey, types.JsonPayload[UserProfile]]{
 				Name:            "users",
@@ -375,6 +434,10 @@ func ExampleVault() {
 				PayloadTemplate: types.JsonPayload[UserProfile]{},
 			},
 		)
+		if err != nil {
+			fmt.Printf("OpenVault session1 error: %v\n", err)
+			return
+		}
 		users := colls[0].(*treap.PersistentPayloadTreap[types.StringKey, types.JsonPayload[UserProfile]])
 
 		// Add some users
@@ -394,7 +457,7 @@ func ExampleVault() {
 
 	// ===== Session 2: Reload vault and access data =====
 	{
-		session, colls, _ := vault.OpenVault(
+		session, colls, err := vault.OpenVault(
 			tmpFile,
 			vault.PayloadCollectionSpec[types.StringKey, types.JsonPayload[UserProfile]]{
 				Name:            "users",
@@ -403,6 +466,10 @@ func ExampleVault() {
 				PayloadTemplate: types.JsonPayload[UserProfile]{},
 			},
 		)
+		if err != nil {
+			fmt.Printf("OpenVault session2 error: %v\n", err)
+			return
+		}
 		users := colls[0].(*treap.PersistentPayloadTreap[types.StringKey, types.JsonPayload[UserProfile]])
 
 		// Search for alice

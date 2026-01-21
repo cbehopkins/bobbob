@@ -1,4 +1,4 @@
-package collections
+package multistore
 
 import (
 	"testing"

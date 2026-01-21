@@ -17,10 +17,15 @@ type compareFixture struct {
 	backup    *treap.PersistentPayloadTreap[types.IntKey, types.JsonPayload[UserProfile]]
 }
 
-func openCompareFixture(t *testing.T, dbPath string) (*vault.VaultSession, compareFixture) {
+func openCompareFixture(t *testing.T) (*vault.VaultSession, compareFixture) {
 	t.Helper()
 	primaryID := types.StringKey("users_primary")
 	backupID := types.StringKey("users_backup")
+	
+	// Use temporary directory to minimize disk I/O while keeping real store
+	// (vault identity testing requires actual vault reconstruction)
+	dbPath := filepath.Join(t.TempDir(), "compare.db")
+	
 	session, colls, err := vault.OpenVaultWithIdentity(
 		dbPath,
 		vault.PayloadIdentitySpec[types.StringKey, types.IntKey, types.JsonPayload[UserProfile]]{
@@ -81,8 +86,7 @@ func seedCompareData(f compareFixture) (key1, key2, key3, key4 types.IntKey, err
 }
 
 func TestVaultCompareCollections_Differences(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "compare.db")
-	session, fixture := openCompareFixture(t, dbPath)
+	session, fixture := openCompareFixture(t)
 	t.Cleanup(func() { _ = session.Close() })
 
 	session.Vault.SetMemoryBudgetWithPercentile(1000, 25)
@@ -155,8 +159,7 @@ func TestVaultCompareCollections_Differences(t *testing.T) {
 }
 
 func TestVaultCompareCollections_MemoryStats(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "compare_mem.db")
-	session, fixture := openCompareFixture(t, dbPath)
+	session, fixture := openCompareFixture(t)
 	t.Cleanup(func() { _ = session.Close() })
 	session.Vault.SetMemoryBudgetWithPercentile(1000, 25)
 	if _, _, _, _, err := seedCompareData(fixture); err != nil {

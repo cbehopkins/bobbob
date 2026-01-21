@@ -1,4 +1,4 @@
-package collections
+package multistore
 
 import (
 	"os"
@@ -6,13 +6,14 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/cbehopkins/bobbob/internal/testutil"
 	"github.com/cbehopkins/bobbob/store"
 )
 
 // TestNewConcurrentMultiStore tests the convenience constructor
 func TestNewConcurrentMultiStore(t *testing.T) {
 	tmpFile := filepath.Join(os.TempDir(), "test_new_concurrent_constructor.db")
-	defer os.Remove(tmpFile)
+	defer testutil.CleanupTempFile(t, tmpFile)
 
 	// Use convenience constructor
 	cs, err := NewConcurrentMultiStore(tmpFile, 5)
@@ -64,7 +65,7 @@ func TestNewConcurrentMultiStore(t *testing.T) {
 // TestLoadConcurrentMultiStore tests the load convenience constructor
 func TestLoadConcurrentMultiStore(t *testing.T) {
 	tmpFile := filepath.Join(os.TempDir(), "test_load_concurrent_constructor.db")
-	defer os.Remove(tmpFile)
+	defer testutil.CleanupTempFile(t, tmpFile)
 
 	// Create initial store
 	cs1, err := NewConcurrentMultiStore(tmpFile, 5)
@@ -115,7 +116,7 @@ func TestLoadConcurrentMultiStore(t *testing.T) {
 // to provide thread-safe concurrent access with size-based allocation routing.
 func TestConcurrentMultiStore(t *testing.T) {
 	tmpFile := filepath.Join(os.TempDir(), "test_concurrent_multistore.db")
-	defer os.Remove(tmpFile)
+	defer testutil.CleanupTempFile(t, tmpFile)
 
 	// Create multiStore with size-based allocation
 	ms, err := NewMultiStore(tmpFile, 0)
@@ -177,7 +178,7 @@ func TestConcurrentMultiStore(t *testing.T) {
 // TestConcurrentMultiStoreReadWrite tests concurrent reads and writes
 func TestConcurrentMultiStoreReadWrite(t *testing.T) {
 	tmpFile := filepath.Join(os.TempDir(), "test_concurrent_rw.db")
-	defer os.Remove(tmpFile)
+	defer testutil.CleanupTempFile(t, tmpFile)
 
 	ms, err := NewMultiStore(tmpFile, 0)
 	if err != nil {
@@ -285,7 +286,7 @@ func TestConcurrentMultiStoreReadWrite(t *testing.T) {
 // Note: multiStore doesn't implement AllocateRun yet, so this test expects an error
 func TestConcurrentMultiStoreAllocateRun(t *testing.T) {
 	tmpFile := filepath.Join(os.TempDir(), "test_concurrent_allocate_run.db")
-	defer os.Remove(tmpFile)
+	defer testutil.CleanupTempFile(t, tmpFile)
 
 	ms, err := NewMultiStore(tmpFile, 0)
 	if err != nil {
@@ -313,7 +314,7 @@ func TestConcurrentMultiStoreAllocateRun(t *testing.T) {
 // TestConcurrentMultiStoreGetObjectInfo tests that GetObjectInfo works through wrapper
 func TestConcurrentMultiStoreGetObjectInfo(t *testing.T) {
 	tmpFile := filepath.Join(os.TempDir(), "test_concurrent_getinfo.db")
-	defer os.Remove(tmpFile)
+	defer testutil.CleanupTempFile(t, tmpFile)
 
 	ms, err := NewMultiStore(tmpFile, 0)
 	if err != nil {
@@ -346,7 +347,7 @@ func TestConcurrentMultiStoreGetObjectInfo(t *testing.T) {
 // TestConcurrentMultiStoreDiskTokens verifies disk token limiting works
 func TestConcurrentMultiStoreDiskTokens(t *testing.T) {
 	tmpFile := filepath.Join(os.TempDir(), "test_concurrent_tokens.db")
-	defer os.Remove(tmpFile)
+	defer testutil.CleanupTempFile(t, tmpFile)
 
 	ms, err := NewMultiStore(tmpFile, 0)
 	if err != nil {

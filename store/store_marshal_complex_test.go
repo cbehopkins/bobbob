@@ -88,7 +88,7 @@ func (m *MockStruct) Delete() error {
 }
 
 // UnmarshalMultiple unmarshals the MockStruct from the store using the ObjectId LUT
-func (m *MockStruct) UnmarshalMultiple(objReader io.Reader, reader ObjReader) error {
+func (m *MockStruct) UnmarshalMultiple(objReader io.Reader, reader any) error {
 	var lut ObjectIdLut
 	dataBuf := new(bytes.Buffer)
 	if _, err := dataBuf.ReadFrom(objReader); err != nil {
@@ -103,8 +103,11 @@ func (m *MockStruct) UnmarshalMultiple(objReader io.Reader, reader ObjReader) er
 		return errors.New("expected 2 ObjectIds in LUT")
 	}
 
+	// Cast reader to ObjReader
+	objRdr := reader.(ObjReader)
+
 	// Fetch and unmarshal the integer value
-	intReader, finisher, err := reader.LateReadObj(lut.Ids[0])
+	intReader, finisher, err := objRdr.LateReadObj(lut.Ids[0])
 	if err != nil {
 		return err
 	}
@@ -119,7 +122,7 @@ func (m *MockStruct) UnmarshalMultiple(objReader io.Reader, reader ObjReader) er
 	}
 
 	// Fetch and unmarshal the boolean value
-	boolReader, finisher, err := reader.LateReadObj(lut.Ids[1])
+	boolReader, finisher, err := objRdr.LateReadObj(lut.Ids[1])
 	if err != nil {
 		return err
 	}

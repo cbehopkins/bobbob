@@ -7,41 +7,19 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cbehopkins/bobbob/internal/testutil"
 	collections "github.com/cbehopkins/bobbob/multistore"
-	"github.com/cbehopkins/bobbob/store"
 	"github.com/cbehopkins/bobbob/yggdrasil/types"
 )
 
 // TestVaultMemoryStats verifies that GetMemoryStats correctly reports the number
 // of nodes in memory across all collections.
 func TestVaultMemoryStats(t *testing.T) {
-	tempDir := t.TempDir()
-	storePath := filepath.Join(tempDir, "memory_stats.db")
-	stre, err := store.NewBasicStore(storePath)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
-
-	v, err := LoadVault(stre)
-	if err != nil {
-		t.Fatalf("Failed to load vault: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = v.Close()
-		_ = stre.Close()
-	})
-
-	// Register types
-	v.RegisterType((*types.IntKey)(new(int32)))
-	v.RegisterType(types.JsonPayload[UserData]{})
+	v := newTestVault(t)
+	defer v.Close()
 
 	// Create a collection
-	users, err := GetOrCreateCollection[types.IntKey, types.JsonPayload[UserData]](
-		v, "users", types.IntLess, (*types.IntKey)(new(int32)),
-	)
-	if err != nil {
-		t.Fatalf("Failed to create users collection: %v", err)
-	}
+	users := addCollection[types.IntKey, types.JsonPayload[testutil.TestUserData]](t, v, "users")
 
 	// Initially should have 0 nodes in memory
 	stats := v.GetMemoryStats()
@@ -51,10 +29,7 @@ func TestVaultMemoryStats(t *testing.T) {
 
 	// Insert some data
 	for i := range 10 {
-		key := types.IntKey(i)
-		users.Insert(&key, types.JsonPayload[UserData]{
-			Value: UserData{Username: "user", Email: "user@example.com", Age: 25},
-		})
+		insertTestUser(t, users, int32(i), "user")
 	}
 
 	// Should now have nodes in memory
@@ -65,41 +40,17 @@ func TestVaultMemoryStats(t *testing.T) {
 	if stats.CollectionNodes["users"] == 0 {
 		t.Error("Expected users collection to have nodes in memory")
 	}
-
-	v.Close()
 }
 
 // TestVaultFlushOlderThan verifies that FlushOlderThan removes old nodes from memory
 // while keeping recent ones.
 func TestVaultFlushOlderThan(t *testing.T) {
-	tempDir := t.TempDir()
-	storePath := filepath.Join(tempDir, "flush_older.db")
-	stre, err := store.NewBasicStore(storePath)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
-
-	v, err := LoadVault(stre)
-	if err != nil {
-		t.Fatalf("Failed to load vault: %v", err)
-	}
-
-	v.RegisterType((*types.IntKey)(new(int32)))
-	v.RegisterType(types.JsonPayload[UserData]{})
-
-	users, err := GetOrCreateCollection[types.IntKey, types.JsonPayload[UserData]](
-		v, "users", types.IntLess, (*types.IntKey)(new(int32)),
-	)
-	if err != nil {
-		t.Fatalf("Failed to create users collection: %v", err)
-	}
+	v := newTestVault(t)
+	users := addCollection[types.IntKey, types.JsonPayload[testutil.TestUserData]](t, v, "users")
 
 	// Insert data
 	for i := range 20 {
-		key := types.IntKey(i)
-		users.Insert(&key, types.JsonPayload[UserData]{
-			Value: UserData{Username: "user", Email: "user@example.com", Age: 25},
-		})
+		insertTestUser(t, users, int32(i), "user")
 	}
 
 	initialStats := v.GetMemoryStats()
@@ -131,17 +82,7 @@ func TestVaultFlushOlderThan(t *testing.T) {
 // TestEnableMemoryMonitoring verifies that automatic memory monitoring triggers
 // flushing when conditions are met.
 func TestEnableMemoryMonitoring(t *testing.T) {
-	tempDir := t.TempDir()
-	storePath := filepath.Join(tempDir, "monitoring.db")
-	stre, err := store.NewBasicStore(storePath)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
-
-	v, err := LoadVault(stre)
-	if err != nil {
-		t.Fatalf("Failed to load vault: %v", err)
-	}
+	v := newMockVault(t)
 
 	v.RegisterType((*types.IntKey)(new(int32)))
 	v.RegisterType(types.JsonPayload[UserData]{})
@@ -195,17 +136,7 @@ func TestEnableMemoryMonitoring(t *testing.T) {
 
 // TestSetMemoryBudget verifies the convenience function for setting a memory budget.
 func TestSetMemoryBudget(t *testing.T) {
-	tempDir := t.TempDir()
-	storePath := filepath.Join(tempDir, "budget.db")
-	stre, err := store.NewBasicStore(storePath)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
-
-	v, err := LoadVault(stre)
-	if err != nil {
-		t.Fatalf("Failed to load vault: %v", err)
-	}
+	v := newMockVault(t)
 
 	v.RegisterType((*types.IntKey)(new(int32)))
 	v.RegisterType(types.JsonPayload[UserData]{})
@@ -244,17 +175,7 @@ func TestSetMemoryBudget(t *testing.T) {
 // TestMemoryStatsMultipleCollections verifies that memory stats work correctly
 // with multiple collections.
 func TestMemoryStatsMultipleCollections(t *testing.T) {
-	tempDir := t.TempDir()
-	storePath := filepath.Join(tempDir, "multi_stats.db")
-	stre, err := store.NewBasicStore(storePath)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
-
-	v, err := LoadVault(stre)
-	if err != nil {
-		t.Fatalf("Failed to load vault: %v", err)
-	}
+	v := newMockVault(t)
 
 	v.RegisterType((*types.IntKey)(new(int32)))
 	v.RegisterType((*types.StringKey)(new(string)))
@@ -313,17 +234,7 @@ func TestMemoryStatsMultipleCollections(t *testing.T) {
 // TestMemoryMonitoringWithNoMonitor verifies that operations work normally
 // when no memory monitor is configured.
 func TestMemoryMonitoringWithNoMonitor(t *testing.T) {
-	tempDir := t.TempDir()
-	storePath := filepath.Join(tempDir, "no_monitor.db")
-	stre, err := store.NewBasicStore(storePath)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
-
-	v, err := LoadVault(stre)
-	if err != nil {
-		t.Fatalf("Failed to load vault: %v", err)
-	}
+	v := newMockVault(t)
 
 	v.RegisterType((*types.IntKey)(new(int32)))
 	v.RegisterType(types.JsonPayload[UserData]{})
@@ -360,17 +271,7 @@ func TestMemoryMonitoringWithNoMonitor(t *testing.T) {
 // TestSetMemoryBudgetWithPercentile verifies that SetMemoryBudgetWithPercentile
 // automatically flushes the oldest percentage of nodes when memory limit is exceeded.
 func TestSetMemoryBudgetWithPercentile(t *testing.T) {
-	tempDir := t.TempDir()
-	storePath := filepath.Join(tempDir, "percentile_budget.db")
-	stre, err := store.NewBasicStore(storePath)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
-
-	v, err := LoadVault(stre)
-	if err != nil {
-		t.Fatalf("Failed to load vault: %v", err)
-	}
+	v := newMockVault(t)
 
 	v.RegisterType((*types.IntKey)(new(int32)))
 	v.RegisterType(types.JsonPayload[UserData]{})
@@ -543,17 +444,7 @@ func TestSetMemoryBudgetWithPercentile_LargeDataset(t *testing.T) {
 // TestFlushOldestPercentile verifies that FlushOldestPercentile correctly
 // flushes the oldest percentage of nodes across all collections.
 func TestFlushOldestPercentile(t *testing.T) {
-	tempDir := t.TempDir()
-	storePath := filepath.Join(tempDir, "flush_percentile.db")
-	stre, err := store.NewBasicStore(storePath)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
-
-	v, err := LoadVault(stre)
-	if err != nil {
-		t.Fatalf("Failed to load vault: %v", err)
-	}
+	v := newMockVault(t)
 
 	v.RegisterType((*types.IntKey)(new(int32)))
 	v.RegisterType(types.JsonPayload[UserData]{})
@@ -604,17 +495,7 @@ func TestFlushOldestPercentile(t *testing.T) {
 
 // TestFlushOldestPercentileInvalidInput verifies error handling for invalid percentages.
 func TestFlushOldestPercentileInvalidInput(t *testing.T) {
-	tempDir := t.TempDir()
-	storePath := filepath.Join(tempDir, "invalid_percentile.db")
-	stre, err := store.NewBasicStore(storePath)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
-
-	v, err := LoadVault(stre)
-	if err != nil {
-		t.Fatalf("Failed to load vault: %v", err)
-	}
+	v := newMockVault(t)
 
 	// Test invalid percentages
 	testCases := []int{0, -1, 101, 150}

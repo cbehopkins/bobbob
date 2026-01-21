@@ -12,6 +12,7 @@ import (
 	"unsafe"
 
 	"github.com/cbehopkins/bobbob/store"
+	"github.com/cbehopkins/bobbob/store/allocator"
 	"github.com/cbehopkins/bobbob/yggdrasil/types"
 )
 
@@ -915,6 +916,68 @@ func (t *PersistentTreap[T]) Persist() error {
 	return nil
 }
 
+// CompactSuboptimalAllocations deletes nodes that reside in sub-optimal block
+// allocators (smaller blockCount than the current pool) and marks them for
+// reallocation on the next persist. Nodes remain in the treap; only their
+// stored ObjectIds are cleared and the backing objects are deleted.
+func (t *PersistentTreap[T]) CompactSuboptimalAllocations() (int, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	provider, ok := t.Store.(store.AllocatorProvider)
+	if !ok {
+		return 0, nil
+	}
+	compactor, ok := provider.Allocator().(allocator.BlockAllocatorCompactor)
+	if !ok {
+		return 0, nil
+	}
+
+	var zero PersistentTreapNode[T]
+	nodeSize := zero.sizeInBytes()
+	blockSize, allocatorIndex, _, found := compactor.FindSmallestBlockAllocatorForSize(nodeSize)
+	if !found {
+		return 0, nil
+	}
+
+	objectIds := compactor.GetObjectIdsInAllocator(blockSize, allocatorIndex)
+	if len(objectIds) == 0 {
+		return 0, nil
+	}
+
+	idSet := make(map[store.ObjectId]struct{}, len(objectIds))
+	for _, id := range objectIds {
+		if store.IsValidObjectId(id) {
+			idSet[id] = struct{}{}
+		}
+	}
+
+	deleted := 0
+	var walk func(TreapNodeInterface[T])
+	walk = func(node TreapNodeInterface[T]) {
+		if node == nil || node.IsNil() {
+			return
+		}
+		pnode, ok := node.(*PersistentTreapNode[T])
+		if !ok {
+			return
+		}
+
+		walk(pnode.GetLeft())
+		if store.IsValidObjectId(pnode.objectId) {
+			if _, hit := idSet[pnode.objectId]; hit {
+				_ = t.Store.DeleteObj(pnode.objectId) // best effort cleanup
+				pnode.SetObjectId(store.ObjNotAllocated)
+				deleted++
+			}
+		}
+		walk(pnode.GetRight())
+	}
+
+	walk(t.root)
+	return deleted, nil
+}
+
 // collectPersistentNodesPostOrder collects persistent nodes in post-order to ensure
 // children appear before parents. This is used by BatchPersist for contiguous runs.
 func collectPersistentNodesPostOrder[T any](node TreapNodeInterface[T], out *[]*PersistentTreapNode[T]) error {
@@ -1249,6 +1312,8 @@ type NodeInfo[T any] struct {
 // Returns a slice of NodeInfo containing each node and its last access time.
 func (t *PersistentTreap[T]) GetInMemoryNodes() []NodeInfo[T] {
 	var nodes []NodeInfo[T]
+	t.mu.RLock()
+	defer t.mu.RUnlock()
 	t.collectInMemoryNodes(t.root, &nodes)
 	return nodes
 }
@@ -1256,6 +1321,8 @@ func (t *PersistentTreap[T]) GetInMemoryNodes() []NodeInfo[T] {
 // CountInMemoryNodes returns the count of nodes currently loaded in memory.
 // This is more efficient than len(GetInMemoryNodes()) as it doesn't allocate the slice.
 func (t *PersistentTreap[T]) CountInMemoryNodes() int {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
 	return t.countInMemoryNodes(t.root)
 }
 

@@ -5,3 +5,6 @@
 *.tmp
 *.bak
 *.swp
+*.allocs.json
+*.allocs.idx
+*.dat

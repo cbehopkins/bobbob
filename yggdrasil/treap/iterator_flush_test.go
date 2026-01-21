@@ -3,7 +3,7 @@ package treap
 import (
 	"testing"
 
-	"github.com/cbehopkins/bobbob/store"
+	"github.com/cbehopkins/bobbob/internal/testutil"
 	"github.com/cbehopkins/bobbob/yggdrasil/types"
 )
 
@@ -11,10 +11,7 @@ import (
 // TestAggressiveFlushing verifies that WalkKeys with KeepInMemory=false aggressively
 // flushes nodes during iteration, reducing memory usage during traversal.
 func TestAggressiveFlushing(t *testing.T) {
-	stre, err := store.NewBasicStore(t.TempDir() + "/test.db")
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
+	stre := testutil.NewMockStore()
 	defer stre.Close()
 
 	templateKey := types.IntKey(0).New()
@@ -33,7 +30,7 @@ func TestAggressiveFlushing(t *testing.T) {
 	treap.InsertComplex(&k7, Priority(800))
 
 	// Persist everything
-	err = treap.Persist()
+	err := treap.Persist()
 	if err != nil {
 		t.Fatalf("Failed to persist tree: %v", err)
 	}
@@ -82,10 +79,7 @@ func TestAggressiveFlushing(t *testing.T) {
 // TestFlushingComparison compares memory usage between KeepInMemory=true and
 // KeepInMemory=false, demonstrating the memory reduction from aggressive flushing.
 func TestFlushingComparison(t *testing.T) {
-	stre, err := store.NewBasicStore(t.TempDir() + "/test.db")
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
+	stre := testutil.NewMockStore()
 	defer stre.Close()
 
 	templateKey := types.IntKey(0).New()

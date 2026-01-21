@@ -3,6 +3,7 @@ package allocator
 import (
 	"encoding/binary"
 	"errors"
+	"os"
 )
 
 type blockAllocator struct {
@@ -13,6 +14,8 @@ type blockAllocator struct {
 	startingFileOffset FileOffset
 	startingObjectId   ObjectId
 	allAllocated       bool
+	// File handle for direct I/O operations
+	file *os.File
 }
 
 // NewBlockAllocator creates a new block allocator for fixed-size blocks.
@@ -22,7 +25,8 @@ type blockAllocator struct {
 // blockCount is the number of blocks in the allocator.
 // startingFileOffset is the file offset where the first block begins.
 // startingObjectId is the ObjectId for the first block.
-func NewBlockAllocator(blockSize, blockCount int, startingFileOffset FileOffset, startingObjectId ObjectId) *blockAllocator {
+// file is the file handle for direct I/O operations (can be nil if not needed).
+func NewBlockAllocator(blockSize, blockCount int, startingFileOffset FileOffset, startingObjectId ObjectId, file *os.File) *blockAllocator {
 	allocatedList := make([]bool, blockCount)
 	requestedSizes := make([]int, blockCount)
 	return &blockAllocator{
@@ -32,6 +36,7 @@ func NewBlockAllocator(blockSize, blockCount int, startingFileOffset FileOffset,
 		requestedSizes:     requestedSizes,
 		startingFileOffset: startingFileOffset,
 		startingObjectId:   startingObjectId,
+		file:               file,
 	}
 }
 
@@ -209,6 +214,11 @@ func (a *blockAllocator) GetFileOffset(objId ObjectId) (FileOffset, error) {
 	return a.startingFileOffset + FileOffset(slotIndex*a.blockSize), nil
 }
 
+func (a *blockAllocator) SizeInBytes() int {
+	bitCount := (a.blockCount + 7) / 8
+	return 8 + bitCount + 2*a.blockCount
+}
+
 func (a *blockAllocator) Marshal() ([]byte, error) {
 	bitCount := (a.blockCount + 7) / 8
 	data := make([]byte, 8+bitCount+2*a.blockCount)
@@ -230,8 +240,14 @@ func (a *blockAllocator) Marshal() ([]byte, error) {
 func (a *blockAllocator) Unmarshal(data []byte) error {
 	bitCount := (a.blockCount + 7) / 8
 	expected := 8 + bitCount + 2*a.blockCount
-	if len(data) != expected {
-		return errors.New("invalid data length")
+	if len(data) < expected {
+		// Pad with zeros to expected length
+		padded := make([]byte, expected)
+		copy(padded, data)
+		data = padded
+	}
+	if len(data) > expected {
+		data = data[:expected]
 	}
 	a.startingFileOffset = FileOffset(binary.LittleEndian.Uint64(data[0:8]))
 	a.startingObjectId = ObjectId(a.startingFileOffset)

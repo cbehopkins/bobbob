@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"time"
 
 	"github.com/cbehopkins/bobbob/store/allocator"
 )
@@ -28,7 +27,6 @@ func NewBasicStore(filePath string) (*baseStore, error) {
 	if _, err := os.Stat(filePath); err == nil {
 		return LoadBaseStore(filePath)
 	}
-	pointerSize := 8
 	file, err := os.Create(filePath)
 	if err != nil {
 		return nil, err
@@ -37,9 +35,9 @@ func NewBasicStore(filePath string) (*baseStore, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Start background flush of allocator cache every 5 seconds
-	alloc.StartBackgroundFlush(5 * time.Second)
-	alloc.End = int64(pointerSize)
+	// Start background flush of allocator cache
+	alloc.StartBackgroundFlush(AllocatorBackgroundFlushInterval)
+	alloc.End = int64(HeaderSize)
 	// Initialize the Store
 	store := &baseStore{
 		filePath:  filePath,
@@ -47,10 +45,10 @@ func NewBasicStore(filePath string) (*baseStore, error) {
 		objectMap: NewObjectMap(),
 		allocator: alloc,
 	}
-	store.objectMap.Set(0, ObjectInfo{Offset: 0, Size: pointerSize})
+	store.objectMap.Set(0, ObjectInfo{Offset: 0, Size: HeaderSize})
 
 	// Write the initial offset (zero) to the store
-	_, err = file.Write(make([]byte, pointerSize))
+	_, err = file.Write(make([]byte, HeaderSize))
 	if err != nil {
 		return nil, err
 	}
@@ -89,8 +87,8 @@ func LoadBaseStore(filePath string) (*baseStore, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to init allocator: %w", err)
 	}
-	// Start background flush of allocator cache every 5 seconds
-	alloc.StartBackgroundFlush(5 * time.Second)
+	// Start background flush of allocator cache
+	alloc.StartBackgroundFlush(AllocatorBackgroundFlushInterval)
 	alloc.End = initialOffset
 	// Initialize the Store
 	store := &baseStore{
@@ -139,18 +137,16 @@ func (s *baseStore) updateInitialOffset(fileOffset FileOffset) error {
 // This provides a stable, known location for storing top-level metadata.
 func (s *baseStore) PrimeObject(size int) (ObjectId, error) {
 	// Sanity check: prevent unreasonably large prime objects
-	const maxPrimeObjectSize = 1024 * 1024 // 1MB should be plenty for metadata
-	if size < 0 || size > maxPrimeObjectSize {
-		return ObjNotAllocated, fmt.Errorf("invalid prime object size %d (must be between 0 and %d)", size, maxPrimeObjectSize)
+	if size < 0 || size > MaxPrimeObjectSize {
+		return ObjNotAllocated, fmt.Errorf("invalid prime object size %d (must be between 0 and %d)", size, MaxPrimeObjectSize)
 	}
 
 	if err := s.checkFileInitialized(); err != nil {
 		return ObjNotAllocated, err
 	}
 
-	// For baseStore, the prime object is the first object after the header (ObjectId 8)
-	const headerSize = 8
-	const primeObjectId = ObjectId(headerSize)
+	// For baseStore, the prime object is the first object after the header
+	const primeObjectId = ObjectId(PrimeObjectId)
 
 	// Check if the prime object already exists
 	_, found := s.objectMap.Get(primeObjectId)
@@ -259,7 +255,8 @@ func (s *baseStore) WriteToObj(objectId ObjectId) (io.Writer, Finisher, error) {
 		return nil, nil, errors.New("object not found")
 	}
 	writer := CreateSectionWriter(s.file, obj.Offset, obj.Size)
-	return writer, s.createCloser(objectId), nil
+	// BaseStore has no per-object resources that need cleanup, return a no-op finisher
+	return writer, func() error { return nil }, nil
 }
 
 // WriteBatchedObjs implements batched writing for consecutive objects.
@@ -322,16 +319,6 @@ func (s *baseStore) GetObjectInfo(objId ObjectId) (ObjectInfo, bool) {
 	return s.objectMap.Get(objId)
 }
 
-func (s *baseStore) createCloser(objectId ObjectId) func() error {
-	return func() error {
-		_, found := s.objectMap.Get(objectId)
-		if !found { // This should never happen
-			return errors.New("object not found in the closer. This is very bad!")
-		}
-		return nil
-	}
-}
-
 // LateReadObj is the fundamental read method that returns a reader for streaming access.
 // This is the primitive operation; ReadBytesFromObj is a convenience wrapper.
 func (s *baseStore) LateReadObj(objId ObjectId) (io.Reader, Finisher, error) {
@@ -352,7 +339,8 @@ func (s *baseStore) lateReadObj(objId ObjectId) (io.Reader, Finisher, error) {
 	// For now they are always the same but we will implement a mapping in the future
 	fileOffset := FileOffset(obj.Offset)
 	reader := CreateSectionReader(s.file, fileOffset, obj.Size)
-	return reader, s.createCloser(objId), nil
+	// BaseStore has no per-object resources that need cleanup, return a no-op finisher
+	return reader, func() error { return nil }, nil
 }
 
 func (s *baseStore) DeleteObj(objId ObjectId) error {
@@ -402,7 +390,7 @@ func (s *baseStore) Close() error {
 	// Mark as closed to prevent further operations
 	s.closed = true
 
-	data, err := s.objectMap.Marshal()
+	data, err := s.objectMap.Serialize()
 	if err != nil {
 		return fmt.Errorf("failed to marshal object map: %w", err)
 	}

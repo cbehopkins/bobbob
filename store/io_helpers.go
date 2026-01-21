@@ -94,3 +94,72 @@ func WriteBatchedSections(file *os.File, firstOffset FileOffset, sections [][]by
 
 	return file.WriteAt(data, int64(firstOffset))
 }
+
+// ObjectInfoProvider is an interface for retrieving object location information.
+// Both baseStore (via ObjectMap) and multiStore (via allocators) implement this.
+type ObjectInfoProvider interface {
+	GetObjectInfo(objId ObjectId) (ObjectInfo, bool)
+}
+
+// LateReadWithTokens is a reusable helper for implementing LateReadObj with token management.
+// It handles the common pattern of:
+// 1. Acquiring a disk token
+// 2. Looking up object info
+// 3. Creating a section reader
+// 4. Returning a finisher that releases the token
+//
+// This eliminates duplication between baseStore and multiStore implementations.
+func LateReadWithTokens(file *os.File, objId ObjectId, infoProvider ObjectInfoProvider, tokenManager *DiskTokenManager) (io.Reader, Finisher, error) {
+	tokenManager.Acquire()
+
+	obj, found := infoProvider.GetObjectInfo(objId)
+	if !found {
+		tokenManager.Release()
+		return nil, nil, io.ErrUnexpectedEOF
+	}
+
+	reader := CreateSectionReader(file, obj.Offset, obj.Size)
+	return reader, CreateFinisherWithToken(tokenManager), nil
+}
+
+// LateWriteNewWithTokens is a reusable helper for implementing LateWriteNewObj with token management.
+// It handles the common pattern of:
+// 1. Acquiring a disk token
+// 2. Allocating a new object (via provided allocation function)
+// 3. Creating a section writer
+// 4. Returning a finisher that releases the token
+//
+// The allocateFn parameter allows baseStore and multiStore to use their own allocation strategies.
+func LateWriteNewWithTokens(file *os.File, size int, allocateFn func(int) (ObjectId, FileOffset, error), tokenManager *DiskTokenManager) (ObjectId, io.Writer, Finisher, error) {
+	tokenManager.Acquire()
+
+	objId, fileOffset, err := allocateFn(size)
+	if err != nil {
+		tokenManager.Release()
+		return ObjNotAllocated, nil, nil, err
+	}
+
+	writer := CreateSectionWriter(file, fileOffset, size)
+	return objId, writer, CreateFinisherWithToken(tokenManager), nil
+}
+
+// WriteToObjWithTokens is a reusable helper for implementing WriteToObj with token management.
+// It handles the common pattern of:
+// 1. Acquiring a disk token
+// 2. Looking up object info
+// 3. Creating a section writer
+// 4. Returning a finisher that releases the token
+//
+// This eliminates duplication between baseStore and multiStore implementations.
+func WriteToObjWithTokens(file *os.File, objId ObjectId, infoProvider ObjectInfoProvider, tokenManager *DiskTokenManager) (io.Writer, Finisher, error) {
+	tokenManager.Acquire()
+
+	obj, found := infoProvider.GetObjectInfo(objId)
+	if !found {
+		tokenManager.Release()
+		return nil, nil, io.ErrUnexpectedEOF
+	}
+
+	writer := CreateSectionWriter(file, obj.Offset, obj.Size)
+	return writer, CreateFinisherWithToken(tokenManager), nil
+}

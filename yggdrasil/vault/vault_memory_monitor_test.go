@@ -2,11 +2,10 @@ package vault
 
 import (
 	"fmt"
-	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/cbehopkins/bobbob/yggdrasil/treap"
 	"github.com/cbehopkins/bobbob/yggdrasil/types"
 )
 
@@ -15,25 +14,24 @@ import (
 // This is a regression test for cases where callbacks were never invoked despite
 // exceeding the node budget.
 func TestMemoryMonitorCallbacksAreInvoked(t *testing.T) {
-	file := filepath.Join(t.TempDir(), "vault_memory_monitor.db")
+	// Use MockStore for faster, logic-focused testing of monitoring callbacks
+	v := newMockVault(t)
+	defer v.Close()
 
-	session, colls, err := OpenVaultWithIdentity(
-		file,
-		PayloadIdentitySpec[string, types.IntKey, types.JsonPayload[string]]{
-			Identity:        "testColl",
-			LessFunc:        types.IntLess,
-			KeyTemplate:     new(types.IntKey),
-			PayloadTemplate: types.JsonPayload[string]{},
-		},
+	// Register types needed for collection
+	v.RegisterType((*types.StringKey)(new(string)))
+	v.RegisterType((*types.IntKey)(new(int32)))
+	v.RegisterType(types.JsonPayload[string]{})
+
+	// Create collection
+	coll, err := GetOrCreateCollection[types.IntKey, types.JsonPayload[string]](
+		v,
+		"testColl",
+		types.IntLess,
+		(*types.IntKey)(new(int32)),
 	)
 	if err != nil {
-		t.Fatalf("OpenVaultWithIdentity failed: %v", err)
-	}
-	defer session.Close()
-
-	coll, ok := colls["testColl"].(*treap.PersistentPayloadTreap[types.IntKey, types.JsonPayload[string]])
-	if !ok {
-		t.Fatalf("unexpected collection type: %T", colls["testColl"])
+		t.Fatalf("Failed to create collection: %v", err)
 	}
 
 	// Track callback invocations
@@ -49,7 +47,7 @@ func TestMemoryMonitorCallbacksAreInvoked(t *testing.T) {
 	}
 
 	// Set memory budget: max 50 nodes, flush oldest 50% when exceeded
-	session.Vault.SetMemoryBudgetWithPercentileWithCallbacks(50, 50, shouldFlushDebug, onFlushDebug)
+	v.SetMemoryBudgetWithPercentileWithCallbacks(50, 50, shouldFlushDebug, onFlushDebug)
 
 	// Insert hundreds of items to exceed the 50-node budget
 	// Note: checkMemoryAndFlush() must be called explicitly after operations
@@ -59,10 +57,10 @@ func TestMemoryMonitorCallbacksAreInvoked(t *testing.T) {
 		key := types.IntKey(i)
 		payload := types.JsonPayload[string]{Value: fmt.Sprintf("item-%d", i)}
 		coll.Insert(&key, payload)
-		
+
 		// The memory monitor checks at intervals (default: every 100 operations)
 		// In practice, you'd call this periodically or have a background task do it
-		if err := session.Vault.checkMemoryAndFlush(); err != nil {
+		if err := v.checkMemoryAndFlush(); err != nil {
 			t.Fatalf("checkMemoryAndFlush failed: %v", err)
 		}
 	}
@@ -80,7 +78,7 @@ func TestMemoryMonitorCallbacksAreInvoked(t *testing.T) {
 	}
 
 	// Final memory stats check
-	stats := session.Vault.GetMemoryStats()
+	stats := v.GetMemoryStats()
 	t.Logf("Final memory stats: totalNodes=%d, operationsSinceFlush=%d",
 		stats.TotalInMemoryNodes, stats.OperationsSinceLastFlush)
 }
@@ -88,25 +86,24 @@ func TestMemoryMonitorCallbacksAreInvoked(t *testing.T) {
 // TestMemoryMonitorDoesNotFlushIfUnderBudget verifies that when node count stays
 // below the threshold, flush callbacks are not invoked.
 func TestMemoryMonitorDoesNotFlushIfUnderBudget(t *testing.T) {
-	file := filepath.Join(t.TempDir(), "vault_memory_no_flush.db")
+	// Use MockStore for faster, logic-focused testing of monitoring behavior
+	v := newMockVault(t)
+	defer v.Close()
 
-	session, colls, err := OpenVaultWithIdentity(
-		file,
-		PayloadIdentitySpec[string, types.IntKey, types.JsonPayload[string]]{
-			Identity:        "testColl",
-			LessFunc:        types.IntLess,
-			KeyTemplate:     new(types.IntKey),
-			PayloadTemplate: types.JsonPayload[string]{},
-		},
+	// Register types needed for collection
+	v.RegisterType((*types.StringKey)(new(string)))
+	v.RegisterType((*types.IntKey)(new(int32)))
+	v.RegisterType(types.JsonPayload[string]{})
+
+	// Create collection
+	coll, err := GetOrCreateCollection[types.IntKey, types.JsonPayload[string]](
+		v,
+		"testColl",
+		types.IntLess,
+		(*types.IntKey)(new(int32)),
 	)
 	if err != nil {
-		t.Fatalf("OpenVaultWithIdentity failed: %v", err)
-	}
-	defer session.Close()
-
-	coll, ok := colls["testColl"].(*treap.PersistentPayloadTreap[types.IntKey, types.JsonPayload[string]])
-	if !ok {
-		t.Fatalf("unexpected collection type: %T", colls["testColl"])
+		t.Fatalf("Failed to create collection: %v", err)
 	}
 
 	shouldFlushCalls := 0
@@ -118,11 +115,14 @@ func TestMemoryMonitorDoesNotFlushIfUnderBudget(t *testing.T) {
 		onFlushCalls++
 	}
 
+	// Disable background monitoring for deterministic testing
+	v.SetBackgroundMonitoring(false)
+
 	// Set high memory budget: max 10000 nodes (we'll only insert 50)
-	session.Vault.SetMemoryBudgetWithPercentileWithCallbacks(10000, 50, shouldFlushDebug, onFlushDebug)
-	
+	v.SetMemoryBudgetWithPercentileWithCallbacks(10000, 50, shouldFlushDebug, onFlushDebug)
+
 	// Lower the check interval so we actually check during our small test
-	session.Vault.SetCheckInterval(10)
+	v.SetCheckInterval(10)
 
 	// Insert only a few items (well under budget)
 	// Note: checkMemoryAndFlush() must be called explicitly (see above)
@@ -131,8 +131,8 @@ func TestMemoryMonitorDoesNotFlushIfUnderBudget(t *testing.T) {
 		key := types.IntKey(i)
 		payload := types.JsonPayload[string]{Value: fmt.Sprintf("item-%d", i)}
 		coll.Insert(&key, payload)
-		
-		if err := session.Vault.checkMemoryAndFlush(); err != nil {
+
+		if err := v.checkMemoryAndFlush(); err != nil {
 			t.Fatalf("checkMemoryAndFlush failed: %v", err)
 		}
 	}
@@ -154,42 +154,40 @@ func TestMemoryMonitorDoesNotFlushIfUnderBudget(t *testing.T) {
 // calls checkMemoryAndFlush without explicit intervention. This is the ideal UX where
 // SetMemoryBudgetWithPercentile() handles everything automatically.
 func TestBackgroundMemoryMonitoring(t *testing.T) {
-	file := filepath.Join(t.TempDir(), "vault_background_monitor.db")
+	// Use MockStore for faster, logic-focused testing of background monitoring
+	v := newMockVault(t)
+	defer v.Close()
 
-	session, colls, err := OpenVaultWithIdentity(
-		file,
-		PayloadIdentitySpec[string, types.IntKey, types.JsonPayload[string]]{
-			Identity:        "testColl",
-			LessFunc:        types.IntLess,
-			KeyTemplate:     new(types.IntKey),
-			PayloadTemplate: types.JsonPayload[string]{},
-		},
+	// Register types needed for collection
+	v.RegisterType((*types.StringKey)(new(string)))
+	v.RegisterType((*types.IntKey)(new(int32)))
+	v.RegisterType(types.JsonPayload[string]{})
+
+	// Create collection
+	coll, err := GetOrCreateCollection[types.IntKey, types.JsonPayload[string]](
+		v,
+		"testColl",
+		types.IntLess,
+		(*types.IntKey)(new(int32)),
 	)
 	if err != nil {
-		t.Fatalf("OpenVaultWithIdentity failed: %v", err)
-	}
-	defer session.Close()
-
-	coll, ok := colls["testColl"].(*treap.PersistentPayloadTreap[types.IntKey, types.JsonPayload[string]])
-	if !ok {
-		t.Fatalf("unexpected collection type: %T", colls["testColl"])
+		t.Fatalf("Failed to create collection: %v", err)
 	}
 
-	shouldFlushCalls := 0
-	onFlushCalls := 0
+	var shouldFlushCalls, onFlushCalls int32
 	shouldFlushDebug := func(stats MemoryStats, shouldFlush bool) {
-		shouldFlushCalls++
+		atomic.AddInt32(&shouldFlushCalls, 1)
 	}
 	onFlushDebug := func(stats MemoryStats, flushed int) {
-		onFlushCalls++
+		atomic.AddInt32(&onFlushCalls, 1)
 		t.Logf("Background flush: %d nodes flushed", flushed)
 	}
 
 	// Enable memory monitoring with low budget - background goroutine takes over from here
-	session.Vault.SetMemoryBudgetWithPercentileWithCallbacks(50, 50, shouldFlushDebug, onFlushDebug)
-	
+	v.SetMemoryBudgetWithPercentileWithCallbacks(50, 50, shouldFlushDebug, onFlushDebug)
+
 	// Start the background monitoring goroutine to automatically check memory periodically
-	session.Vault.StartBackgroundMonitoring()
+	v.StartBackgroundMonitoring()
 
 	// Insert items WITHOUT calling checkMemoryAndFlush()
 	// The background goroutine should handle memory checks automatically
@@ -206,21 +204,21 @@ func TestBackgroundMemoryMonitoring(t *testing.T) {
 	time.Sleep(500 * time.Millisecond)
 
 	t.Logf("Inserted %d items with max budget of 50 nodes (automatic background monitoring)", numInserts)
-	t.Logf("shouldFlushDebug called: %d times", shouldFlushCalls)
-	t.Logf("onFlushDebug called: %d times", onFlushCalls)
+	t.Logf("shouldFlushDebug called: %d times", atomic.LoadInt32(&shouldFlushCalls))
+	t.Logf("onFlushDebug called: %d times", atomic.LoadInt32(&onFlushCalls))
 
 	// Verify the background goroutine was active and flushing
 	// Since we inserted 500 items with a 50-node budget and the background goroutine
 	// checks every 100ms, we should definitely see some flush callbacks
-	if shouldFlushCalls == 0 {
+	if atomic.LoadInt32(&shouldFlushCalls) == 0 {
 		t.Error("expected background goroutine to invoke shouldFlushDebug, but it was never called")
 	}
-	if onFlushCalls == 0 {
+	if atomic.LoadInt32(&onFlushCalls) == 0 {
 		t.Error("expected background goroutine to invoke onFlushDebug, but it was never called")
 	}
 
 	// Verify memory was actually flushed (only a few nodes should remain)
-	stats := session.Vault.GetMemoryStats()
+	stats := v.GetMemoryStats()
 	if stats.TotalInMemoryNodes > 100 {
 		t.Logf("Warning: expected fewer nodes in memory, but have %d nodes", stats.TotalInMemoryNodes)
 	}

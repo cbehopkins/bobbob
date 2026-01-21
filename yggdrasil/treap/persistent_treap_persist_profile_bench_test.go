@@ -17,15 +17,18 @@ import (
 // the time taken to persist them to disk.
 //
 // To run with CPU profiling:
-//   go test -bench=BenchmarkPersistLargeTrees -benchtime=10x -cpuprofile=cpu.prof ./yggdrasil/treap
-//   go tool pprof cpu.prof
+//
+//	go test -bench=BenchmarkPersistLargeTrees -benchtime=10x -cpuprofile=cpu.prof ./yggdrasil/treap
+//	go tool pprof cpu.prof
 //
 // To run with memory profiling:
-//   go test -bench=BenchmarkPersistLargeTrees -benchtime=10x -memprofile=mem.prof ./yggdrasil/treap
-//   go tool pprof mem.prof
+//
+//	go test -bench=BenchmarkPersistLargeTrees -benchtime=10x -memprofile=mem.prof ./yggdrasil/treap
+//	go tool pprof mem.prof
 //
 // To run with specific size:
-//   go test -bench=BenchmarkPersistLargeTrees/nodes=10000 -benchtime=5x ./yggdrasil/treap
+//
+//	go test -bench=BenchmarkPersistLargeTrees/nodes=10000 -benchtime=5x ./yggdrasil/treap
 func BenchmarkPersistLargeTrees(b *testing.B) {
 	// Test with progressively larger trees to expose scalability issues
 	nodeCounts := []int{
@@ -134,7 +137,7 @@ func BenchmarkPersistLargeTreesWithPayload(b *testing.B) {
 // to understand the performance difference and validate that the bottleneck is in Get().
 func BenchmarkBatchPersistVsRegularPersist(b *testing.B) {
 	nodeCounts := []int{10000, 50000, 100000}
-	
+
 	for _, nodeCount := range nodeCounts {
 		b.Run(fmt.Sprintf("Regular_Persist/nodes=%d", nodeCount), func(b *testing.B) {
 			ms, err := collections.NewMultiStore(filepath.Join(b.TempDir(), "regular_persist.bin"), 0)

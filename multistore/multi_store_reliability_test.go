@@ -1,4 +1,4 @@
-package collections
+package multistore
 
 import (
 	"bytes"
@@ -7,6 +7,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/cbehopkins/bobbob/internal/testutil"
 	"github.com/cbehopkins/bobbob/store"
 )
 
@@ -14,7 +15,7 @@ import (
 // by performing operations across multiple open/close cycles
 func TestMultiStoreMultipleSessions(t *testing.T) {
 	filePath := "test_multiple_sessions.dat"
-	defer os.Remove(filePath)
+	defer testutil.CleanupTempFile(t, filePath)
 
 	// Session 1: Create initial objects
 	session1Objects := make([]struct {
@@ -203,7 +204,7 @@ func TestMultiStoreMultipleSessions(t *testing.T) {
 // TestMultiStoreLargeObjects tests handling of larger objects
 func TestMultiStoreLargeObjects(t *testing.T) {
 	filePath := "test_large_objects.dat"
-	defer os.Remove(filePath)
+	defer testutil.CleanupTempFile(t, filePath)
 
 	ms, err := NewMultiStore(filePath, 0)
 	if err != nil {
@@ -267,7 +268,7 @@ func TestMultiStoreLargeObjects(t *testing.T) {
 // TestMultiStoreUpdateObject tests updating object data multiple times
 func TestMultiStoreUpdateObject(t *testing.T) {
 	filePath := "test_update_object.dat"
-	defer os.Remove(filePath)
+	defer testutil.CleanupTempFile(t, filePath)
 
 	ms, err := NewMultiStore(filePath, 0)
 	if err != nil {
@@ -322,7 +323,7 @@ func TestMultiStoreUpdateObject(t *testing.T) {
 // TestMultiStoreSpaceReuse tests that freed space is reused
 func TestMultiStoreSpaceReuse(t *testing.T) {
 	filePath := "test_space_reuse.dat"
-	defer os.Remove(filePath)
+	defer testutil.CleanupTempFile(t, filePath)
 
 	ms, err := NewMultiStore(filePath, 0)
 	if err != nil {
@@ -408,7 +409,7 @@ func TestMultiStoreSpaceReuse(t *testing.T) {
 // TestMultiStoreEmptyObjectHandling tests creating empty or very small objects
 func TestMultiStoreEmptyObjectHandling(t *testing.T) {
 	filePath := "test_empty_objects.dat"
-	defer os.Remove(filePath)
+	defer testutil.CleanupTempFile(t, filePath)
 
 	ms, err := NewMultiStore(filePath, 0)
 	if err != nil {
@@ -471,7 +472,7 @@ func TestMultiStoreEmptyObjectHandling(t *testing.T) {
 // TestMultiStoreConcurrentUpdatesAndReads tests reading while writing
 func TestMultiStoreConcurrentUpdatesAndReads(t *testing.T) {
 	filePath := "test_concurrent_ops.dat"
-	defer os.Remove(filePath)
+	defer testutil.CleanupTempFile(t, filePath)
 
 	ms, err := NewMultiStore(filePath, 0)
 	if err != nil {
@@ -557,7 +558,7 @@ func TestMultiStoreConcurrentUpdatesAndReads(t *testing.T) {
 // complex operations across multiple sessions
 func TestMultiStorePersistenceAcrossSessionsWithMixedOps(t *testing.T) {
 	filePath := "test_mixed_ops_persistence.dat"
-	defer os.Remove(filePath)
+	defer testutil.CleanupTempFile(t, filePath)
 
 	// Session 1: Create initial state
 	var obj1, obj2, obj3 store.ObjectId

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/cbehopkins/bobbob/store"
+	"github.com/cbehopkins/bobbob/internal/testutil"
 	"github.com/cbehopkins/bobbob/yggdrasil/types"
 )
 
@@ -12,10 +12,7 @@ import (
 // TestSimpleWalkInOrder verifies that WalkInOrder visits all nodes in ascending order
 // and that the callback receives each node's key and payload correctly.
 func TestSimpleWalkInOrder(t *testing.T) {
-	stre, err := store.NewBasicStore(t.TempDir() + "/test.db")
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
+	stre := testutil.NewMockStore()
 	defer stre.Close()
 
 	templateKey := types.IntKey(0).New()
@@ -29,7 +26,7 @@ func TestSimpleWalkInOrder(t *testing.T) {
 	}
 
 	// Persist the tree
-	err = treap.Persist()
+	err := treap.Persist()
 	if err != nil {
 		t.Fatalf("Failed to persist tree: %v", err)
 	}
@@ -68,10 +65,7 @@ func TestSimpleWalkInOrder(t *testing.T) {
 // TestSimpleWalkKeys verifies that WalkKeys visits all keys in ascending order,
 // providing a simpler interface than WalkInOrder when payloads aren't needed.
 func TestSimpleWalkKeys(t *testing.T) {
-	stre, err := store.NewBasicStore(t.TempDir() + "/test.db")
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
+	stre := testutil.NewMockStore()
 	defer stre.Close()
 
 	templateKey := types.IntKey(0).New()
@@ -83,7 +77,7 @@ func TestSimpleWalkKeys(t *testing.T) {
 		treap.Insert(&key)
 	}
 
-	err = treap.Persist()
+	err := treap.Persist()
 	if err != nil {
 		t.Fatalf("Failed to persist tree: %v", err)
 	}
@@ -116,10 +110,7 @@ func TestSimpleWalkKeys(t *testing.T) {
 // TestSimpleCount verifies that Count returns the correct number of nodes in a treap,
 // including empty treaps and treaps with multiple nodes.
 func TestSimpleCount(t *testing.T) {
-	stre, err := store.NewBasicStore(t.TempDir() + "/test.db")
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
+	stre := testutil.NewMockStore()
 	defer stre.Close()
 
 	templateKey := types.IntKey(0).New()

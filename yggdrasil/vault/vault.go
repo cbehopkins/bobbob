@@ -118,6 +118,9 @@ type MemoryMonitor struct {
 
 	// operationCount tracks operations since last check
 	operationCount int
+
+	// mu protects operationCount from concurrent access
+	mu sync.Mutex
 }
 
 // Vault is the top-level abstraction for working with multiple collections
@@ -461,12 +464,25 @@ func (v *Vault) PersistCollection(collectionName string) error {
 // Close persists all active collections and closes the underlying store.
 // You should call this when you're done with the vault.
 // If any collections fail to persist, it continues and returns all errors.
-func (v *Vault) Close() error {
+func (v *Vault) Close() (err error) {
 	// Stop background memory monitoring if it's running
 	if v.monitorStopChan != nil {
 		close(v.monitorStopChan)
 		v.monitorWg.Wait()
 		v.monitorStopChan = nil
+	}
+
+	// Always attempt to close the store, even if we encounter errors earlier.
+	if v.Store != nil {
+		defer func() {
+			if cerr := v.Store.Close(); cerr != nil {
+				if err != nil {
+					err = fmt.Errorf("%w; store close: %v", err, cerr)
+				} else {
+					err = fmt.Errorf("store close: %w", cerr)
+				}
+			}
+		}()
 	}
 
 	// Persist all active collections - accumulate errors instead of failing fast
@@ -527,8 +543,7 @@ func (v *Vault) Close() error {
 		return fmt.Errorf("failed to write metadata to prime object: %w", err)
 	}
 
-	// Close the store
-	return v.Store.Close()
+	return nil
 }
 
 // ListCollections returns the names of all collections in the vault.
@@ -579,7 +594,7 @@ func (v *Vault) EnableMemoryMonitoring(shouldFlush func(MemoryStats) bool, onFlu
 	v.memoryMonitor = &MemoryMonitor{
 		ShouldFlush:   shouldFlush,
 		OnFlush:       onFlush,
-		CheckInterval: 100, // default: check every 100 operations
+		CheckInterval: store.MemoryMonitorCheckInterval, // default: check every N operations
 	}
 
 	// Auto-start background monitoring if enabled by default
@@ -720,7 +735,9 @@ func (v *Vault) GetMemoryStats() MemoryStats {
 	}
 
 	if v.memoryMonitor != nil {
+		v.memoryMonitor.mu.Lock()
 		stats.OperationsSinceLastFlush = v.memoryMonitor.operationCount
+		v.memoryMonitor.mu.Unlock()
 	}
 
 	// Calculate memory breakdown
@@ -857,9 +874,12 @@ func (v *Vault) checkMemoryAndFlush() error {
 		return nil
 	}
 
+	v.memoryMonitor.mu.Lock()
 	v.memoryMonitor.operationCount++
+	count := v.memoryMonitor.operationCount
+	v.memoryMonitor.mu.Unlock()
 
-	if v.memoryMonitor.operationCount < v.memoryMonitor.CheckInterval {
+	if count < v.memoryMonitor.CheckInterval {
 		return nil
 	}
 
@@ -892,8 +912,8 @@ func (v *Vault) checkMemoryAndFlush() error {
 func (v *Vault) backgroundMemoryMonitor() {
 	defer v.monitorWg.Done()
 
-	// Check memory usage every 100ms
-	ticker := time.NewTicker(100 * time.Millisecond)
+	// Check memory usage at configured interval
+	ticker := time.NewTicker(store.MemoryMonitorBackgroundTickInterval)
 	defer ticker.Stop()
 
 	for {
@@ -922,7 +942,9 @@ func (v *Vault) backgroundMemoryMonitor() {
 						// Log error but continue monitoring
 						_ = err
 					}
+					v.memoryMonitor.mu.Lock()
 					v.memoryMonitor.operationCount = 0
+					v.memoryMonitor.mu.Unlock()
 				}
 			}()
 		}
@@ -970,15 +992,27 @@ func flushCollectionOldestPercentile(coll CollectionInterface, percentage int) (
 }
 
 // VaultSession manages a vault with pre-configured collections.
-// Call Close() when done to persist all changes.
-// FIXME this should be removed from the api in favor of direct Vault usage
-// Deprecated: use Vault directly instead.
+// Call Close() when done to persist all changes and close the underlying store.
+//
+// Deprecated: VaultSession is a legacy wrapper kept for backward compatibility.
+// Use Vault directly instead via LoadVault() for cleaner, more explicit code.
+// VaultSession will be removed in a future version.
+//
+// Migration guide:
+//
+//	Old: session, collections, _ := OpenVault(filename, specs...)
+//	New: use OpenVault which returns VaultSession for now, but switch to:
+//	     vault, _ := LoadVault(store); coll, _ := GetOrCreateCollection(vault, ...)
+//
+// Note: VaultSession.Close() does close the underlying store via Vault.Close(),
+// but the explicit Store field can be confusing. Direct Vault usage is clearer.
 type VaultSession struct {
 	Vault *Vault
 	Store store.Storer
 }
 
-// Close persists all changes and closes the vault.
+// Close persists all changes and closes the vault and its underlying store.
+// This closes both the vault metadata and the store itself.
 func (vs *VaultSession) Close() error {
 	return vs.Vault.Close()
 }
@@ -1124,13 +1158,13 @@ func OpenVault(filename string, specs ...CollectionSpec) (*VaultSession, []any, 
 	// Try to load existing store, or create new one
 	var s store.Storer
 	var err error
-	// Prefer MultiStore for optimized allocator routing
-	ms, mErr := multistore.LoadMultiStore(filename, 0)
+	// Use ConcurrentMultiStore for thread-safe access with optimized allocator routing
+	ms, mErr := multistore.LoadConcurrentMultiStore(filename, 0)
 	if mErr != nil {
-		// FIXME can we update this to use the concurrent store implementation?
-		ms, mErr = multistore.NewMultiStore(filename, 0)
+		// New vault: create concurrent multi-store
+		ms, mErr = multistore.NewConcurrentMultiStore(filename, 0)
 		if mErr != nil {
-			return nil, nil, fmt.Errorf("failed to create MultiStore: %w", mErr)
+			return nil, nil, fmt.Errorf("failed to create concurrent multi-store: %w", mErr)
 		}
 	}
 	s = ms

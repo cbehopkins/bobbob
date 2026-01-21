@@ -29,19 +29,8 @@ type ProductData struct {
 // TestVaultMultipleCollections demonstrates storing multiple collections
 // (users and products) in a single vault/store file.
 func TestVaultMultipleCollections(t *testing.T) {
-	// Setup: Create a new store
-	tempDir := t.TempDir()
-	storePath := filepath.Join(tempDir, "multi_collection.db")
-	stre, err := store.NewBasicStore(storePath)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
-
-	// Create a vault
-	v, err := LoadVault(stre)
-	if err != nil {
-		t.Fatalf("Failed to load vault: %v", err)
-	}
+	// Setup: Use fast in-memory mock store
+	v := newMockVault(t)
 
 	// Register all types we'll use (in a consistent order!)
 	// This order must be the same across sessions for consistency
@@ -165,18 +154,8 @@ func TestVaultMultipleCollections(t *testing.T) {
 // TestVaultKeyOnlyCollection demonstrates creating a collection
 // that stores only keys (no payloads) - useful for sets or indexes.
 func TestVaultKeyOnlyCollection(t *testing.T) {
-	// Setup
-	tempDir := t.TempDir()
-	storePath := filepath.Join(tempDir, "key_only.db")
-	stre, err := store.NewBasicStore(storePath)
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
-
-	v, err := LoadVault(stre)
-	if err != nil {
-		t.Fatalf("Failed to load vault: %v", err)
-	}
+	// Setup: Use fast in-memory mock store
+	v := newMockVault(t)
 
 	// Register types
 	v.RegisterType((*types.StringKey)(new(string)))

@@ -2,54 +2,31 @@ package allocator
 
 import (
 	"container/heap"
-	"encoding/binary"
 	"errors"
 	"io"
+	"maps"
 	"os"
-	"path/filepath"
 	"sort"
 	"sync"
 	"time"
+
+	"github.com/cbehopkins/bobbob/internal"
 )
 
-// ObjectId is an identifier unique within the store for an object.
-type ObjectId int64
+// ObjectId and FileOffset are aliases to internal definitions to avoid import cycles.
+type ObjectId = internal.ObjectId
+type FileOffset = internal.FileOffset
 
-// FileOffset represents a byte offset within a file.
-type FileOffset int64
-
-// SizeInBytes returns the number of bytes required to marshal this ObjectId.
-// It must satisfy the PersistentKey interface.
-func (id ObjectId) SizeInBytes() int {
-	return 8
+// Gap represents a free (unused) region in the file.
+type Gap struct {
+	Start int64
+	End   int64
 }
 
-// Equals reports whether this ObjectId equals another.
-func (id ObjectId) Equals(other ObjectId) bool {
-	return id == other
-}
-
-// Marshal converts the ObjectId into a fixed length bytes encoding
-func (id ObjectId) Marshal() ([]byte, error) {
-	buf := make([]byte, 8)
-	binary.LittleEndian.PutUint64(buf, uint64(id))
-	return buf, nil
-}
-
-// Unmarshal converts a fixed length bytes encoding into an ObjectId
-func (id *ObjectId) Unmarshal(data []byte) error {
-	if len(data) < 8 {
-		return errors.New("invalid data length for ObjectId")
-	}
-	*id = ObjectId(binary.LittleEndian.Uint64(data[:8]))
-	return nil
-}
-
-// PreMarshal returns the sizes of sub-objects needed to store the ObjectId.
-// For ObjectId, this is a single 8-byte value.
-func (id ObjectId) PreMarshal() []int {
-	return []int{8}
-}
+// Marshal interface type aliases to internal definitions.
+type MarshalComplex = internal.MarshalComplex
+type UnmarshalComplex = internal.UnmarshalComplex
+type ObjectAndByteFunc = internal.ObjectAndByteFunc
 
 // Allocator manages the allocation and deallocation of file space.
 // It tracks which regions of a file are in use and which are free for reuse.
@@ -67,12 +44,6 @@ type Allocator interface {
 // cannot guarantee contiguity.
 type RunAllocator interface {
 	AllocateRun(size int, count int) ([]ObjectId, []FileOffset, error)
-}
-
-// Gap represents an unused region of file space between Start and End offsets.
-type Gap struct {
-	Start int64
-	End   int64
 }
 
 // gapHeap is a min-heap of Gaps (internal use only)
@@ -117,6 +88,8 @@ type BasicAllocator struct {
 	Allocations map[ObjectId]allocatedRegion
 	// Persistent backing store for the full allocation table.
 	backing AllocationStore
+	// File handle for direct I/O operations
+	file *os.File
 	// Unified allocator index (objects + ranges); BasicAllocator uses objects segment.
 	idx *AllocatorIndex
 	// Pending deletions to flush to backing store.
@@ -138,16 +111,17 @@ func NewBasicAllocator(file *os.File) (*BasicAllocator, error) {
 		return nil, err
 	}
 	// Derive default paths for disk-backed metadata (alongside the data file).
-	baseDir := filepath.Dir(file.Name())
-	baseName := filepath.Base(file.Name())
-	allocPath := filepath.Join(baseDir, baseName+".allocs.json")
-	indexPath := filepath.Join(baseDir, baseName+".allocs.idx")
+	// Use the full file path to ensure uniqueness across different test directories.
+	dataFilePath := file.Name()
+	allocPath := dataFilePath + ".allocs.json"
+	indexPath := dataFilePath + ".allocs.idx"
 	return &BasicAllocator{
 		End:         offset,
 		FreeList:    make(gapHeap, 0),
 		Allocations: make(map[ObjectId]allocatedRegion),
 		backing:     NewFileAllocationStore(allocPath),
 		idx:         NewAllocatorIndex(indexPath),
+		file:        file,
 		pendingDel:  make(map[ObjectId]struct{}),
 		stopFlush:   make(chan struct{}),
 	}, nil
@@ -163,6 +137,12 @@ func NewEmptyBasicAllocator() *BasicAllocator {
 		pendingDel:  make(map[ObjectId]struct{}),
 		stopFlush:   make(chan struct{}),
 	}
+}
+
+// SetFile sets the file handle for the allocator.
+// This is used when loading from a serialized state.
+func (a *BasicAllocator) SetFile(file *os.File) {
+	a.file = file
 }
 
 // StartBackgroundFlush starts periodic flushing of cache entries to the backing store.
@@ -356,8 +336,13 @@ func (a *BasicAllocator) Free(fileOffset FileOffset, size int) error {
 // GetObjectInfo returns the FileOffset and Size for an allocated ObjectId.
 // Returns an error if the ObjectId is not allocated or invalid.
 func (a *BasicAllocator) GetObjectInfo(objId ObjectId) (FileOffset, int, error) {
-	// First check cache
 	a.mu.Lock()
+	// Check if pending deletion
+	if _, deleted := a.pendingDel[objId]; deleted {
+		a.mu.Unlock()
+		return 0, 0, errors.New("object has been deleted")
+	}
+	// Check cache
 	region, found := a.Allocations[objId]
 	a.mu.Unlock()
 	if found {
@@ -365,6 +350,13 @@ func (a *BasicAllocator) GetObjectInfo(objId ObjectId) (FileOffset, int, error) 
 	}
 	// Check unified index first
 	if a.idx != nil {
+		a.mu.Lock()
+		// Double-check pendingDel before returning index result
+		if _, deleted := a.pendingDel[objId]; deleted {
+			a.mu.Unlock()
+			return 0, 0, errors.New("object has been deleted")
+		}
+		a.mu.Unlock()
 		off, sz, err := a.idx.Get(objId)
 		if err == nil {
 			return off, sz, nil
@@ -381,6 +373,18 @@ func (a *BasicAllocator) GetObjectInfo(objId ObjectId) (FileOffset, int, error) 
 	return off, sz, nil
 }
 
+// LateReadObj returns an io.Reader positioned at the object's data in the file.
+// Returns a reader, a finisher function (no-op for BasicAllocator), and any error.
+// This method enables reading object data without loading it entirely into memory.
+func (a *BasicAllocator) LateReadObj(objId ObjectId) (io.Reader, func() error, error) {
+	offset, size, err := a.GetObjectInfo(objId)
+	if err != nil {
+		return nil, nil, err
+	}
+	reader := io.NewSectionReader(a.file, int64(offset), int64(size))
+	return reader, func() error { return nil }, nil
+}
+
 // Marshal serializes the BasicAllocator's state to a byte slice.
 // Format: [end:8][freeListCount:8][gaps...][allocCount:8][allocations...]
 func (a *BasicAllocator) Marshal() ([]byte, error) {
@@ -390,9 +394,7 @@ func (a *BasicAllocator) Marshal() ([]byte, error) {
 	endCopy := a.End
 	// Snapshot cache
 	cacheCopy := make(map[ObjectId]allocatedRegion, len(a.Allocations))
-	for id, r := range a.Allocations {
-		cacheCopy[id] = r
-	}
+	maps.Copy(cacheCopy, a.Allocations)
 	a.mu.Unlock()
 
 	// Collect full allocation set = backing store merged with cache.
@@ -401,9 +403,7 @@ func (a *BasicAllocator) Marshal() ([]byte, error) {
 		full[id] = allocatedRegion{fileOffset: offset, size: size}
 		return true
 	})
-	for id, r := range cacheCopy {
-		full[id] = r
-	}
+	maps.Copy(full, cacheCopy)
 
 	// Calculate size
 	allocSize := len(full) * 24 // 8 bytes ObjectId + 8 bytes FileOffset + 4 bytes Size + 4 bytes padding
@@ -555,7 +555,7 @@ func (a *BasicAllocator) Unmarshal(data []byte) error {
 
 	// Unmarshal gaps
 	a.FreeList = make(gapHeap, freeListCount)
-	for i := 0; i < freeListCount; i++ {
+	for i := range freeListCount {
 		start := int64(data[offset])<<56 | int64(data[offset+1])<<48 |
 			int64(data[offset+2])<<40 | int64(data[offset+3])<<32 |
 			int64(data[offset+4])<<24 | int64(data[offset+5])<<16 |

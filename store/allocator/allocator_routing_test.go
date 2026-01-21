@@ -48,7 +48,7 @@ func TestAllocatorRoutingWithVariableLengthStrings(t *testing.T) {
 	})
 
 	// Create OmniBlockAllocator with the BasicAllocator as parent
-	omniAlloc, err := NewOmniBlockAllocator([]int{}, 10000, basicAlloc)
+	omniAlloc, err := NewOmniBlockAllocator([]int{}, 10000, basicAlloc, nil)
 	if err != nil {
 		t.Fatalf("NewOmniBlockAllocator failed: %v", err)
 	}
@@ -165,7 +165,7 @@ func TestStringPathAllocations(t *testing.T) {
 		t.Fatalf("NewBasicAllocator failed: %v", err)
 	}
 
-	omniAlloc, err := NewOmniBlockAllocator([]int{}, 10000, basicAlloc)
+	omniAlloc, err := NewOmniBlockAllocator([]int{}, 10000, basicAlloc, nil)
 	if err != nil {
 		t.Fatalf("NewOmniBlockAllocator failed: %v", err)
 	}
@@ -205,72 +205,86 @@ func TestStringPathAllocations(t *testing.T) {
 	t.Logf("  ✓ No calls to BasicAllocator for user data")
 }
 
-// Regression: after marshal/unmarshal with no preallocation and no prior block allocations,
+// Regression test: after marshal/unmarshal with no preallocation and no prior block allocations,
 // the omni allocator must retain its configured block sizes so small allocations are handled
 // by block allocators (child) with only a single range provision from the parent.
-// TODO: This test is currently failing and needs investigation.
-// func _TestOmniUnmarshalPreservesSizesWithoutPrealloc(t *testing.T) {
-// 	tmpDir := t.TempDir()
-// 	dataFile, err := os.Create(filepath.Join(tmpDir, "data.bin"))
-// 	if err != nil {
-// 		t.Fatalf("Create data file failed: %v", err)
-// 	}
-// 	defer dataFile.Close()
+//
+// This test validates that WithoutPreallocation() works correctly across marshal/unmarshal cycles.
+// Expected behavior: after unmarshal with no prior allocations, the first small allocation should:
+// 1. Trigger the child BlockAllocator (not bypass to parent)
+// 2. The BlockAllocator requests a range from parent (lazy provisioning)
+// 3. Only ONE parent call for the entire range (not per-block)
+func TestOmniUnmarshalPreservesSizesWithoutPrealloc(t *testing.T) {
+	tmpDir := t.TempDir()
+	dataFile, err := os.Create(filepath.Join(tmpDir, "data.bin"))
+	if err != nil {
+		t.Fatalf("Create data file failed: %v", err)
+	}
+	defer dataFile.Close()
 
-// 	parent, err := NewBasicAllocator(dataFile)
-// 	if err != nil {
-// 		t.Fatalf("NewBasicAllocator failed: %v", err)
-// 	}
+	parent, err := NewBasicAllocator(dataFile)
+	if err != nil {
+		t.Fatalf("NewBasicAllocator failed: %v", err)
+	}
 
-// 	blockSizes := defaultBlockSizes()
-// 	blockCount := 4
+	blockSizes := defaultBlockSizes()
+	blockCount := 4
 
-// 	original, err := NewOmniBlockAllocator(blockSizes, blockCount, parent, WithoutPreallocation())
-// 	if err != nil {
-// 		t.Fatalf("NewOmniBlockAllocator failed: %v", err)
-// 	}
+	original, err := NewOmniBlockAllocator(blockSizes, blockCount, parent, dataFile, WithoutPreallocation())
+	if err != nil {
+		t.Fatalf("NewOmniBlockAllocator failed: %v", err)
+	}
 
-// 	data, err := original.Marshal()
-// 	if err != nil {
-// 		t.Fatalf("Marshal failed: %v", err)
-// 	}
+	data, err := original.Marshal()
+	if err != nil {
+		t.Fatalf("Marshal failed: %v", err)
+	}
 
-// 	reloaded, err := NewOmniBlockAllocator(blockSizes, blockCount, parent, WithoutPreallocation())
-// 	if err != nil {
-// 		t.Fatalf("NewOmniBlockAllocator (reload) failed: %v", err)
-// 	}
+	reloaded, err := NewOmniBlockAllocator(blockSizes, blockCount, parent, dataFile, WithoutPreallocation())
+	if err != nil {
+		t.Fatalf("NewOmniBlockAllocator (reload) failed: %v", err)
+	}
 
-// 	childCalls := 0
-// 	parentCalls := 0
-// 	parentSize := 0
+	childCalls := 0
+	parentCalls := 0
+	parentSize := 0
 
-// 	parent.SetOnAllocate(func(_ ObjectId, _ FileOffset, size int) {
-// 		parentCalls++
-// 		parentSize = size
-// 	})
-// 	reloaded.SetOnAllocate(func(_ ObjectId, _ FileOffset, _ int) {
-// 		childCalls++
-// 	})
+	parent.SetOnAllocate(func(_ ObjectId, _ FileOffset, size int) {
+		parentCalls++
+		parentSize = size
+		t.Logf("Parent allocator called: size=%d", size)
+	})
+	reloaded.SetOnAllocate(func(_ ObjectId, _ FileOffset, size int) {
+		childCalls++
+		t.Logf("Child allocator called: size=%d", size)
+	})
 
-// 	if err := reloaded.Unmarshal(data); err != nil {
-// 		t.Fatalf("Unmarshal failed: %v", err)
-// 	}
+	if err := reloaded.Unmarshal(data); err != nil {
+		t.Fatalf("Unmarshal failed: %v", err)
+	}
 
-// 	small := blockSizes[0]
-// 	if _, _, err := reloaded.Allocate(small); err != nil {
-// 		t.Fatalf("Allocate small failed: %v", err)
-// 	}
+	small := blockSizes[0]
+	objId, offset, err := reloaded.Allocate(small)
+	if err != nil {
+		t.Fatalf("Allocate small failed: %v", err)
+	}
+	t.Logf("First allocation: objId=%d, offset=%d, size=%d", objId, offset, small)
 
-// 	if childCalls != 1 {
-// 		t.Fatalf("expected child allocator callback to fire once, got %d", childCalls)
-// 	}
-// 	if parentCalls == 0 {
-// 		t.Fatalf("expected parent to provision a range once")
-// 	}
-// 	if parentSize < small*blockCount {
-// 		t.Fatalf("expected parent allocation >= %d (range), got %d", small*blockCount, parentSize)
-// 	}
-// }
+	t.Logf("\n=== Allocation Pattern Analysis ===")
+	t.Logf("Child allocator calls: %d (expected: 1)", childCalls)
+	t.Logf("Parent allocator calls: %d (expected: 1 for range provision)", parentCalls)
+	t.Logf("Parent allocation size: %d bytes (expected: >=%d for %d blocks)", parentSize, small*blockCount, blockCount)
+
+	if childCalls != 1 {
+		t.Errorf("expected child allocator callback to fire once, got %d", childCalls)
+	}
+	if parentCalls == 0 {
+		t.Errorf("expected parent to provision a range once, got %d calls", parentCalls)
+	}
+	if parentCalls > 0 && parentSize < small*blockCount {
+		t.Errorf("expected parent allocation >= %d (range for %d blocks), got %d", small*blockCount, blockCount, parentSize)
+	}
+}
 
 // Regression test: after marshal/unmarshal with no preallocation and no prior
 // block allocations, the omni allocator must retain its configured block sizes

@@ -159,6 +159,10 @@ type AllocatorProvider interface {
 
 // Storer is the primary interface for object storage.
 // It combines basic lifecycle management with streaming read/write operations.
+//
+// Storer includes all methods from BasicStorer (including Close() for resource cleanup),
+// ObjReader (for streaming reads), and ObjWriter (for streaming writes).
+// This ensures that any Storer can be properly closed by callers without type assertions.
 type Storer interface {
 	BasicStorer
 	ObjReader
