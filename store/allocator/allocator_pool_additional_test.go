@@ -1,10 +1,10 @@
 package allocator
 
 import (
-    "container/heap"
-    "errors"
-    "os"
-    "testing"
+	"container/heap"
+	"errors"
+	"os"
+	"testing"
 )
 
 // helper to create a basic allocator with a temp file
@@ -58,13 +58,13 @@ func TestAllocatorPoolFreeMovesFullToAvailable(t *testing.T) {
     pool := NewAllocatorPool(8, 1, parent, file)
 
     // First allocation creates an allocator in available
-    _, firstOffset, _, err := pool.Allocate()
+    _, firstOffset, err := pool.Allocate()
     if err != nil {
         t.Fatalf("Allocate: %v", err)
     }
 
     // Second allocation exhausts first allocator and moves it to full, provisioning a new one
-    if _, _, _, err := pool.Allocate(); err != nil {
+    if _, _, err := pool.Allocate(); err != nil {
         t.Fatalf("second Allocate: %v", err)
     }
     if len(pool.full) != 1 {
@@ -103,15 +103,12 @@ func TestAllocatorPoolAllocateRunPartial(t *testing.T) {
     parent, file := newTestBasicAllocator(t)
     pool := NewAllocatorPool(8, 2, parent, file)
 
-    objIds, offsets, newRef, err := pool.AllocateRun(3)
+    objIds, offsets, err := pool.AllocateRun(3)
     if err != nil {
         t.Fatalf("AllocateRun: %v", err)
     }
     if len(objIds) != 2 || len(offsets) != 2 {
         t.Fatalf("expected partial run of 2, got %d", len(objIds))
-    }
-    if newRef == nil {
-        t.Fatalf("expected new allocator ref to be returned")
     }
 }
 

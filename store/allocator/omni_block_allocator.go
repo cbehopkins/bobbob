@@ -283,7 +283,7 @@ func (o *omniBlockAllocator) Allocate(size int) (ObjectId, FileOffset, error) {
 			}
 
 			// Delegate to pool for allocation
-			id, offset, _, err := pool.Allocate()
+			id, offset, err := pool.Allocate()
 			if err != nil {
 				return 0, 0, err
 			}
@@ -357,7 +357,7 @@ func (o *omniBlockAllocator) AllocateRun(size int, count int) ([]ObjectId, []Fil
 			}
 
 			// Delegate to pool for run allocation
-			objIds, offsets, _, err := pool.AllocateRun(count)
+			objIds, offsets, err := pool.AllocateRun(count)
 			if err != nil && err.Error() != "size must match block size" && err.Error() != "count must be positive" {
 				return nil, nil, err
 			}

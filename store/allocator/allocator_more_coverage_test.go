@@ -1,10 +1,10 @@
 package allocator
 
 import (
-    "container/heap"
-    "os"
-    "path/filepath"
-    "testing"
+	"container/heap"
+	"os"
+	"path/filepath"
+	"testing"
 )
 
 // Helpers
@@ -143,11 +143,23 @@ func TestBlockAllocatorAllocateRunAndSize(t *testing.T) {
 // allocatorPool AllocateRun (new allocator path)
 func TestAllocatorPoolAllocateRunNewAllocator(t *testing.T) {
     parent, file := newTempBasicAllocator(t)
-    pool := NewAllocatorPool(8, 1, parent, file)
+    
+    // Use builder pattern to register callback for tracking new allocators
+    newAllocatorCalled := false
+    pool := NewAllocatorPoolBuilder(8, 1, parent, file).
+        OnNewAllocator(func(ref *allocatorRef) error {
+            newAllocatorCalled = true
+            return nil
+        }).
+        Build()
+    
     pool.available = nil // force new allocator path
-    objs, offs, newRef, err := pool.AllocateRun(1)
-    if err != nil || len(objs) != 1 || len(offs) != 1 || newRef == nil {
-        t.Fatalf("AllocateRun new allocator unexpected: objs=%v offs=%v ref nil? %v err=%v", objs, offs, newRef == nil, err)
+    objs, offs, err := pool.AllocateRun(1)
+    if err != nil || len(objs) != 1 || len(offs) != 1 {
+        t.Fatalf("AllocateRun new allocator unexpected: objs=%v offs=%v err=%v", objs, offs, err)
+    }
+    if !newAllocatorCalled {
+        t.Fatalf("onNewAllocator callback was not invoked")
     }
 }
 

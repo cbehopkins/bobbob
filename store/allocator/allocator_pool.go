@@ -526,8 +526,46 @@ func (p *allocatorPool) UnmarshalMultiple(objData io.Reader, objReader any) erro
 	return nil
 }
 
-// allocatorPool keeps available and full block allocators for a given size.
-// The pool manages both the allocators and their persistence metadata (ObjectIds).
+// AllocatorPoolBuilder configures an allocatorPool step-by-step using a fluent API.
+type AllocatorPoolBuilder struct {
+	blockSize      int
+	blockCount     int
+	parent         Allocator
+	file           *os.File
+	onNewAllocator func(*allocatorRef) error // Callback invoked when a new allocator is provisioned
+}
+
+// NewAllocatorPoolBuilder creates a builder for a new allocator pool.
+func NewAllocatorPoolBuilder(blockSize, blockCount int, parent Allocator, file *os.File) *AllocatorPoolBuilder {
+	return &AllocatorPoolBuilder{
+		blockSize:  blockSize,
+		blockCount: blockCount,
+		parent:     parent,
+		file:       file,
+	}
+}
+
+// OnNewAllocator registers a callback to be invoked whenever a new block allocator is provisioned.
+// The callback receives the newly created allocatorRef and can perform setup (e.g., registering in a cache).
+func (b *AllocatorPoolBuilder) OnNewAllocator(fn func(*allocatorRef) error) *AllocatorPoolBuilder {
+	b.onNewAllocator = fn
+	return b
+}
+
+// Build constructs and returns the configured allocatorPool.
+func (b *AllocatorPoolBuilder) Build() *allocatorPool {
+	return &allocatorPool{
+		available:      make(allocatorSlice, 0),
+		full:           make(allocatorSlice, 0),
+		file:           b.file,
+		parent:         b.parent,
+		blockSize:      b.blockSize,
+		blockCount:     b.blockCount,
+		nextBlockCount: b.blockCount,
+		onNewAllocator: b.onNewAllocator,
+	}
+}
+
 type allocatorPool struct {
 	available allocatorSlice
 	full      allocatorSlice
@@ -537,8 +575,12 @@ type allocatorPool struct {
 	parent Allocator
 	// Block size for this pool
 	blockSize int
-	// Number of blocks per allocator
+	// Number of blocks per allocator (base size, used for unmarshaling)
 	blockCount int
+	// Number of blocks for the next new allocator (doubles each time)
+	nextBlockCount int
+	// Callback invoked when a new allocator is provisioned (set by builder)
+	onNewAllocator func(*allocatorRef) error
 }
 
 // ContainsObjectId checks if any allocator in this pool owns the given ObjectId.
@@ -557,15 +599,9 @@ func (p *allocatorPool) ContainsObjectId(objId ObjectId) bool {
 }
 
 // NewAllocatorPool creates a new allocator pool for a specific block size.
+// Deprecated: Use NewAllocatorPoolBuilder() for a more flexible configuration.
 func NewAllocatorPool(blockSize, blockCount int, parent Allocator, file *os.File) *allocatorPool {
-	return &allocatorPool{
-		available:  make(allocatorSlice, 0),
-		full:       make(allocatorSlice, 0),
-		file:       file,
-		parent:     parent,
-		blockSize:  blockSize,
-		blockCount: blockCount,
-	}
+	return NewAllocatorPoolBuilder(blockSize, blockCount, parent, file).Build()
 }
 
 // Marshal serializes the complete allocator pool state.
@@ -704,17 +740,15 @@ func (p *allocatorPool) GetObjectInfo(objId ObjectId, blockSize int) (FileOffset
 
 // Allocate attempts to allocate a block from this pool.
 // It tries available allocators first, moving them to full if they become exhausted.
-// If no available allocators have space, it provisions a new allocator from the parent.
-// Returns the ObjectId, FileOffset, whether a new allocator was created, and any error.
-//
-// CODE SMELL: Returning *allocatorRef couples the pool to caller's needs (omni uses this
-// to register new allocators in rangeCache). Consider observer pattern or callback instead.
-func (p *allocatorPool) Allocate() (ObjectId, FileOffset, *allocatorRef, error) {
+// If no available allocators have space, it provisions a new allocator from the parent
+// and invokes the onNewAllocator callback (if registered).
+// Returns the ObjectId, FileOffset, and any error.
+func (p *allocatorPool) Allocate() (ObjectId, FileOffset, error) {
 	// Try available allocators first
 	for len(p.available) > 0 {
 		ref := p.available[0]
 		if err := ref.ensureLoaded(); err != nil {
-			return 0, 0, nil, err
+			return 0, 0, err
 		}
 		id, offset, err := ref.allocator.Allocate(p.blockSize)
 		if errors.Is(err, AllAllocated) {
@@ -724,32 +758,44 @@ func (p *allocatorPool) Allocate() (ObjectId, FileOffset, *allocatorRef, error) 
 			continue
 		}
 		if err != nil {
-			return 0, 0, nil, err
+			return 0, 0, err
 		}
 		// Mark as unsynced since allocator state changed
 		ref.synced = false
-		return id, offset, nil, nil
+		return id, offset, nil
 	}
 
 	// No available allocators or all were full: provision a new one from parent
-	baseObjId, fileOffset, err := p.parent.Allocate(p.blockSize * p.blockCount)
+	// Use nextBlockCount and then double it for progressive growth
+	currentBlockCount := p.nextBlockCount
+	baseObjId, fileOffset, err := p.parent.Allocate(p.blockSize * currentBlockCount)
 	if err != nil {
-		return 0, 0, nil, err
+		return 0, 0, err
 	}
 
-	newAllocator := NewBlockAllocator(p.blockSize, p.blockCount, fileOffset, baseObjId, p.file)
+	newAllocator := NewBlockAllocator(p.blockSize, currentBlockCount, fileOffset, baseObjId, p.file)
 	newRef := &allocatorRef{
-		allocator: newAllocator,
-		file:      p.file,
+		allocator:  newAllocator,
+		file:       p.file,
+		blockSize:  p.blockSize,
+		blockCount: currentBlockCount,
 	}
 	p.available = append(p.available, newRef)
+	p.nextBlockCount *= 2
+
+	// Invoke the registered callback (if any) to allow registration in external caches
+	if p.onNewAllocator != nil {
+		if err := p.onNewAllocator(newRef); err != nil {
+			return 0, 0, err
+		}
+	}
 
 	// Allocate from the new allocator
 	id, offset, err := newRef.allocator.Allocate(p.blockSize)
 	if err != nil {
-		return 0, 0, nil, err
+		return 0, 0, err
 	}
-	return id, offset, newRef, nil
+	return id, offset, nil
 }
 
 // SetRequestedSize finds the allocator containing objId and sets its requested size.
@@ -784,22 +830,21 @@ func (p *allocatorPool) SetRequestedSize(objId ObjectId, size int) {
 
 // AllocateRun attempts to allocate a contiguous run of blocks from this pool.
 // It tries available allocators first, moving them to full if they become exhausted.
-// If no available allocators have space, it provisions a new allocator from the parent.
-// Returns partial results if fewer than requested blocks are available, along with the allocator ref if a new one was created.
+// If no available allocators have space, it provisions a new allocator from the parent
+// and invokes the onNewAllocator callback (if registered).
+// Returns partial results if fewer than requested blocks are available.
 //
-// CODE SMELL: Returning *allocatorRef couples the pool to caller's needs (omni uses this
-// to register new allocators in rangeCache). Consider observer pattern or callback instead.
-func (p *allocatorPool) AllocateRun(requestCount int) ([]ObjectId, []FileOffset, *allocatorRef, error) {
+func (p *allocatorPool) AllocateRun(requestCount int) ([]ObjectId, []FileOffset, error) {
 	// Try available allocators - they now return partial results
 	for i := 0; i < len(p.available); {
 		ref := p.available[i]
 		if err := ref.ensureLoaded(); err != nil {
-			return nil, nil, nil, err
+			return nil, nil, err
 		}
 		allocator := ref.allocator
 		objIds, offsets, err := allocator.AllocateRun(p.blockSize, requestCount)
 		if err != nil && err.Error() != "size must match block size" && err.Error() != "count must be positive" {
-			return nil, nil, nil, err
+			return nil, nil, err
 		}
 		// If no slots available, move to full list
 		if len(objIds) == 0 {
@@ -809,22 +854,34 @@ func (p *allocatorPool) AllocateRun(requestCount int) ([]ObjectId, []FileOffset,
 		}
 		// Accept partial allocation - mark as unsynced since allocator state changed
 		ref.synced = false
-		return objIds, offsets, nil, nil
+		return objIds, offsets, nil
 	}
 
 	// Need a new allocator segment
-	baseObjId, fileOffset, err := p.parent.Allocate(p.blockSize * p.blockCount)
+	// Use nextBlockCount and then double it for progressive growth
+	currentBlockCount := p.nextBlockCount
+	baseObjId, fileOffset, err := p.parent.Allocate(p.blockSize * currentBlockCount)
 	if err != nil {
-		return []ObjectId{}, []FileOffset{}, nil, nil
+		return []ObjectId{}, []FileOffset{}, err
 	}
 
-	newAllocator := NewBlockAllocator(p.blockSize, p.blockCount, fileOffset, baseObjId, p.file)
+	newAllocator := NewBlockAllocator(p.blockSize, currentBlockCount, fileOffset, baseObjId, p.file)
 	newRef := &allocatorRef{
-		allocator: newAllocator,
-		file:      p.file,
+		allocator:  newAllocator,
+		file:       p.file,
+		blockSize:  p.blockSize,
+		blockCount: currentBlockCount,
 	}
 	p.available = append(p.available, newRef)
+	p.nextBlockCount *= 2
+
+	// Invoke the registered callback (if any) to allow registration in external caches
+	if p.onNewAllocator != nil {
+		if err := p.onNewAllocator(newRef); err != nil {
+			return []ObjectId{}, []FileOffset{}, err
+		}
+	}
 
 	objIds, offsets, err := newRef.allocator.AllocateRun(p.blockSize, requestCount)
-	return objIds, offsets, newRef, err
+	return objIds, offsets, err
 }

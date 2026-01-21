@@ -36,7 +36,7 @@ func TestAllocatorPoolMarshalComplex(t *testing.T) {
 
 	// Allocate some blocks to create allocators
 	for i := 0; i < 15; i++ {
-		_, _, _, err = pool.Allocate()
+		_, _, err = pool.Allocate()
 		if err != nil {
 			t.Fatalf("Failed to allocate block %d: %v", i, err)
 		}
@@ -142,7 +142,7 @@ func TestAllocatorPoolUnmarshalMultiple(t *testing.T) {
 	// Allocate some blocks
 	allocatedIds := make([]ObjectId, 0)
 	for i := 0; i < 25; i++ {
-		objId, _, _, err := origPool.Allocate()
+		objId, _, err := origPool.Allocate()
 		if err != nil {
 			t.Fatalf("Failed to allocate block %d: %v", i, err)
 		}
@@ -252,7 +252,7 @@ func TestAllocatorPoolRoundTrip(t *testing.T) {
 
 	// Allocate 20 blocks (should create multiple allocators)
 	for i := 0; i < 20; i++ {
-		objId, offset, _, err := origPool.Allocate()
+		objId, offset, err := origPool.Allocate()
 		if err != nil {
 			t.Fatalf("Failed to allocate block %d: %v", i, err)
 		}
@@ -352,8 +352,9 @@ func TestAllocatorPoolReAllocation(t *testing.T) {
 	pool := NewAllocatorPool(blockSize, blockCount, parent, file)
 
 	// Allocate blocks to create allocators
+	// With progressive doubling: first allocator has 5 blocks, second has 10 blocks
 	for i := 0; i < 8; i++ {
-		_, _, _, err = pool.Allocate()
+		_, _, err = pool.Allocate()
 		if err != nil {
 			t.Fatalf("Allocation failed: %v", err)
 		}
@@ -382,8 +383,10 @@ func TestAllocatorPoolReAllocation(t *testing.T) {
 	}
 
 	// Allocate more blocks to trigger new allocator creation
-	for i := 0; i < 3; i++ {
-		_, _, _, err = pool.Allocate()
+	// Need to fill the second allocator (10 blocks, currently has 3) plus one more
+	// to trigger a third allocator with 20 blocks
+	for i := 0; i < 8; i++ {
+		_, _, err = pool.Allocate()
 		if err != nil {
 			t.Fatalf("Additional allocation failed: %v", err)
 		}
@@ -446,7 +449,7 @@ func TestAllocatorPoolDelete(t *testing.T) {
 
 	// Allocate blocks
 	for i := 0; i < 15; i++ {
-		_, _, _, err = pool.Allocate()
+		_, _, err = pool.Allocate()
 		if err != nil {
 			t.Fatalf("Allocation failed: %v", err)
 		}
@@ -529,7 +532,7 @@ func TestAllocatorPoolMarshalLUTFormat(t *testing.T) {
 
 	// Allocate to create a mix of available and full
 	for i := 0; i < 12; i++ {
-		_, _, _, err = pool.Allocate()
+		_, _, err = pool.Allocate()
 		if err != nil {
 			t.Fatalf("Allocation failed: %v", err)
 		}

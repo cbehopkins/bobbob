@@ -62,14 +62,14 @@ func TestAllocatorPoolPersistUnsynced(t *testing.T) {
 
 	// Create initial allocator and persist once to assign fileOff and mark synced.
 	for i := 0; i < 5; i++ {
-		if _, _, _, err := pool.Allocate(); err != nil {
+		if _, _, err := pool.Allocate(); err != nil {
 			t.Fatalf("allocate %d: %v", i, err)
 		}
 	}
 	persistPoolOnce(t, pool, parent, file)
 
 	// Mutate state to make allocator unsynced (same underlying allocator).
-	if _, _, _, err := pool.Allocate(); err != nil {
+	if _, _, err := pool.Allocate(); err != nil {
 		t.Fatalf("post-persist allocate: %v", err)
 	}
 
