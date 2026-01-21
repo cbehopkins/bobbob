@@ -68,14 +68,15 @@ func (p *allocatorPool) GetObjectIdsInAllocator(blockSize int, allocatorIndex in
 // changes.
 //
 // Example usage in PersistentTreap:
-//   if blockSize, idx, _, found := pool.FindSmallestBlockAllocatorForSize(nodeSize); found {
-//       objectIds := pool.GetObjectIdsInAllocator(blockSize, idx)
-//       // Delete these nodes from the treap
-//       for _, objId := range objectIds {
-//           treap.DeleteNodeWithObjectId(objId)
-//       }
-//       // Next persist will reallocate using the more efficient allocator
-//   }
+//
+//	if blockSize, idx, _, found := pool.FindSmallestBlockAllocatorForSize(nodeSize); found {
+//	    objectIds := pool.GetObjectIdsInAllocator(blockSize, idx)
+//	    // Delete these nodes from the treap
+//	    for _, objId := range objectIds {
+//	        treap.DeleteNodeWithObjectId(objId)
+//	    }
+//	    // Next persist will reallocate using the more efficient allocator
+//	}
 func (p *allocatorPool) FindSmallestBlockAllocatorForSize(size int) (int, int, int, bool) {
 	// Only look for allocators smaller than the current pool's blockCount
 	minBlockCount := p.blockCount

@@ -210,12 +210,12 @@ func (m *MockStore) WriteBatchedObjs(objIds []store.ObjectId, data []byte, sizes
 		if _, exists := m.objects[objId]; !exists {
 			return errors.New("invalid object ID")
 		}
-		
+
 		size := sizes[i]
 		if offset+size > len(data) {
 			return errors.New("data slice too short for given sizes")
 		}
-		
+
 		m.objects[objId] = make([]byte, size)
 		copy(m.objects[objId], data[offset:offset+size])
 		offset += size

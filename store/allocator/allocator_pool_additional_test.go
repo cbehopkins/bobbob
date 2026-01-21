@@ -157,7 +157,7 @@ func TestAllocatorPoolDeletesEmptyBlocks(t *testing.T) {
 	// Allocate multiple blocks to fill them
 	objIds := make([]ObjectId, 0)
 	fileOffsets := make([]FileOffset, 0)
-	
+
 	// Allocate 5 objects (will use 2 blocks: 3 in first, 2 in second)
 	for i := 0; i < 5; i++ {
 		objId, offset, err := pool.Allocate()
@@ -195,7 +195,7 @@ func TestAllocatorPoolDeletesEmptyBlocks(t *testing.T) {
 	if len(pool.available) > 0 && pool.available[0] != nil && pool.available[0].allocator != nil {
 		oldRef := pool.available[0]
 		oldRef.allocator.blockCount = blockCount - 1 // Make it sub-optimal
-		
+
 		// Verify it's marked as empty
 		if !pool.isAllocatorEmpty(oldRef) {
 			t.Logf("Note: Test allocator is not empty (as expected for this setup)")
@@ -232,6 +232,6 @@ func TestAllocatorPoolDeletesSubOptimalEmptyBlocks(t *testing.T) {
 			t.Errorf("expected sub-optimal empty allocator to be deleted, but it's still in available list")
 		}
 	}
-	
+
 	t.Logf("Successfully verified sub-optimal empty blocks can be deleted (total allocators: %d)", totalAllocators)
 }

@@ -21,11 +21,11 @@ func openCompareFixture(t *testing.T) (*vault.VaultSession, compareFixture) {
 	t.Helper()
 	primaryID := types.StringKey("users_primary")
 	backupID := types.StringKey("users_backup")
-	
+
 	// Use temporary directory to minimize disk I/O while keeping real store
 	// (vault identity testing requires actual vault reconstruction)
 	dbPath := filepath.Join(t.TempDir(), "compare.db")
-	
+
 	session, colls, err := vault.OpenVaultWithIdentity(
 		dbPath,
 		vault.PayloadIdentitySpec[types.StringKey, types.IntKey, types.JsonPayload[UserProfile]]{

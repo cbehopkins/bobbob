@@ -14,9 +14,9 @@ func TestBlockAllocatorIndexCalculations(t *testing.T) {
 	itemsPerBlock := blockSize / itemSize // 2 items per block
 
 	tests := []struct {
-		name      string
-		objectId  int64
-		blockIdx  int64
+		name          string
+		objectId      int64
+		blockIdx      int64
 		offsetInBlock int64
 	}{
 		// First block (objectId 0-1)
@@ -134,7 +134,7 @@ func TestBlockAllocatorCollisionDetection(t *testing.T) {
 			collision := block1 == block2
 
 			if collision != tt.collision {
-				t.Errorf("collision: expected %v, got %v (idx1=%d block %d, idx2=%d block %d)", 
+				t.Errorf("collision: expected %v, got %v (idx1=%d block %d, idx2=%d block %d)",
 					tt.collision, collision, tt.idx1, block1, tt.idx2, block2)
 			}
 		})

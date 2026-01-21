@@ -737,7 +737,7 @@ func (p *allocatorPool) freeFromPool(fileOffset FileOffset, blockSize int, postF
 		if err == nil {
 			// Mark as unsynced since allocator state changed
 			ref.synced = false
-			
+
 			// Delete empty allocators with sub-optimal block count (from old pool config)
 			if p.isAllocatorEmpty(ref) && ref.allocator.blockCount < p.blockCount {
 				p.full = append(p.full[:i], p.full[i+1:]...)
@@ -751,7 +751,7 @@ func (p *allocatorPool) freeFromPool(fileOffset FileOffset, blockSize int, postF
 				p.available = append(p.available, ref)
 				p.full = append(p.full[:i], p.full[i+1:]...)
 			}
-			
+
 			if postFree != nil {
 				if postErr := postFree(fileOffset, blockSize); postErr != nil {
 					return postErr
