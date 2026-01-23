@@ -20,13 +20,13 @@ type ObjectAndByteFunc = internal.ObjectAndByteFunc
 // allocateObjects allocates objects in the store and returns a list of ObjectIds
 func allocateObjects(s Storer, sizes []int) ([]ObjectId, error) {
 	if sizes == nil {
-		return []ObjectId{objNotPreAllocated}, nil
+		return []ObjectId{internal.ObjectId(-3)}, nil
 	}
 
 	var objectIds []ObjectId
 	for _, size := range sizes {
 		if size < 0 {
-			objectIds = append(objectIds, objNotPreAllocated)
+			objectIds = append(objectIds, internal.ObjectId(-3))
 			continue
 		}
 		objId, err := s.NewObj(size)
@@ -183,7 +183,7 @@ func writeSingleObject(s Storer, obj ObjectAndByteFunc) error {
 		return err
 	}
 	objId := obj.ObjectId
-	if objId == objNotPreAllocated {
+	if objId == internal.ObjectId(-3) {
 		_, err := WriteNewObjFromBytes(s, data)
 		return err
 	}
@@ -198,7 +198,7 @@ func writeComplexTypes(s Storer, obj MarshalComplex) (ObjectId, error) {
 
 	identityObjId, objectAndByteFuncs, err := internal.MarshalComplexWithRetry(obj, allocFunc, 10)
 	if err != nil {
-		return ObjNotAllocated, err
+		return internal.ObjNotAllocated, err
 	}
 
 	return identityObjId, writeObjects(s, objectAndByteFuncs)
@@ -214,7 +214,7 @@ func marshalGeneric(s Storer, obj any) (ObjectId, error) {
 	case int8, int16, int32, int64, uint8, uint16, uint32, uint64:
 		return marshalFixedSize(s, v)
 	default:
-		return ObjNotWritten, fmt.Errorf("Object cannot be generically marshalled")
+		return internal.ObjNotWritten, fmt.Errorf("Object cannot be generically marshalled")
 	}
 }
 
@@ -223,7 +223,7 @@ func marshalFixedSize(s Storer, v any) (ObjectId, error) {
 	buf := new(bytes.Buffer)
 	err := binary.Write(buf, binary.LittleEndian, v)
 	if err != nil {
-		return ObjNotWritten, err
+		return internal.ObjNotWritten, err
 	}
 	return WriteNewObjFromBytes(s, buf.Bytes())
 }

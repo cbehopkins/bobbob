@@ -6,6 +6,7 @@ import (
 	"io"
 	"sync"
 
+	"github.com/cbehopkins/bobbob/internal"
 	"github.com/cbehopkins/bobbob/store"
 )
 
@@ -42,7 +43,7 @@ func (m *MockStore) NewObj(size int) (store.ObjectId, error) {
 	defer m.mu.Unlock()
 
 	if m.closed {
-		return store.ObjNotAllocated, io.ErrClosedPipe
+		return internal.ObjNotAllocated, io.ErrClosedPipe
 	}
 
 	objId := m.nextId
@@ -84,7 +85,7 @@ func (m *MockStore) PrimeObject(size int) (store.ObjectId, error) {
 	defer m.mu.Unlock()
 
 	if m.closed {
-		return store.ObjNotAllocated, io.ErrClosedPipe
+		return internal.ObjNotAllocated, io.ErrClosedPipe
 	}
 
 	const primeObjectId = store.ObjectId(8)
@@ -134,7 +135,7 @@ func (m *MockStore) LateWriteNewObj(size int) (store.ObjectId, io.Writer, store.
 	defer m.mu.Unlock()
 
 	if m.closed {
-		return store.ObjNotAllocated, nil, nil, io.ErrClosedPipe
+		return internal.ObjNotAllocated, nil, nil, io.ErrClosedPipe
 	}
 
 	objId := m.nextId

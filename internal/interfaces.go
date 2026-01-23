@@ -9,6 +9,12 @@ import (
 // ObjectId is an identifier unique within the store for an object.
 type ObjectId int64
 
+var (
+	ObjNotWritten      = ObjectId(-1)
+	ObjNotAllocated    = ObjectId(-2)
+	ObjNotPreAllocated = ObjectId(-3)
+)
+
 // FileOffset represents a byte offset within a file.
 type FileOffset int64
 

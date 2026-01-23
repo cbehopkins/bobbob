@@ -576,6 +576,7 @@ type allocatorPool struct {
 	// Block size for this pool
 	blockSize int
 	// Number of blocks per allocator (base size, used for unmarshaling)
+	// FIXME Don't know why this is needed separately from blockSize, but keeping for now.
 	blockCount int
 	// Number of blocks for the next new allocator (doubles each time)
 	nextBlockCount int

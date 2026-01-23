@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 
+	"github.com/cbehopkins/bobbob/internal"
 	"github.com/cbehopkins/bobbob/store/allocator"
 )
 
@@ -35,8 +36,8 @@ func NewBasicStore(filePath string) (*baseStore, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Start background flush of allocator cache
-	alloc.StartBackgroundFlush(AllocatorBackgroundFlushInterval)
+	// Background flush removed as part of pre-refactor cleanup
+	// New design: explicit Marshal/Unmarshal only
 	alloc.End = int64(HeaderSize)
 	// Initialize the Store
 	store := &baseStore{
@@ -88,7 +89,8 @@ func LoadBaseStore(filePath string) (*baseStore, error) {
 		return nil, fmt.Errorf("failed to init allocator: %w", err)
 	}
 	// Start background flush of allocator cache
-	alloc.StartBackgroundFlush(AllocatorBackgroundFlushInterval)
+	// alloc.StartBackgroundFlush(AllocatorBackgroundFlushInterval)  // REMOVED - pre-refactor cleanup
+	// New design: explicit Marshal/Unmarshal only
 	alloc.End = initialOffset
 	// Initialize the Store
 	store := &baseStore{
@@ -138,11 +140,11 @@ func (s *baseStore) updateInitialOffset(fileOffset FileOffset) error {
 func (s *baseStore) PrimeObject(size int) (ObjectId, error) {
 	// Sanity check: prevent unreasonably large prime objects
 	if size < 0 || size > MaxPrimeObjectSize {
-		return ObjNotAllocated, fmt.Errorf("invalid prime object size %d (must be between 0 and %d)", size, MaxPrimeObjectSize)
+		return internal.ObjNotAllocated, fmt.Errorf("invalid prime object size %d (must be between 0 and %d)", size, MaxPrimeObjectSize)
 	}
 
 	if err := s.checkFileInitialized(); err != nil {
-		return ObjNotAllocated, err
+		return internal.ObjNotAllocated, err
 	}
 
 	// For baseStore, the prime object is the first object after the header
@@ -157,12 +159,12 @@ func (s *baseStore) PrimeObject(size int) (ObjectId, error) {
 	// Allocate the prime object - this should be the very first allocation
 	objId, fileOffset, err := s.allocator.Allocate(size)
 	if err != nil {
-		return ObjNotAllocated, fmt.Errorf("failed to allocate prime object: %w", err)
+		return internal.ObjNotAllocated, fmt.Errorf("failed to allocate prime object: %w", err)
 	}
 
 	// Verify we got the expected ObjectId (should be headerSize for first allocation)
 	if objId != primeObjectId {
-		return ObjNotAllocated, fmt.Errorf("expected prime object to be ObjectId %d, got %d", primeObjectId, objId)
+		return internal.ObjNotAllocated, fmt.Errorf("expected prime object to be ObjectId %d, got %d", primeObjectId, objId)
 	}
 
 	// Add to objectMap so it persists across sessions
@@ -174,10 +176,10 @@ func (s *baseStore) PrimeObject(size int) (ObjectId, error) {
 	// Initialize the object with zeros
 	n, err := WriteZeros(s.file, fileOffset, size)
 	if err != nil {
-		return ObjNotAllocated, fmt.Errorf("failed to initialize prime object: %w", err)
+		return internal.ObjNotAllocated, fmt.Errorf("failed to initialize prime object: %w", err)
 	}
 	if n != size {
-		return ObjNotAllocated, errors.New("failed to write all bytes for prime object")
+		return internal.ObjNotAllocated, errors.New("failed to write all bytes for prime object")
 	}
 
 	return primeObjectId, nil
@@ -204,12 +206,12 @@ func (s *baseStore) NewObj(size int) (ObjectId, error) {
 // NewObj is a convenience wrapper around this method.
 func (s *baseStore) LateWriteNewObj(size int) (ObjectId, io.Writer, Finisher, error) {
 	if err := s.checkFileInitialized(); err != nil {
-		return ObjNotAllocated, nil, nil, err
+		return internal.ObjNotAllocated, nil, nil, err
 	}
 
 	objId, fileOffset, err := s.allocator.Allocate(size)
 	if err != nil {
-		return ObjNotAllocated, nil, nil, err
+		return internal.ObjNotAllocated, nil, nil, err
 	}
 	// Create a section writer that writes to the correct offset in the file
 	writer := CreateSectionWriter(s.file, fileOffset, size)
@@ -385,7 +387,9 @@ func (s *baseStore) Close() error {
 
 	// Stop allocator background flush (best effort) and mark closed
 	if ba, ok := s.allocator.(*allocator.BasicAllocator); ok {
-		ba.StopBackgroundFlush()
+		// Background flush removed as part of pre-refactor cleanup
+		// Marshal must be called explicitly before Close if persistence needed
+		_ = ba
 	}
 	// Mark as closed to prevent further operations
 	s.closed = true

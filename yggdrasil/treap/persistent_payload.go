@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/cbehopkins/bobbob/internal"
 	"github.com/cbehopkins/bobbob/store"
 	"github.com/cbehopkins/bobbob/store/allocator"
 	"github.com/cbehopkins/bobbob/yggdrasil/types"
@@ -36,7 +37,7 @@ func (n *PersistentPayloadTreapNode[K, P]) GetPayload() P {
 func (n *PersistentPayloadTreapNode[K, P]) SetPayload(payload P) {
 	n.payload = payload
 	_ = n.Store.DeleteObj(n.objectId) // Invalidate the stored object ID (best effort)
-	n.objectId = store.ObjNotAllocated
+	n.objectId = internal.ObjNotAllocated
 }
 
 // deleteDependents best-effort deletes the key object and lets the payload
@@ -55,20 +56,20 @@ func (n *PersistentPayloadTreapNode[K, P]) deleteDependents() {
 // backing ObjectId (first field in the marshaled layout).
 func (n *PersistentPayloadTreapNode[K, P]) keyObjectIdFromStore() (store.ObjectId, error) {
 	if !store.IsValidObjectId(n.objectId) {
-		return store.ObjNotAllocated, fmt.Errorf("invalid node object id: %d", n.objectId)
+		return internal.ObjNotAllocated, fmt.Errorf("invalid node object id: %d", n.objectId)
 	}
 
 	data, err := store.ReadBytesFromObj(n.Store, n.objectId)
 	if err != nil {
-		return store.ObjNotAllocated, err
+		return internal.ObjNotAllocated, err
 	}
 	if len(data) < n.objectId.SizeInBytes() {
-		return store.ObjNotAllocated, fmt.Errorf("node object %d too small to contain key id", n.objectId)
+		return internal.ObjNotAllocated, fmt.Errorf("node object %d too small to contain key id", n.objectId)
 	}
 
 	var keyObjId store.ObjectId
 	if err := keyObjId.Unmarshal(data[:8]); err != nil {
-		return store.ObjNotAllocated, err
+		return internal.ObjNotAllocated, err
 	}
 
 	return keyObjId, nil
@@ -204,9 +205,9 @@ func NewPersistentPayloadTreapNode[K any, P types.PersistentPayload[P]](key type
 	n.TreapNode.priority = priority
 	n.TreapNode.left = nil
 	n.TreapNode.right = nil
-	n.objectId = store.ObjNotAllocated
-	n.leftObjectId = store.ObjNotAllocated
-	n.rightObjectId = store.ObjNotAllocated
+	n.objectId = internal.ObjNotAllocated
+	n.leftObjectId = internal.ObjNotAllocated
+	n.rightObjectId = internal.ObjNotAllocated
 	n.Store = stre
 	n.parent = &parent.PersistentTreap
 	var zero P
@@ -224,9 +225,9 @@ func (t *PersistentPayloadTreap[K, P]) releasePayloadNode(n *PersistentPayloadTr
 	n.TreapNode.right = nil
 	n.TreapNode.key = nil
 	n.TreapNode.priority = 0
-	n.objectId = store.ObjNotAllocated
-	n.leftObjectId = store.ObjNotAllocated
-	n.rightObjectId = store.ObjNotAllocated
+	n.objectId = internal.ObjNotAllocated
+	n.leftObjectId = internal.ObjNotAllocated
+	n.rightObjectId = internal.ObjNotAllocated
 	var zero P
 	n.payload = zero
 	n.Store = nil
@@ -342,7 +343,7 @@ func (t *PersistentPayloadTreap[K, P]) Delete(key types.PersistentKey[K]) {
 		if objId, err := target.ObjectId(); err == nil && store.IsValidObjectId(objId) {
 			_ = t.Store.DeleteObj(objId)
 		}
-		target.SetObjectId(store.ObjNotAllocated)
+		target.SetObjectId(internal.ObjNotAllocated)
 		// Return node to pool after cleanup
 		t.releasePayloadNode(target)
 	}
@@ -563,7 +564,7 @@ func (t *PersistentPayloadTreap[K, P]) CompactSuboptimalAllocations() (int, erro
 		if store.IsValidObjectId(pnode.objectId) {
 			if _, hit := idSet[pnode.objectId]; hit {
 				_ = t.Store.DeleteObj(pnode.objectId) // best effort cleanup
-				pnode.SetObjectId(store.ObjNotAllocated)
+				pnode.SetObjectId(internal.ObjNotAllocated)
 				deleted++
 			}
 		}
@@ -762,11 +763,11 @@ func (t *PersistentPayloadTreap[K, P]) FlushOldestPercentile(percentage int) (in
 // Returns ObjNotAllocated if the tree is empty or hasn't been persisted yet.
 func (t *PersistentPayloadTreap[K, P]) GetRootObjectId() (store.ObjectId, error) {
 	if t.root == nil {
-		return store.ObjNotAllocated, nil
+		return internal.ObjNotAllocated, nil
 	}
 	rootNode, ok := t.root.(*PersistentPayloadTreapNode[K, P])
 	if !ok {
-		return store.ObjNotAllocated, fmt.Errorf("root is not a PersistentPayloadTreapNode")
+		return internal.ObjNotAllocated, fmt.Errorf("root is not a PersistentPayloadTreapNode")
 	}
 	return rootNode.ObjectId()
 }

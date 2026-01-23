@@ -5,6 +5,7 @@ import (
 	"io"
 	"testing"
 
+	"github.com/cbehopkins/bobbob/internal"
 	"github.com/cbehopkins/bobbob/store"
 )
 
@@ -16,7 +17,7 @@ func TestMockStore_NewObj(t *testing.T) {
 		t.Fatalf("NewObj failed: %v", err)
 	}
 
-	if objId == store.ObjNotAllocated {
+	if objId == internal.ObjNotAllocated {
 		t.Error("Expected valid object ID")
 	}
 

@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cbehopkins/bobbob/internal"
 	multistore "github.com/cbehopkins/bobbob/multistore"
 	"github.com/cbehopkins/bobbob/store"
 	"github.com/cbehopkins/bobbob/store/allocator"
@@ -337,7 +338,7 @@ func GetOrCreateCollection[K any, P types.PersistentPayload[P]](
 	// Register in the collection registry
 	_, err = v.CollectionRegistry.RegisterCollection(
 		collectionName,
-		store.ObjNotAllocated, // No root yet
+		internal.ObjNotAllocated, // No root yet
 		keyShortCode,
 		payloadShortCode,
 	)
@@ -422,7 +423,7 @@ func GetOrCreateKeyOnlyCollection[K any](
 	// Register in the collection registry (payload short code is 0 for key-only)
 	_, err = v.CollectionRegistry.RegisterCollection(
 		collectionName,
-		store.ObjNotAllocated, // No root yet
+		internal.ObjNotAllocated, // No root yet
 		keyShortCode,
 		0, // No payload type
 	)

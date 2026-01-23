@@ -145,124 +145,6 @@ func (a *BasicAllocator) SetFile(file *os.File) {
 	a.file = file
 }
 
-// StartBackgroundFlush starts periodic flushing of cache entries to the backing store.
-// Call StopBackgroundFlush to terminate.
-func (a *BasicAllocator) StartBackgroundFlush(interval time.Duration) {
-	a.mu.Lock()
-	if a.flushTicker != nil {
-		a.mu.Unlock()
-		return
-	}
-	a.flushTicker = time.NewTicker(interval)
-	a.flushDone = make(chan struct{})
-	go a.runFlushLoop(a.flushTicker)
-	a.mu.Unlock()
-}
-
-// StopBackgroundFlush stops the background flush loop.
-func (a *BasicAllocator) StopBackgroundFlush() {
-	a.mu.Lock()
-	if a.flushTicker != nil {
-		a.flushTicker.Stop()
-		a.flushTicker = nil
-	}
-	close(a.stopFlush)
-	done := a.flushDone
-	a.mu.Unlock()
-	// Wait for flush loop to exit to avoid racing with file deletion
-	if done != nil {
-		<-done
-	}
-	a.mu.Lock()
-	a.stopFlush = make(chan struct{})
-	a.flushDone = nil
-	a.mu.Unlock()
-}
-
-func (a *BasicAllocator) runFlushLoop(t *time.Ticker) {
-	for {
-		select {
-		case <-t.C:
-			a.FlushCacheToBacking(0) // default: flush all
-		case <-a.stopFlush:
-			if a.flushDone != nil {
-				close(a.flushDone)
-			}
-			return
-		}
-	}
-}
-
-// FlushCacheToBacking persists a percentage of cache entries to the backing store.
-// percent == 0 flushes all; otherwise flushes approximately percent% of entries.
-func (a *BasicAllocator) FlushCacheToBacking(percent int) {
-	a.mu.Lock()
-	// Snapshot keys to avoid holding lock during I/O
-	total := len(a.Allocations)
-	keys := make([]ObjectId, 0, total)
-	for id := range a.Allocations {
-		keys = append(keys, id)
-	}
-	delKeys := make([]ObjectId, 0, len(a.pendingDel))
-	for id := range a.pendingDel {
-		delKeys = append(delKeys, id)
-	}
-	a.mu.Unlock()
-
-	// Determine how many to flush
-	flushCount := total
-	if percent > 0 && percent < 100 {
-		flushCount = (total * percent) / 100
-	}
-
-	// Batch allocations for efficient persistence
-	batch := make(map[ObjectId]allocatedRegion, flushCount)
-	for i := 0; i < flushCount; i++ {
-		id := keys[i]
-		a.mu.Lock()
-		r := a.Allocations[id]
-		a.mu.Unlock()
-		batch[id] = r
-	}
-
-	// Prefer unified index for persistence when available
-	if a.idx != nil {
-		// Batch add allocations
-		a.idx.BatchAddObjects(batch)
-		// Apply deletions
-		for _, id := range delKeys {
-			a.idx.DeleteObject(id)
-		}
-		// Persist to disk
-		_ = a.idx.Flush()
-	} else {
-		// Fallback to backing store behavior
-		if batchStore, ok := a.backing.(interface {
-			BatchAdd(map[ObjectId]allocatedRegion) error
-		}); ok {
-			_ = batchStore.BatchAdd(batch)
-		} else {
-			for id, r := range batch {
-				_ = a.backing.Add(id, r.fileOffset, r.size)
-			}
-		}
-		for _, id := range delKeys {
-			_ = a.backing.Delete(id)
-		}
-		if flusher, ok := a.backing.(interface{ Flush() error }); ok {
-			_ = flusher.Flush()
-		}
-	}
-
-	// Clear flushed entries from cache if percent==0 (flush all)
-	if percent == 0 {
-		a.mu.Lock()
-		a.Allocations = make(map[ObjectId]allocatedRegion)
-		a.pendingDel = make(map[ObjectId]struct{})
-		a.mu.Unlock()
-	}
-}
-
 // RefreshFreeListFromGaps populates the free list from a channel of gaps.
 // This is typically called when loading a store to rebuild the free list.
 func (a *BasicAllocator) RefreshFreeListFromGaps(gaps <-chan Gap) error {
@@ -331,6 +213,19 @@ func (a *BasicAllocator) Free(fileOffset FileOffset, size int) error {
 
 	heap.Push(&a.FreeList, Gap{int64(fileOffset), int64(fileOffset) + int64(size)})
 	return nil
+}
+
+// DeleteObj removes an object by ObjectId, resolving its location and freeing the space.
+// This is the high-level API that wraps Free() with ObjectId-based lookup.
+func (a *BasicAllocator) DeleteObj(objId ObjectId) error {
+	// Get object info to find FileOffset and size
+	fileOffset, size, err := a.GetObjectInfo(objId)
+	if err != nil {
+		return err
+	}
+	
+	// Delegate to existing Free implementation
+	return a.Free(fileOffset, size)
 }
 
 // GetObjectInfo returns the FileOffset and Size for an allocated ObjectId.

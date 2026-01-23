@@ -59,13 +59,8 @@ import (
 	"errors"
 	"io"
 
+	"github.com/cbehopkins/bobbob/internal"
 	"github.com/cbehopkins/bobbob/store/allocator"
-)
-
-var (
-	ObjNotWritten      = ObjectId(-1)
-	ObjNotAllocated    = ObjectId(-2)
-	objNotPreAllocated = ObjectId(-3)
 )
 
 // IsValidObjectId reports whether the given ObjectId is valid.
@@ -270,7 +265,7 @@ func WriteGeneric(s Storer, obj any) (ObjectId, error) {
 	case MarshalSimple:
 		data, err := v.Marshal()
 		if err != nil {
-			return ObjNotWritten, err
+			return internal.ObjNotWritten, err
 		}
 		return WriteNewObjFromBytes(s, data)
 	default:

@@ -32,6 +32,7 @@ import (
 	"os"
 	"sync"
 
+	"github.com/cbehopkins/bobbob/internal"
 	"github.com/cbehopkins/bobbob/store"
 	"github.com/cbehopkins/bobbob/store/allocator"
 	"github.com/cbehopkins/bobbob/yggdrasil/treap"
@@ -574,7 +575,7 @@ func (s *multiStore) deleteObj(objId store.ObjectId) {
 func (s *multiStore) PrimeObject(size int) (store.ObjectId, error) {
 	// Sanity check: prevent unreasonably large prime objects
 	if size < 0 || size > store.MaxPrimeObjectSize {
-		return store.ObjNotAllocated, errors.New("invalid prime object size")
+		return internal.ObjNotAllocated, errors.New("invalid prime object size")
 	}
 
 	// For multiStore, the prime object is the first object after the header
@@ -591,21 +592,21 @@ func (s *multiStore) PrimeObject(size int) (store.ObjectId, error) {
 	// Use the omni allocator to avoid ObjectId collisions
 	objId, fileOffset, err := s.allocators[1].Allocate(size)
 	if err != nil {
-		return store.ObjNotAllocated, err
+		return internal.ObjNotAllocated, err
 	}
 
 	// Verify we got the expected ObjectId (should be headerSize for first allocation)
 	if objId != primeObjectId {
-		return store.ObjNotAllocated, fmt.Errorf("expected prime object to be first allocation at offset %d, got %d", primeObjectId, objId)
+		return internal.ObjNotAllocated, fmt.Errorf("expected prime object to be first allocation at offset %d, got %d", primeObjectId, objId)
 	}
 
 	// Initialize the object with zeros
 	n, err := store.WriteZeros(s.file, fileOffset, size)
 	if err != nil {
-		return store.ObjNotAllocated, err
+		return internal.ObjNotAllocated, err
 	}
 	if n != size {
-		return store.ObjNotAllocated, errors.New("failed to write all bytes for prime object")
+		return internal.ObjNotAllocated, errors.New("failed to write all bytes for prime object")
 	}
 
 	return primeObjectId, nil
@@ -616,7 +617,7 @@ func (s *multiStore) PrimeObject(size int) (store.ObjectId, error) {
 func (s *multiStore) NewObj(size int) (store.ObjectId, error) {
 	objId, _, err := s.allocators[1].Allocate(size)
 	if err != nil {
-		return store.ObjNotAllocated, err
+		return internal.ObjNotAllocated, err
 	}
 
 	return objId, nil

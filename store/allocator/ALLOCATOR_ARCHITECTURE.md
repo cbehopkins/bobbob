@@ -363,3 +363,10 @@ basicAlloc.SetOnAllocate(func(objId, offset, size) {
 ### External Package Access
 
 These features are accessible from outside the allocator package. See [store/allocator_callback_check.go](../../store/allocator_callback_check.go) for a working example of external configuration.
+
+## Note (Jan 2026): Abandoned allocator/treap iteration tweaks
+
+- **Attempted goal**: tighten treap iteration auto-mode so partially flushed trees used transient disk iteration, and make compaction work for variable-size payloads by scanning all block allocator pools.
+- **Work done**: added `GetObjectIdsInSmallestBlockAllocator`, adjusted iteration-mode detection to look at cached children and flush state, and built diagnostic tests for compare/compaction memory safety.
+- **Outcome**: changes caused intermittent test ordering regressions (iteration mode sometimes returned all nodes or failed to hydrate children). Root cause looked like the current layered design mixing cached child pointers with on-disk ObjectIds; fixing cleanly would require broader refactor.
+- **Decision**: reverted the experiment to keep tree/allocator behavior stable. A planned allocator refactor will revisit routing/iteration/compaction with a cleaner interface.
