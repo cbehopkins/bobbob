@@ -16,9 +16,8 @@ var errStoreNotInitialized = errors.New("store is not initialized")
 type baseStore struct {
 	filePath  string
 	file      *os.File
-	objectMap *ObjectMap
 	allocator *allocator.Top // Thread-safe TopAllocator
-	closed    bool            // Track if store is closed
+	closed    bool           // Track if store is closed
 }
 
 // NewBasicStore creates a new baseStore at the given file path.
@@ -45,7 +44,6 @@ func NewBasicStore(filePath string) (*baseStore, error) {
 	store := &baseStore{
 		filePath:  filePath,
 		file:      file,
-		objectMap: NewObjectMap(),
 		allocator: topAlloc,
 	}
 
@@ -70,26 +68,10 @@ func LoadBaseStore(filePath string) (*baseStore, error) {
 		return nil, fmt.Errorf("failed to load TopAllocator from %q: %w", filePath, err)
 	}
 
-	// Retrieve store metadata (ObjectMap location/size) from PrimeTable
-	storeMeta := topAlloc.GetStoreMeta()
-
-	// Seek to ObjectMap and deserialize
-	_, err = file.Seek(int64(storeMeta.Fo), io.SeekStart)
-	if err != nil {
-		return nil, fmt.Errorf("failed to seek to object map at offset %d in %q: %w", storeMeta.Fo, filePath, err)
-	}
-
-	objectMap := NewObjectMap()
-	err = objectMap.Deserialize(file)
-	if err != nil {
-		return nil, fmt.Errorf("failed to deserialize object map from %q: %w", filePath, err)
-	}
-
 	// Initialize the Store
 	store := &baseStore{
 		filePath:  filePath,
 		file:      file,
-		objectMap: objectMap,
 		allocator: topAlloc,
 	}
 	return store, nil
@@ -124,8 +106,7 @@ func (s *baseStore) PrimeObject(size int) (ObjectId, error) {
 	primeObjectId := ObjectId(PrimeObjectStart())
 
 	// Check if the prime object already exists
-	_, found := s.objectMap.Get(primeObjectId)
-	if found {
+	if s.allocator.ContainsObjectId(types.ObjectId(primeObjectId)) {
 		return primeObjectId, nil
 	}
 
@@ -139,12 +120,6 @@ func (s *baseStore) PrimeObject(size int) (ObjectId, error) {
 	if objId != primeObjectId {
 		return internal.ObjNotAllocated, fmt.Errorf("expected prime object to be ObjectId %d, got %d", primeObjectId, objId)
 	}
-
-	// Add to objectMap so it persists across sessions
-	s.objectMap.Set(objId, ObjectInfo{
-		Offset: fileOffset,
-		Size:   size,
-	})
 
 	// Initialize the object with zeros
 	n, err := WriteZeros(s.file, fileOffset, size)
@@ -189,8 +164,6 @@ func (s *baseStore) LateWriteNewObj(size int) (ObjectId, io.Writer, Finisher, er
 	// Create a section writer that writes to the correct offset in the file
 	writer := CreateSectionWriter(s.file, fileOffset, size)
 
-	s.objectMap.Set(objId, ObjectInfo{Offset: fileOffset, Size: size})
-
 	return objId, writer, nil, nil
 }
 
@@ -206,10 +179,6 @@ func (s *baseStore) AllocateRun(size int, count int) ([]ObjectId, []FileOffset, 
 		return nil, nil, err
 	}
 
-	for i, objId := range objIds {
-		s.objectMap.Set(objId, ObjectInfo{Offset: offsets[i], Size: size})
-	}
-
 	return objIds, offsets, nil
 }
 
@@ -220,11 +189,11 @@ func (s *baseStore) WriteToObj(objectId ObjectId) (io.Writer, Finisher, error) {
 	if err := s.checkFileInitialized(); err != nil {
 		return nil, nil, err
 	}
-	obj, found := s.objectMap.Get(objectId)
-	if !found {
-		return nil, nil, errors.New("object not found")
+	offset, size, err := s.allocator.GetObjectInfo(types.ObjectId(objectId))
+	if err != nil {
+		return nil, nil, fmt.Errorf("object not found: %w", err)
 	}
-	writer := CreateSectionWriter(s.file, obj.Offset, obj.Size)
+	writer := CreateSectionWriter(s.file, FileOffset(offset), int(size))
 	// BaseStore has no per-object resources that need cleanup, return a no-op finisher
 	return writer, func() error { return nil }, nil
 }
@@ -250,22 +219,22 @@ func (s *baseStore) WriteBatchedObjs(objIds []ObjectId, data []byte, sizes []int
 	expectedOffset := FileOffset(0)
 
 	for i, objId := range objIds {
-		obj, found := s.objectMap.Get(objId)
-		if !found {
-			return fmt.Errorf("object %d not found", objId)
+		offset, size, err := s.allocator.GetObjectInfo(types.ObjectId(objId))
+		if err != nil {
+			return fmt.Errorf("object %d not found: %w", objId, err)
 		}
 
 		if i == 0 {
-			firstOffset = obj.Offset
+			firstOffset = FileOffset(offset)
 			// Use the ALLOCATED size, not the written size
-			expectedOffset = obj.Offset + FileOffset(obj.Size)
+			expectedOffset = FileOffset(offset) + FileOffset(size)
 		} else {
-			if obj.Offset != expectedOffset {
+			if FileOffset(offset) != expectedOffset {
 				return fmt.Errorf("objects are not consecutive: gap at object %d (expected offset %d, got %d)",
-					objId, expectedOffset, obj.Offset)
+					objId, expectedOffset, offset)
 			}
 			// Use the ALLOCATED size, not the written size
-			expectedOffset = obj.Offset + FileOffset(obj.Size)
+			expectedOffset = FileOffset(offset) + FileOffset(size)
 		}
 	}
 
@@ -286,7 +255,11 @@ func (s *baseStore) WriteBatchedObjs(objIds []ObjectId, data []byte, sizes []int
 // GetObjectInfo returns the ObjectInfo for a given ObjectId.
 // This is used internally for optimization decisions like batched writes.
 func (s *baseStore) GetObjectInfo(objId ObjectId) (ObjectInfo, bool) {
-	return s.objectMap.Get(objId)
+	offset, size, err := s.allocator.GetObjectInfo(types.ObjectId(objId))
+	if err != nil {
+		return ObjectInfo{}, false
+	}
+	return ObjectInfo{Offset: FileOffset(offset), Size: int(size)}, true
 }
 
 // LateReadObj is the fundamental read method that returns a reader for streaming access.
@@ -302,13 +275,11 @@ func (s *baseStore) lateReadObj(objId ObjectId) (io.Reader, Finisher, error) {
 	if err := s.checkFileInitialized(); err != nil {
 		return nil, nil, err
 	}
-	obj, found := s.objectMap.Get(objId)
-	if !found {
-		return nil, nil, errors.New("object not found")
+	offset, size, err := s.allocator.GetObjectInfo(types.ObjectId(objId))
+	if err != nil {
+		return nil, nil, fmt.Errorf("object not found: %w", err)
 	}
-	// For now they are always the same but we will implement a mapping in the future
-	fileOffset := FileOffset(obj.Offset)
-	reader := CreateSectionReader(s.file, fileOffset, obj.Size)
+	reader := CreateSectionReader(s.file, FileOffset(offset), int(size))
 	// BaseStore has no per-object resources that need cleanup, return a no-op finisher
 	return reader, func() error { return nil }, nil
 }
@@ -325,16 +296,9 @@ func (s *baseStore) DeleteObj(objId ObjectId) error {
 		return err
 	}
 
-	var deleteErr error
-	_, found := s.objectMap.GetAndDelete(objId, func(obj ObjectInfo) {
-		// Use the allocator's DeleteObj method
-		deleteErr = s.allocator.DeleteObj(types.ObjectId(objId))
-	})
-	if !found {
-		return errors.New("object not found")
-	}
-	if deleteErr != nil {
-		return deleteErr
+	// Use the allocator's DeleteObj method
+	if err := s.allocator.DeleteObj(types.ObjectId(objId)); err != nil {
+		return fmt.Errorf("failed to delete object: %w", err)
 	}
 
 	return nil
@@ -348,7 +312,7 @@ func (s *baseStore) Sync() error {
 	return s.file.Sync()
 }
 
-// Close closes the store and writes the ObjectMap to disk
+// Close closes the store and persists allocator state to disk
 func (s *baseStore) Close() error {
 	if err := s.checkFileInitialized(); err != nil {
 		return err
@@ -357,51 +321,30 @@ func (s *baseStore) Close() error {
 	// Mark as closed to prevent further operations
 	s.closed = true
 
-	// First, write the ObjectMap to the file before saving allocator state
-	data, err := s.objectMap.Serialize()
-	if err != nil {
-		return fmt.Errorf("failed to marshal object map: %w", err)
-	}
-	// Append the ObjectMap to the end of the file directly to avoid interfering with allocator state
-	objId, fileOffset, err := s.allocator.Allocate(len(data))
-	if err != nil {
-		return fmt.Errorf("failed to allocate space for object map: %w", err)
-	}
-	if fileOffset < FileOffset(PrimeObjectStart()) {
-		return fmt.Errorf("object map offset %d is before PrimeTable prefix", fileOffset)
-	}
+	// Set allocator state metadata (required for proper serialization)
+	s.allocator.SetStoreMeta(allocator.FileInfo{
+		ObjId: 0,
+		Fo:    0,
+		Sz:    1, // Non-zero to pass the Save() check
+	})
 
-	n, err := s.file.WriteAt(data, int64(fileOffset))
-	if err != nil {
-		return fmt.Errorf("failed to write object map at offset %d: %w", fileOffset, err)
-	}
-	if n != len(data) {
-		return errors.New("did not write all the data")
-	}
-
-	// Record store metadata in the allocator so it is persisted via PrimeTable
-	storeMeta := allocator.FileInfo{
-		ObjId: types.ObjectId(objId),
-		Fo:    types.FileOffset(fileOffset),
-		Sz:    types.FileSize(len(data)),
-	}
-	s.allocator.SetStoreMeta(storeMeta)
-
-	// Now save the allocator state after all allocations are done
+	// Save the allocator state
 	if err := s.allocator.Save(); err != nil {
 		return fmt.Errorf("failed to save allocator state: %w", err)
 	}
 
-	err = s.file.Sync()
-	if err != nil {
+	if err := s.file.Sync(); err != nil {
 		return fmt.Errorf("failed to sync file to disk: %w", err)
 	}
 	return s.file.Close()
 }
 
-// GetObjectCount returns the number of objects tracked in the store's ObjectMap.
+// GetObjectCount returns the number of objects tracked in the allocator.
 func (s *baseStore) GetObjectCount() int {
-	return s.objectMap.Len()
+	// The allocator tracks objects internally; we cannot easily query the count
+	// without adding an introspection method. For now, return 0 as a placeholder.
+	// TODO: Add GetAllocatedCount() to allocator.Top interface
+	return 0
 }
 
 // Allocator returns the allocator backing this store, enabling external callers

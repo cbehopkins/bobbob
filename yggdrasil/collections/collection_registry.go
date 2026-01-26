@@ -1,6 +1,7 @@
 package collections
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"sync"
@@ -164,5 +165,7 @@ func (cr *CollectionRegistry) Marshal() ([]byte, error) {
 func (cr *CollectionRegistry) Unmarshal(data []byte) error {
 	cr.mu.Lock()
 	defer cr.mu.Unlock()
+	// Allocated size may be larger than written size; trim trailing zeros for JSON
+	data = bytes.TrimRight(data, "\x00")
 	return json.Unmarshal(data, cr)
 }

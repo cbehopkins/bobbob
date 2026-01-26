@@ -1,6 +1,9 @@
 package types
 
-import "encoding/json"
+import (
+	"bytes"
+	"encoding/json"
+)
 
 // JsonPayload is a wrapper that provides PersistentPayload interface for any type
 // by using JSON marshaling/unmarshaling. This allows using structs without
@@ -36,6 +39,8 @@ func (j JsonPayload[T]) Marshal() ([]byte, error) {
 
 // Unmarshal implements PersistentPayload using JSON decoding.
 func (j JsonPayload[T]) Unmarshal(data []byte) (UntypedPersistentPayload, error) {
+	// Allocated size may be larger than written size; trim trailing zeros for JSON
+	data = bytes.TrimRight(data, "\x00")
 	var value T
 	err := json.Unmarshal(data, &value)
 	if err != nil {

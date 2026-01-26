@@ -400,9 +400,9 @@ func TestSetMemoryBudgetWithPercentile_LargeDataset(t *testing.T) {
 		float64(stats.MemoryBreakdown.EstimatedNodeMemory)/(1024*1024))
 	t.Logf("  Number of collections: %d", stats.MemoryBreakdown.NumCollections)
 	t.Logf("  Number of objects in store: %d", stats.MemoryBreakdown.NumObjectsInStore)
-	t.Logf("  Estimated ObjectMap memory: %d bytes (%.2f KB)",
-		stats.MemoryBreakdown.EstimatedObjectMapMemory,
-		float64(stats.MemoryBreakdown.EstimatedObjectMapMemory)/1024)
+	t.Logf("  Estimated allocator memory: %d bytes (%.2f KB)",
+		stats.MemoryBreakdown.EstimatedAllocatorMemory,
+		float64(stats.MemoryBreakdown.EstimatedAllocatorMemory)/1024)
 	t.Logf("  Vault overhead: %d bytes (%.2f KB)",
 		stats.MemoryBreakdown.VaultOverhead,
 		float64(stats.MemoryBreakdown.VaultOverhead)/1024)

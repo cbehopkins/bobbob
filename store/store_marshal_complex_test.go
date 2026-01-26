@@ -95,6 +95,12 @@ func (m *MockStruct) UnmarshalMultiple(objReader io.Reader, reader any) error {
 		return err
 	}
 	data := dataBuf.Bytes()
+	// Allocated size may be larger than written size; trim to nearest multiple of 8
+	// LUT expects exactly N*8 bytes for N ObjectIds
+	expectedSize := 16 // 2 ObjectIds * 8 bytes each
+	if len(data) > expectedSize {
+		data = data[:expectedSize]
+	}
 	if err := lut.Unmarshal(data); err != nil {
 		return err
 	}
@@ -242,11 +248,16 @@ func TestWriteComplexTypes(t *testing.T) {
 		t.Fatalf("Failed to read LUT object: %v", err)
 	}
 	defer finisher()
-	lutBuf := make([]byte, 16)
-	_, err = lutReader.Read(lutBuf)
+	// Read all bytes (may include padding) and trim to expected LUT size
+	lutData, err := io.ReadAll(lutReader)
 	if err != nil {
 		t.Fatalf("Failed to read LUT data: %v", err)
 	}
+	// Trim to actual LUT size (16 bytes for 2 ObjectIds)
+	if len(lutData) > 16 {
+		lutData = lutData[:16]
+	}
+	lutBuf := lutData
 
 	// Create a new MockStruct instance and unmarshal it using the LUT
 	newMock := &MockStruct{}

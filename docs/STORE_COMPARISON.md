@@ -3,8 +3,8 @@
 Concise differences after shared I/O helpers and generic concurrent wrapper.
 
 ## Core Differences
-- **baseStore**: Single allocator + ObjectMap. Uses shared I/O helpers.
-- **multiStore**: Size-based allocators, no ObjectMap (allocator queries). Uses shared I/O helpers.
+- **baseStore**: Single allocator (delegates location queries to allocator). Uses shared I/O helpers.
+- **multiStore**: Size-based allocators (delegates location queries to allocator). Uses shared I/O helpers.
 - **concurrentStore**: Per-object locks + optional disk tokens; wraps any `Storer`; global lock for allocations.
 
 ## Duplication Status
@@ -12,8 +12,8 @@ Concise differences after shared I/O helpers and generic concurrent wrapper.
 - Both stores now share section reader/writer creation, zero init, batched writes, token finisher helpers.
 
 ## Why multiStore doesn’t wrap baseStore
-- Allocation strategies conflict: baseStore relies on ObjectMap; multiStore relies on allocator queries and size routing.
-- Mixing them caused “object not found” errors; architectures stay independent.
+- Allocation strategies conflict: baseStore uses single allocator; multiStore uses size-based routing across multiple allocators.
+- Both delegate location queries to their allocators; architectures stay independent.
 
 ## When to Choose Which
 - **baseStore**: Simpler, works with BatchPersist contiguity (RunAllocator path); great for treap batch benchmarks.

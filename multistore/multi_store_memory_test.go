@@ -6,13 +6,13 @@ import (
 	"testing"
 )
 
-// TestMultiStoreObjectMapMemoryUsage verifies that memory usage is reasonable
-// after eliminating the centralized ObjectMap.
+// TestMultiStoreAllocatorMemoryUsage verifies that memory usage is reasonable
+// with allocator-based object tracking (BlockAllocators for fixed-size objects).
 //
-// With the allocator-based architecture, object metadata is tracked at the
-// allocator level rather than in a centralized map. This test ensures that
-// heap usage scales appropriately for large object counts.
-func TestMultiStoreObjectMapMemoryUsage(t *testing.T) {
+// Object metadata is tracked at the allocator level using bitmap-based tracking
+// (~1 byte per object for BlockAllocators), rather than in a centralized map.
+// This test ensures that heap usage scales appropriately for large object counts.
+func TestMultiStoreAllocatorMemoryUsage(t *testing.T) {
 	tempDir := t.TempDir()
 	storePath := filepath.Join(tempDir, "memory_test.db")
 
@@ -50,11 +50,12 @@ func TestMultiStoreObjectMapMemoryUsage(t *testing.T) {
 	heapUsed := int64(ms2.Alloc - baselineAlloc)
 
 	// Calculate expected memory usage
-	// Note: With the allocator tracking, memory usage is now in allocators, not a separate map
-	// The memory savings come from eliminating the centralized ObjectMap
+	// With BlockAllocator tracking, memory overhead is minimal:
+	// - BlockAllocator uses ~1 byte per object (bitmap-based)
+	// - Much lower than the old centralized ObjectMap (~48 bytes per object)
 	objectCount := int64(numObjects)
 
-	t.Logf("=== MultiStore Memory Analysis (After ObjectMap Elimination) ===")
+	t.Logf("=== MultiStore Memory Analysis (BlockAllocator-Based Tracking) ===")
 	t.Logf("Objects allocated: %d", objectCount)
 	t.Logf("Object size: %d bytes", objectSize)
 	t.Logf("Heap used: %d bytes (%.2f MB)", heapUsed, float64(heapUsed)/(1024*1024))
@@ -77,9 +78,9 @@ func TestMultiStoreObjectMapMemoryUsage(t *testing.T) {
 	_ = ms.Close()
 }
 
-// TestMultiStoreObjectMapScaling verifies memory scaling with object count
-// after elimination of the ObjectMap. Memory per object should remain constant.
-func TestMultiStoreObjectMapScaling(t *testing.T) {
+// TestMultiStoreAllocatorScaling verifies memory scaling with object count
+// using allocator-based tracking. Memory per object should remain constant.
+func TestMultiStoreAllocatorScaling(t *testing.T) {
 	tempDir := t.TempDir()
 
 	testCases := []struct {

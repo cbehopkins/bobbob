@@ -148,6 +148,8 @@ func (tm TypeMap) Marshal() ([]byte, error) {
 
 func (tm *TypeMap) Unmarshal(data []byte) error {
 	other := TypeMap{}
+	// Allocated size may be larger than written size; trim trailing zeros for JSON
+	data = bytes.TrimRight(data, "\x00")
 	err := json.Unmarshal(data, &other)
 	if err != nil {
 		return err

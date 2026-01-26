@@ -89,9 +89,9 @@ type BasicStorer interface {
 	Close() error
 	// PrimeObject returns the ObjectId reserved for application metadata.
 	// This is typically the first object allocated after the store's internal
-	// objects (like the objectMap). The store allocates this object on first
-	// access if it doesn't exist. Applications can use this to store their
-	// root metadata (like a collection registry or type map).
+	// objects. The store allocates this object on first access if it doesn't
+	// exist. Applications can use this to store their root metadata (like a
+	// collection registry or type map).
 	PrimeObject(size int) (ObjectId, error)
 }
 

@@ -23,17 +23,7 @@ type identityMapping struct {
 	CollectionName string `json:"collectionName"`
 }
 
-// Reserved ObjectIds for vault metadata
-// VaultMetadataObjectId is typically the first object allocated (ObjectId 1)
-// since ObjectId 0 is used by the store's internal objectMap
-const (
-	// VaultMetadataObjectId stores references to types.TypeMap and CollectionRegistry
-	VaultMetadataObjectId store.ObjectId = 1
-)
-
 // VaultMetadata contains the ObjectIds of the types.TypeMap and CollectionRegistry.
-// This is stored at a known location (VaultMetadataObjectId) so we can
-// find the other metadata when loading.
 type VaultMetadata struct {
 	TypeMapObjectId            store.ObjectId
 	CollectionRegistryObjectId store.ObjectId
@@ -89,12 +79,12 @@ type MemoryBreakdown struct {
 	// NumCollections is the number of active collections
 	NumCollections int
 
-	// NumObjectsInStore is the total number of objects tracked by the store's ObjectMap
+	// NumObjectsInStore is the total number of objects tracked by the allocator
 	NumObjectsInStore int
 
-	// EstimatedObjectMapMemory is the memory used by the store's ObjectMap
-	// (map overhead + entries)
-	EstimatedObjectMapMemory int64
+	// EstimatedAllocatorMemory is the memory used by the allocator's tracking structures
+	// (varies by allocator type: BasicAllocator ~48B/obj, BlockAllocator ~1B/obj)
+	EstimatedAllocatorMemory int64
 
 	// VaultOverhead estimates the Vault struct and maps overhead
 	VaultOverhead int64
@@ -769,13 +759,15 @@ func (v *Vault) calculateMemoryBreakdown(totalNodes int, numCollections int) Mem
 
 	breakdown.EstimatedNodeMemory = int64(totalNodes) * int64(breakdown.NodeStructSize)
 
-	// Get store ObjectMap size
+	// Get store allocator size
 	if bs, ok := v.Store.(interface{ GetObjectCount() int }); ok {
 		breakdown.NumObjectsInStore = bs.GetObjectCount()
-		// ObjectMap overhead:
-		// - map header: ~48 bytes
-		// - per entry: ObjectId (8 bytes) + ObjectInfo (16 bytes) + overhead (~24 bytes) = ~48 bytes
-		breakdown.EstimatedObjectMapMemory = 48 + int64(breakdown.NumObjectsInStore)*48
+		// Allocator overhead depends on type:
+		// - BasicAllocator: map header (~48 bytes) + per entry (~48 bytes)
+		// - BlockAllocator: ~1 byte per object (bitmap-based)
+		// - OmniBlockAllocator: mixed (small objects ~1B, large objects ~48B)
+		// For multiStore (default), conservatively estimate 2 bytes/object:
+		breakdown.EstimatedAllocatorMemory = 48 + int64(breakdown.NumObjectsInStore)*2
 	}
 
 	// Vault overhead:
@@ -785,7 +777,7 @@ func (v *Vault) calculateMemoryBreakdown(totalNodes int, numCollections int) Mem
 	// - PersistentTreap structs: numCollections * ~200 bytes
 	breakdown.VaultOverhead = 128 + 48 + int64(numCollections)*(80+200)
 
-	breakdown.TotalEstimated = breakdown.EstimatedNodeMemory + breakdown.EstimatedObjectMapMemory + breakdown.VaultOverhead
+	breakdown.TotalEstimated = breakdown.EstimatedNodeMemory + breakdown.EstimatedAllocatorMemory + breakdown.VaultOverhead
 
 	return breakdown
 }

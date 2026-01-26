@@ -22,7 +22,7 @@ func primeTableBootstrapSize() int {
 	pt := allocator.NewPrimeTable()
 	pt.Add() // BasicAllocator
 	pt.Add() // OmniAllocator
-	pt.Add() // Store metadata (ObjectMap)
+	pt.Add() // Store metadata (reserved for allocator persistence)
 	return int(pt.SizeInBytes())
 }
 

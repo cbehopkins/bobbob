@@ -209,7 +209,7 @@ Returns the location and size of an object without modifying anything.
 
 #### SetOnAllocate(callback func(ObjectId, FileOffset, size int))
 
-Registers a callback to be invoked whenever an allocation occurs. Useful for tracking allocations externally (e.g., ObjectMap updates, statistics).
+Registers a callback to be invoked whenever an allocation occurs. Useful for tracking allocations externally (e.g., application-level indices, statistics).
 
 **Behavior:**
 - Callback is invoked synchronously during Allocate() or AllocateRun()
@@ -217,9 +217,9 @@ Registers a callback to be invoked whenever an allocation occurs. Useful for tra
 - If callback is nil, no-op (clears any previous callback)
 
 **Use cases:**
-- ObjectMap maintenance (Store layer needs to track ObjectId → FileOffset mappings)
+- Application-level index maintenance (external tracking beyond allocator)
 - Allocation statistics/debugging
-- External index updates
+- Cache invalidation/warming
 
 #### GetFile() → *os.File
 

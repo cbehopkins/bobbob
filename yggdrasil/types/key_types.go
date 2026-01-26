@@ -1,6 +1,7 @@
 package types
 
 import (
+	"bytes"
 	"crypto/md5"
 	"encoding/base64"
 	"encoding/binary"
@@ -149,7 +150,8 @@ func (k StringKey) Marshal() ([]byte, error) {
 
 // Unmarshal decodes the StringKey from bytes.
 func (k *StringKey) Unmarshal(data []byte) error {
-	*k = StringKey(data)
+	// Allocated size may be larger than written size; trim trailing zeros
+	*k = StringKey(bytes.TrimRight(data, "\x00"))
 	return nil
 }
 

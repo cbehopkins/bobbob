@@ -52,7 +52,7 @@
 ┌──────────────▼──────────────────────────────┐
 │   BaseStore (Core I/O Layer)                │
 │  - File handle management                   │
-│  - Object offset tracking                   │
+│  - Delegates to allocator for locations     │
 │  - Basic allocation (no concurrency)        │
 │  - Finisher/resource cleanup                │
 └─────────────────────────────────────────────┘
@@ -83,7 +83,7 @@ type multiStore struct {
 
 **Benefits:**
 - Eliminates duplicate file I/O code (~150 lines)
-- Shares ObjectMap tracking with baseStore
+- Delegates object location tracking to allocator
 - Inherits finisher management from baseStore
 - Same lifecycle guarantees as baseStore
 
@@ -176,21 +176,18 @@ func (s *concurrentStore) Sync() error {
 
 ## Design Decisions
 
-### Should multiStore Know About Allocators?
+### Allocator as Source of Truth
 
-**Option A: Keep allocators in multiStore**
-- multiStore routes by size to appropriate allocator
-- baseStore has single allocator (root)
-- Pro: Clear separation of concerns
-- Con: multiStore still reimplements some logic
+**Implemented Approach**: Allocators track all object metadata (offset, size)
+- baseStore delegates `GetObjectInfo()` calls directly to the allocator
+- No separate ObjectMap structure - eliminates duplication
+- Allocator is the single source of truth for object locations
+- Simplified persistence: only allocator state needs to be saved
 
-**Option B: All allocators in baseStore**
-- baseStore supports allocator lists
-- multiStore provides routing logic via wrapper
-- Pro: True layering
-- Con: baseStore becomes more complex
-
-**Recommendation**: Option A (incremental). Keep allocators in multiStore initially, focus on reducing file I/O duplication first.
+**Trade-off**: Allocated size may exceed requested size due to block alignment
+- Applications must handle padding zeros when reading
+- Common solution: `bytes.TrimRight(data, "\x00")` for string/JSON data
+- Self-describing formats (with length prefixes) work transparently
 
 ### Disk Token Pool Placement
 

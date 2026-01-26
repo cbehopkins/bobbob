@@ -1,6 +1,7 @@
 package treap
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 	"math/rand"
@@ -23,7 +24,8 @@ func (p MockPayload) Marshal() ([]byte, error) {
 }
 
 func (p MockPayload) Unmarshal(data []byte) (types.UntypedPersistentPayload, error) {
-	p.Data = string(data)
+	// Allocated size may be larger than written size; trim trailing zeros
+	p.Data = string(bytes.TrimRight(data, "\x00"))
 	return p, nil
 }
 

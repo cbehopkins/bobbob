@@ -7,7 +7,7 @@ This document describes the implementation of concurrent access to multi-allocat
 ## Problem Statement
 
 The original store architecture had two independent implementations:
-- `baseStore`: Single BasicAllocator with ObjectMap
+- `baseStore`: Single BasicAllocator
 - `multiStore`: Multi-allocator with OmniBlockAllocator (size-based routing)
 
 Both implemented their own concurrency control and disk I/O management, leading to code duplication (~165 lines). The goal was to enable concurrent access to multiStore while eliminating duplication through proper layering.
@@ -156,13 +156,13 @@ This is a design trade-off: multiStore optimizes for space efficiency (size-clas
 
 We initially attempted to make multiStore wrap baseStore to eliminate code duplication, but discovered a fundamental architectural conflict:
 
-- **baseStore**: Uses BasicAllocator + ObjectMap (ObjectId → offset lookup)
-- **multiStore**: Uses OmniBlockAllocator + allocator queries (no central ObjectMap)
+- **baseStore**: Uses single BasicAllocator
+- **multiStore**: Uses OmniBlockAllocator (size-based routing to multiple allocators)
 
 Mixing these on the same file causes "object not found" errors because:
-1. baseStore allocates via BasicAllocator and records in ObjectMap
-2. multiStore tries to query allocators for objects it didn't allocate
-3. Allocators don't know about baseStore's objects → not found
+1. baseStore allocates via single BasicAllocator
+2. multiStore routes allocations to different allocators based on size
+3. Allocators don't know about each other's objects → not found
 
 This validated the current architecture: baseStore and multiStore are fundamentally different allocation strategies and should remain independent, with concurrentStore providing a common concurrency layer for both.
 

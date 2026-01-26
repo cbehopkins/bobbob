@@ -54,7 +54,7 @@ func NewTop(file *os.File, blockSizes []int, maxBlockCount int) (*Top, error) {
 	primeTable := NewPrimeTable()
 	primeTable.Add() // Slot 0: BasicAllocator
 	primeTable.Add() // Slot 1: OmniAllocator
-	primeTable.Add() // Slot 2: Store metadata (ObjectMap location)
+	primeTable.Add() // Slot 2: Allocator state metadata (reserved by store layer)
 
 	// Reserve the PrimeTable space so BasicAllocator starts after it.
 	primeSize := primeTable.SizeInBytes()
@@ -150,7 +150,7 @@ func NewTopFromFile(file *os.File, blockSizes []int, maxBlockCount int) (*Top, e
 		return nil, fmt.Errorf("failed to unmarshal OmniAllocator (data size=%d): %w", len(omniData), err)
 	}
 
-	// Load store metadata (ObjectMap) info
+	// Load store metadata info
 	storeInfo, err := primeTable.Load()
 	if err != nil {
 		return nil, fmt.Errorf("failed to read store metadata from PrimeTable: %w", err)
@@ -399,7 +399,8 @@ func (t *Top) Load() error {
 	return nil
 }
 
-// SetStoreMeta records the ObjectMap location/size so it can be written into the PrimeTable during Save.
+// SetStoreMeta records allocator state metadata to be written into the PrimeTable during Save.
+// This provides a slot for the store layer to persist its own metadata.
 func (t *Top) SetStoreMeta(fi FileInfo) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -407,7 +408,7 @@ func (t *Top) SetStoreMeta(fi FileInfo) {
 	t.storeMeta = fi
 }
 
-// GetStoreMeta returns the stored ObjectMap FileInfo captured during load.
+// GetStoreMeta returns the allocator state metadata captured during load.
 func (t *Top) GetStoreMeta() FileInfo {
 	t.mu.RLock()
 	defer t.mu.RUnlock()

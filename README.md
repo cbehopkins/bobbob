@@ -19,13 +19,16 @@ You write an []byte and get back an integer. This integer is the ObjectId - a un
 
 In the most trivial cases the ObjectId is the file offset that the bytes are stored to. (Told you it was a simple thing.)
 
-The store also tracks the object locations and their sizes, policing the reads and writes so that one object does not interfere with others.
+The allocator tracks object locations and sizes, ensuring reads and writes don't interfere with each other.
 
-So far, so boring. But Store supports deletion of objects, so you can end up with holes in your used space.
-The sensible thing to do is to therefore track those holes and rather than write new objects to the end of the file, use these holes for new objects.
+Store supports deletion of objects, creating holes in the used space. The allocator tracks these holes and reuses them for new objects rather than always appending to the end of the file.
 
-Therefore the ObjectId is not actually the file offset (although it can often be).
-It is in fact just a handle that we look up the actual file offset from. The file offset can change after a Free/Compact session and therefore there are safeguards in place.
+The ObjectId is a handle that the allocator uses to look up the actual file offset. The allocator maintains this mapping internally, providing a single source of truth for object locations.
+
+**Important**: Allocators may round up requested sizes to block boundaries for efficiency. When reading data back, you may get more bytes than originally written (padded with zeros). Applications should either:
+- Track the exact size they write and only read that amount
+- Trim trailing zeros when unmarshaling (e.g., `bytes.TrimRight(data, "\x00")` for strings/JSON)
+- Use self-describing formats that encode their own length
 
 ## API Design Pattern
 
@@ -81,7 +84,7 @@ type Storer interface {
 The store layer uses a composable architecture where different concerns are layered:
 
 **Base Store Types:**
-- **`baseStore`** - Single allocator (BasicAllocator) with ObjectMap for simple object storage
+- **`baseStore`** - Single allocator with file I/O management. Allocator tracks object locations.
 - **`multiStore`** - Multi-allocator (OmniBlockAllocator) with size-based routing for efficient block management
 
 **Concurrent Wrapper:**

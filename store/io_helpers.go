@@ -98,7 +98,7 @@ func WriteBatchedSections(file *os.File, firstOffset FileOffset, sections [][]by
 }
 
 // ObjectInfoProvider is an interface for retrieving object location information.
-// Both baseStore (via ObjectMap) and multiStore (via allocators) implement this.
+// Both baseStore and multiStore delegate to their allocators to implement this.
 type ObjectInfoProvider interface {
 	GetObjectInfo(objId ObjectId) (ObjectInfo, bool)
 }

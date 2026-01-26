@@ -214,8 +214,12 @@ func detectConsecutiveObjects(s Storer, objects []ObjectAndByteFunc) [][]ObjectA
 		return nil
 	}
 
-	// Cast to baseStore to access objectMap
-	bs, ok := s.(*baseStore)
+	// Try to get objectInfo interface
+	type objectInfoGetter interface {
+		GetObjectInfo(ObjectId) (ObjectInfo, bool)
+	}
+
+	getter, ok := s.(objectInfoGetter)
 	if !ok {
 		// Fallback: treat all as non-consecutive
 		return [][]ObjectAndByteFunc{objects}
@@ -225,8 +229,8 @@ func detectConsecutiveObjects(s Storer, objects []ObjectAndByteFunc) [][]ObjectA
 	currentGroup := []ObjectAndByteFunc{objects[0]}
 
 	for i := 1; i < len(objects); i++ {
-		prevObj, prevFound := bs.objectMap.Get(objects[i-1].ObjectId)
-		currObj, currFound := bs.objectMap.Get(objects[i].ObjectId)
+		prevObj, prevFound := getter.GetObjectInfo(objects[i-1].ObjectId)
+		currObj, currFound := getter.GetObjectInfo(objects[i].ObjectId)
 
 		if !prevFound || !currFound {
 			// Can't determine consecutiveness, start new group
@@ -319,7 +323,11 @@ func benchmarkBatchedWrite(b *testing.B, objectCount, objectSize int) {
 
 // writeObjectsBatched is a hypothetical optimized version that writes consecutive objects together
 func writeObjectsBatched(s Storer, objects []ObjectAndByteFunc) error {
-	bs, ok := s.(*baseStore)
+	type objectInfoGetter interface {
+		GetObjectInfo(ObjectId) (ObjectInfo, bool)
+	}
+	
+	getter, ok := s.(objectInfoGetter)
 	if !ok {
 		// Fallback to regular implementation
 		return writeObjects(s, objects)
@@ -334,8 +342,8 @@ func writeObjectsBatched(s Storer, objects []ObjectAndByteFunc) error {
 		// Find consecutive sequence starting at i
 		j := i + 1
 		for j < len(objects) {
-			prevObj, prevFound := bs.objectMap.Get(objects[j-1].ObjectId)
-			currObj, currFound := bs.objectMap.Get(objects[j].ObjectId)
+			prevObj, prevFound := getter.GetObjectInfo(objects[j-1].ObjectId)
+			currObj, currFound := getter.GetObjectInfo(objects[j].ObjectId)
 
 			if !prevFound || !currFound {
 				break
