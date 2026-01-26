@@ -87,6 +87,8 @@ const (
 )
 
 type deleteQueue struct {
+	mu      sync.Mutex           // Protects isClosed
+	isClosed bool                 // Flag to prevent sends after close
 	q       chan bobbob.ObjectId
 	wg      sync.WaitGroup
 	closed  sync.Once
@@ -136,17 +138,45 @@ func (dq *deleteQueue) worker(delCallback func(store.ObjectId)) {
 }
 
 func (dq *deleteQueue) Enqueue(objId bobbob.ObjectId) {
+	dq.mu.Lock()
+	if dq.isClosed {
+		dq.mu.Unlock()
+		// Queue is closed; silently drop the deletion request
+		// This is safe because we're in shutdown and the file is being closed anyway
+		return
+	}
+	dq.mu.Unlock()
+
+	// Send to queue; if it panics (channel closed), recover gracefully
+	defer func() {
+		if r := recover(); r != nil {
+			// Channel was closed; safely ignore
+			// (This shouldn't happen with the flag check, but safe guard anyway)
+		}
+	}()
+
 	dq.q <- objId
 }
 
 func (dq *deleteQueue) Close() {
 	dq.closed.Do(func() {
+		dq.mu.Lock()
+		dq.isClosed = true
+		dq.mu.Unlock()
+
 		close(dq.q)
 		dq.wg.Wait()
 	})
 }
 
 func (dq *deleteQueue) Flush() {
+	dq.mu.Lock()
+	if dq.isClosed {
+		dq.mu.Unlock()
+		return // Already closed, can't flush
+	}
+	dq.mu.Unlock()
+
 	done := make(chan struct{})
 	dq.flushCh <- done
 	<-done
