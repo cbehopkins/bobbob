@@ -141,7 +141,7 @@ type Vault struct {
 	Store store.Storer
 
 	// TypeMap manages type-to-short-code mappings
-	TypeMap *yttypes.TypeMap
+	TypeMap *TypeMap
 
 	// CollectionRegistry tracks all collections in this vault
 	CollectionRegistry *collections.CollectionRegistry
@@ -186,7 +186,7 @@ func (v *Vault) Allocator() atypes.Allocator {
 func LoadVault(stre store.Storer) (*Vault, error) {
 	vault := &Vault{
 		Store:                       stre,
-		TypeMap:                     yttypes.NewTypeMap(),
+		TypeMap:                     NewTypeMap(),
 		CollectionRegistry:          collections.NewCollectionRegistry(),
 		activeCollections:           make(map[string]CollectionInterface),
 		backgroundMonitoringEnabled: true,
@@ -214,7 +214,7 @@ func LoadVault(stre store.Storer) (*Vault, error) {
 	if store.IsValidObjectId(metadata.TypeMapObjectId) {
 		typeMapData, err := store.ReadBytesFromObj(stre, metadata.TypeMapObjectId)
 		if err == nil {
-			loadedTypeMap := yttypes.NewTypeMap()
+			loadedTypeMap := NewTypeMap()
 			if err := loadedTypeMap.Unmarshal(typeMapData); err == nil {
 				// Use the loaded types.TypeMap
 				vault.TypeMap = loadedTypeMap

@@ -284,6 +284,116 @@ func TestBlockAllocatorAllocateRunNoneAvailable(t *testing.T) {
 	}
 }
 
+// TestBlockAllocatorAllocateRunSequential verifies that AllocateRun only returns sequential blocks.
+// This is critical for correctness: returned ObjectIds and FileOffsets must form a contiguous sequence.
+func TestBlockAllocatorAllocateRunSequential(t *testing.T) {
+	const blockSize = 256
+	const blockCount = 20
+
+	// Test multiple runs to ensure sequential behavior under various scenarios
+	testCases := []struct {
+		name          string
+		runSize       int
+		runCount      int
+		preAllocCount int // Pre-allocate some blocks before the run
+	}{
+		{
+			name:          "basic_sequential",
+			runSize:       blockSize,
+			runCount:      5,
+			preAllocCount: 0,
+		},
+		{
+			name:          "after_preallocation",
+			runSize:       blockSize,
+			runCount:      3,
+			preAllocCount: 2,
+		},
+		{
+			name:          "large_run",
+			runSize:       blockSize,
+			runCount:      10,
+			preAllocCount: 0,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Create fresh allocator for each test
+			a := New(blockSize, blockCount, 0, 0, nil)
+
+			// Pre-allocate some blocks if requested
+			for i := 0; i < tc.preAllocCount; i++ {
+				_, _, err := a.Allocate(blockSize)
+				if err != nil {
+					t.Fatalf("Pre-allocation failed: %v", err)
+				}
+			}
+
+			// Allocate the run
+			objIds, offsets, err := a.AllocateRun(tc.runSize, tc.runCount)
+			if err != nil {
+				t.Fatalf("AllocateRun failed: %v", err)
+			}
+
+			if len(objIds) != tc.runCount {
+				t.Fatalf("Expected %d objIds, got %d", tc.runCount, len(objIds))
+			}
+			if len(offsets) != tc.runCount {
+				t.Fatalf("Expected %d offsets, got %d", tc.runCount, len(offsets))
+			}
+
+			// CRITICAL: Verify sequential ObjectIds
+			// ObjectIds must form a contiguous sequence: id, id+1, id+2, ...
+			firstObjId := objIds[0]
+			for i := 0; i < len(objIds); i++ {
+				expectedObjId := firstObjId + types.ObjectId(i)
+				if objIds[i] != expectedObjId {
+					t.Errorf("ObjectId sequence broken at index %d: expected %d, got %d",
+						i, expectedObjId, objIds[i])
+				}
+			}
+
+			// CRITICAL: Verify sequential FileOffsets
+			// FileOffsets must form a contiguous sequence: offset, offset+blockSize, offset+2*blockSize, ...
+			firstOffset := offsets[0]
+			for i := 0; i < len(offsets); i++ {
+				expectedOffset := firstOffset + types.FileOffset(i*blockSize)
+				if offsets[i] != expectedOffset {
+					t.Errorf("FileOffset sequence broken at index %d: expected %d, got %d",
+						i, expectedOffset, offsets[i])
+				}
+			}
+
+			// Verify no gaps in the sequence
+			for i := 1; i < len(offsets); i++ {
+				expectedGap := types.FileOffset(blockSize)
+				actualGap := offsets[i] - offsets[i-1]
+				if actualGap != expectedGap {
+					t.Errorf("Gap between block %d and %d: expected %d, got %d",
+						i-1, i, expectedGap, actualGap)
+				}
+			}
+
+			// Verify each ObjectId in the run is properly tracked
+			for i, objId := range objIds {
+				offset, size, err := a.GetObjectInfo(objId)
+				if err != nil {
+					t.Errorf("GetObjectInfo failed for ObjectId %d: %v", objId, err)
+				}
+				if offset != offsets[i] {
+					t.Errorf("Offset mismatch for ObjectId %d: expected %d, got %d",
+						objId, offsets[i], offset)
+				}
+				if size != types.FileSize(blockSize) {
+					t.Errorf("Size mismatch for ObjectId %d: expected %d, got %d",
+						objId, blockSize, size)
+				}
+			}
+		})
+	}
+}
+
 // TestBlockAllocatorCallback verifies SetOnAllocate callback.
 func TestBlockAllocatorCallback(t *testing.T) {
 	const blockSize = 1024
@@ -519,7 +629,7 @@ func TestBlockAllocatorInvalidOperations(t *testing.T) {
 func TestBlockAllocatorHierarchy(t *testing.T) {
 	// This test demonstrates how BlockAllocator manages ObjectId ranges
 	// when created by a parent allocator.
-	
+
 	// Simulate parent providing a range starting at offset 10000, ObjectId 1000
 	const parentOffset = types.FileOffset(10000)
 	const parentObjId = types.ObjectId(1000)
@@ -577,13 +687,13 @@ func TestBlockAllocatorHierarchy(t *testing.T) {
 
 func TestBlockAllocatorSizeInBytes(t *testing.T) {
 	alloc := New(1024, 100, 0, 1000, nil)
-	
+
 	// Expected: 8 bytes (offset) + ceil(100/8) = 8 + 13 = 21 bytes
 	expected := 8 + (100+7)/8
 	if alloc.SizeInBytes() != expected {
 		t.Errorf("SizeInBytes() = %d, want %d", alloc.SizeInBytes(), expected)
 	}
-	
+
 	// Verify it matches actual Marshal output
 	data, err := alloc.Marshal()
 	if err != nil {
@@ -598,13 +708,13 @@ func TestBlockAllocatorRangeSizeInBytes(t *testing.T) {
 	blockSize := 1024
 	blockCount := 100
 	alloc := New(blockSize, blockCount, 0, 1000, nil)
-	
+
 	// Expected: blockSize * blockCount
 	expected := blockSize * blockCount
 	if alloc.RangeSizeInBytes() != expected {
 		t.Errorf("RangeSizeInBytes() = %d, want %d", alloc.RangeSizeInBytes(), expected)
 	}
-	
+
 	// This is the size you'd request from a parent allocator
 	if alloc.RangeSizeInBytes() != 102400 {
 		t.Errorf("RangeSizeInBytes() = %d, want 102400 (100 * 1024)", alloc.RangeSizeInBytes())

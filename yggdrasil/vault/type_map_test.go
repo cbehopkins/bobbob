@@ -1,4 +1,4 @@
-package types
+package vault
 
 import (
 	"reflect"
@@ -43,10 +43,11 @@ func TestTypeMap_SerializationAndLookup(t *testing.T) {
 	tm2.AddType(dummyTypeC{})
 	tm2.AddType(dummyTypeB{})
 
-	// Lookup by name
-	tuple, ok := tm2.GetTypeByName("types.dummyTypeC")
+	// Lookup by name using the same naming scheme as TypeMap
+	typeCName := getTypeName(dummyTypeC{})
+	tuple, ok := tm2.GetTypeByName(typeCName)
 	if !ok {
-		t.Fatalf("Type yggdrasil.dummyTypeC not found after unmarshal")
+		t.Fatalf("Type %s not found after unmarshal", typeCName)
 	}
 	if reflect.TypeOf(tuple.typeRef) != reflect.TypeOf(dummyTypeC{}) {
 		t.Errorf("typeRef is not correct type after re-registration")
@@ -54,9 +55,10 @@ func TestTypeMap_SerializationAndLookup(t *testing.T) {
 
 	// Lookup by short code
 	// Find short code for dummyTypeB
-	tupleB, ok := tm2.GetTypeByName("types.dummyTypeB")
+	typeBName := getTypeName(dummyTypeB{})
+	tupleB, ok := tm2.GetTypeByName(typeBName)
 	if !ok {
-		t.Fatalf("Type yggdrasil.dummyTypeB not found after unmarshal")
+		t.Fatalf("Type %s not found after unmarshal", typeBName)
 	}
 	tupleByShort, ok := tm2.GetTypeByShortCode(tupleB.ShortCode)
 	if !ok {
@@ -95,10 +97,11 @@ func TestTypeMap_SerializationAndLookup_alt_order(t *testing.T) {
 		t.Fatalf("Unmarshal failed: %v", err)
 	}
 
-	// Lookup by name
-	tuple, ok := tm2.GetTypeByName("types.dummyTypeC")
+	// Lookup by name using the same naming scheme as TypeMap
+	typeCName := getTypeName(dummyTypeC{})
+	tuple, ok := tm2.GetTypeByName(typeCName)
 	if !ok {
-		t.Fatalf("Type yggdrasil.dummyTypeC not found after unmarshal")
+		t.Fatalf("Type %s not found after unmarshal", typeCName)
 	}
 	if reflect.TypeOf(tuple.typeRef) != reflect.TypeOf(dummyTypeC{}) {
 		t.Errorf("typeRef is not correct type after re-registration")
@@ -106,9 +109,10 @@ func TestTypeMap_SerializationAndLookup_alt_order(t *testing.T) {
 
 	// Lookup by short code
 	// Find short code for dummyTypeB
-	tupleB, ok := tm2.GetTypeByName("types.dummyTypeB")
+	typeBName := getTypeName(dummyTypeB{})
+	tupleB, ok := tm2.GetTypeByName(typeBName)
 	if !ok {
-		t.Fatalf("Type yggdrasil.dummyTypeB not found after unmarshal")
+		t.Fatalf("Type %s not found after unmarshal", typeBName)
 	}
 	tupleByShort, ok := tm2.GetTypeByShortCode(tupleB.ShortCode)
 	if !ok {
