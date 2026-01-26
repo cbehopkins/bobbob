@@ -17,8 +17,8 @@ type baseStore struct {
 	filePath  string
 	file      *os.File
 	objectMap *ObjectMap
-	allocator *TopAllocatorAdapter // Use the adapter wrapping the new TopAllocator
-	closed    bool                 // Track if store is closed
+	allocator *allocator.Top // Thread-safe TopAllocator
+	closed    bool            // Track if store is closed
 }
 
 // NewBasicStore creates a new baseStore at the given file path.
@@ -41,14 +41,12 @@ func NewBasicStore(filePath string) (*baseStore, error) {
 		return nil, fmt.Errorf("failed to create TopAllocator: %w", err)
 	}
 
-	adapter := NewTopAllocatorAdapter(topAlloc)
-
 	// Initialize the Store
 	store := &baseStore{
 		filePath:  filePath,
 		file:      file,
 		objectMap: NewObjectMap(),
-		allocator: adapter,
+		allocator: topAlloc,
 	}
 
 	return store, nil
@@ -72,10 +70,8 @@ func LoadBaseStore(filePath string) (*baseStore, error) {
 		return nil, fmt.Errorf("failed to load TopAllocator from %q: %w", filePath, err)
 	}
 
-	adapter := NewTopAllocatorAdapter(topAlloc)
-
-	// Retrieve store metadata (ObjectMap location/size) from PrimeTable via adapter
-	storeMeta := adapter.GetStoreMeta()
+	// Retrieve store metadata (ObjectMap location/size) from PrimeTable
+	storeMeta := topAlloc.GetStoreMeta()
 
 	// Seek to ObjectMap and deserialize
 	_, err = file.Seek(int64(storeMeta.Fo), io.SeekStart)
@@ -94,7 +90,7 @@ func LoadBaseStore(filePath string) (*baseStore, error) {
 		filePath:  filePath,
 		file:      file,
 		objectMap: objectMap,
-		allocator: adapter,
+		allocator: topAlloc,
 	}
 	return store, nil
 }
@@ -331,8 +327,8 @@ func (s *baseStore) DeleteObj(objId ObjectId) error {
 
 	var deleteErr error
 	_, found := s.objectMap.GetAndDelete(objId, func(obj ObjectInfo) {
-		// Use the new allocator's DeleteObj method via the adapter
-		deleteErr = s.allocator.DeleteObjID(objId)
+		// Use the allocator's DeleteObj method
+		deleteErr = s.allocator.DeleteObj(types.ObjectId(objId))
 	})
 	if !found {
 		return errors.New("object not found")
@@ -410,6 +406,6 @@ func (s *baseStore) GetObjectCount() int {
 
 // Allocator returns the allocator backing this store, enabling external callers
 // to configure allocation callbacks (e.g., SetOnAllocate).
-func (s *baseStore) Allocator() *TopAllocatorAdapter {
+func (s *baseStore) Allocator() *allocator.Top {
 	return s.allocator
 }

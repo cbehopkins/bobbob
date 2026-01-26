@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"sort"
+	"sync"
 
 	"github.com/cbehopkins/bobbob/allocator/types"
 )
@@ -105,7 +106,8 @@ func (fl *FreeList) Remove(idx int) Gap {
 // BasicAllocator is the lowest-level allocator.
 // ObjectId always equals FileOffset (1:1 mapping).
 type BasicAllocator struct {
-	file *os.File
+	mu         sync.RWMutex
+	file       *os.File
 
 	// ObjectMap: ObjectId/FileOffset -> Size
 	// FIXME - this needs to be disk based for memory overhead reasons
@@ -125,6 +127,9 @@ type BasicAllocator struct {
 // allocator bootstrap time to skip over reserved regions (e.g. PrimeTable).
 // It only moves the cursor forward; it never shrinks it.
 func (ba *BasicAllocator) ReservePrefix(offset types.FileOffset) {
+	ba.mu.Lock()
+	defer ba.mu.Unlock()
+
 	if offset > ba.fileLength {
 		ba.fileLength = offset
 	}
@@ -165,6 +170,9 @@ func New(file *os.File) (*BasicAllocator, error) {
 // Allocate allocates a new object of the given size.
 // Returns ObjectId (which equals FileOffset) and FileOffset.
 func (ba *BasicAllocator) Allocate(size int) (types.ObjectId, types.FileOffset, error) {
+	ba.mu.Lock()
+	defer ba.mu.Unlock()
+
 	fileSize := types.FileSize(size)
 
 	// Try to find a gap in FreeList
@@ -219,6 +227,9 @@ func (ba *BasicAllocator) AllocateRun(size int, count int) ([]types.ObjectId, []
 
 // DeleteObj frees an object by ObjectId.
 func (ba *BasicAllocator) DeleteObj(objId types.ObjectId) error {
+	ba.mu.Lock()
+	defer ba.mu.Unlock()
+
 	size, exists := ba.objectMap[objId]
 	if !exists {
 		return ErrInvalidObjectId
@@ -279,6 +290,9 @@ func (ba *BasicAllocator) removeGapsBeyond(offset types.FileOffset) {
 
 // GetObjectInfo returns the FileOffset and Size for an ObjectId.
 func (ba *BasicAllocator) GetObjectInfo(objId types.ObjectId) (types.FileOffset, types.FileSize, error) {
+	ba.mu.RLock()
+	defer ba.mu.RUnlock()
+
 	size, exists := ba.objectMap[objId]
 	if !exists {
 		return 0, 0, ErrInvalidObjectId
@@ -301,12 +315,18 @@ func (ba *BasicAllocator) FileLength() types.FileOffset {
 
 // ContainsObjectId returns true if this allocator owns the ObjectId.
 func (ba *BasicAllocator) ContainsObjectId(objId types.ObjectId) bool {
+	ba.mu.RLock()
+	defer ba.mu.RUnlock()
+
 	_, exists := ba.objectMap[objId]
 	return exists
 }
 
 // SetOnAllocate registers a callback invoked after each allocation.
 func (ba *BasicAllocator) SetOnAllocate(callback func(types.ObjectId, types.FileOffset, int)) {
+	ba.mu.Lock()
+	defer ba.mu.Unlock()
+
 	ba.onAllocate = callback
 }
 

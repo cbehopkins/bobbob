@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"sync"
 
 	"github.com/cbehopkins/bobbob/allocator/block"
 	"github.com/cbehopkins/bobbob/allocator/cache"
@@ -21,7 +22,9 @@ var (
 // OmniAllocator routes allocation requests to size-appropriate PoolAllocators
 // and delegates oversized requests to the parent allocator. It can unload full
 // pools into a PoolCache to keep memory usage low and rehydrate them on demand.
+// OmniAllocator is thread-safe and protects concurrent access to pools and cache.
 type OmniAllocator struct {
+	mu         sync.RWMutex
 	blockSizes []int
 	parent     types.Allocator
 	file       *os.File
@@ -56,6 +59,9 @@ func NewOmniAllocator(blockSizes []int, parent types.Allocator, file *os.File, p
 }
 
 func (o *OmniAllocator) Allocate(size int) (types.ObjectId, types.FileOffset, error) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
 	blockSize, ok := o.selectBlockSize(size)
 	if ok {
 		pl, err := o.ensurePool(blockSize)
@@ -77,6 +83,9 @@ func (o *OmniAllocator) Allocate(size int) (types.ObjectId, types.FileOffset, er
 }
 
 func (o *OmniAllocator) AllocateRun(size int, count int) ([]types.ObjectId, []types.FileOffset, error) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
 	blockSize, ok := o.selectBlockSize(size)
 	if ok {
 		pl, err := o.ensurePool(blockSize)
@@ -105,6 +114,9 @@ func (o *OmniAllocator) AllocateRun(size int, count int) ([]types.ObjectId, []ty
 }
 
 func (o *OmniAllocator) DeleteObj(objId types.ObjectId) error {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
 	if pl := o.findPoolByOwnership(objId); pl != nil {
 		return pl.DeleteObj(objId)
 	}
@@ -115,6 +127,9 @@ func (o *OmniAllocator) DeleteObj(objId types.ObjectId) error {
 }
 
 func (o *OmniAllocator) GetObjectInfo(objId types.ObjectId) (types.FileOffset, types.FileSize, error) {
+	o.mu.RLock()
+	defer o.mu.RUnlock()
+
 	if pl := o.findPoolByOwnership(objId); pl != nil {
 		return pl.GetObjectInfo(objId)
 	}
@@ -125,6 +140,9 @@ func (o *OmniAllocator) GetObjectInfo(objId types.ObjectId) (types.FileOffset, t
 }
 
 func (o *OmniAllocator) ContainsObjectId(objId types.ObjectId) bool {
+	o.mu.RLock()
+	defer o.mu.RUnlock()
+
 	if pl := o.findPoolByOwnership(objId); pl != nil {
 		return true
 	}
@@ -144,6 +162,9 @@ func (o *OmniAllocator) GetFile() *os.File {
 }
 
 func (o *OmniAllocator) SetOnAllocate(callback func(types.ObjectId, types.FileOffset, int)) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
 	o.onAllocate = callback
 	for _, pl := range o.pools {
 		pl.SetOnAllocate(callback)
