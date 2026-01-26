@@ -8,7 +8,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/cbehopkins/bobbob/internal"
+	"github.com/cbehopkins/bobbob"
 )
 
 func TestNewConcurrentStore(t *testing.T) {
@@ -60,7 +60,7 @@ func TestNewConcurrentStoreWrapping(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create object: %v", err)
 	}
-	if objId == internal.ObjNotAllocated {
+	if objId == bobbob.ObjNotAllocated {
 		t.Error("expected valid object ID")
 	}
 
@@ -89,7 +89,7 @@ func TestConcurrentStoreNewObj(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error creating object, got %v", err)
 	}
-	if objId == internal.ObjNotAllocated {
+	if objId == bobbob.ObjNotAllocated {
 		t.Error("expected valid object ID")
 	}
 }
@@ -458,7 +458,7 @@ func TestConcurrentStoreConcurrentWritesDifferentObjects(t *testing.T) {
 
 	// Verify all objects were created
 	for i, objId := range objIds {
-		if objId == internal.ObjNotAllocated {
+		if objId == bobbob.ObjNotAllocated {
 			t.Errorf("object %d was not allocated", i)
 		}
 	}

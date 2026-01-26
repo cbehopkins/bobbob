@@ -11,7 +11,7 @@ import (
 	"github.com/cbehopkins/bobbob/yggdrasil/types"
 )
 
-// TestMemorySavingsWithoutObjectMap verifies that eliminating ObjectMap
+// TestMemorySavingsBlockAllocator verifies that the BlockAllocator
 // actually reduces memory usage in real-world scenarios
 func TestMemorySavingsBlockAllocator(t *testing.T) {
 	if testing.Short() {

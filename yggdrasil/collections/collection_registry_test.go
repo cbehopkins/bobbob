@@ -3,7 +3,7 @@ package collections
 import (
 	"testing"
 
-	"github.com/cbehopkins/bobbob/internal"
+	"github.com/cbehopkins/bobbob"
 )
 
 // TestNewCollectionRegistry verifies that a new registry is created with properly
@@ -423,7 +423,7 @@ func TestCollectionRegistryWithObjNotAllocated(t *testing.T) {
 	registry := NewCollectionRegistry()
 
 	// Register collection with ObjNotAllocated (common for new collections)
-	collId, err := registry.RegisterCollection("users", internal.ObjNotAllocated, 1, 2)
+	collId, err := registry.RegisterCollection("users", bobbob.ObjNotAllocated, 1, 2)
 	if err != nil {
 		t.Fatalf("Failed to register collection with ObjNotAllocated: %v", err)
 	}
@@ -432,7 +432,7 @@ func TestCollectionRegistryWithObjNotAllocated(t *testing.T) {
 	if !exists {
 		t.Fatal("Expected to find users collection")
 	}
-	if info.RootObjectId != internal.ObjNotAllocated {
+	if info.RootObjectId != bobbob.ObjNotAllocated {
 		t.Errorf("Expected ObjNotAllocated, got %d", info.RootObjectId)
 	}
 

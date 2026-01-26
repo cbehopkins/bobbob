@@ -47,7 +47,7 @@ import (
 	"slices"
 	"sort"
 
-	"github.com/cbehopkins/bobbob/internal"
+	"github.com/cbehopkins/bobbob"
 	"github.com/cbehopkins/bobbob/store"
 )
 
@@ -257,7 +257,7 @@ func (l *Link) markStale() {
 // AddElement adds an element to the link.
 // If the link is at capacity, a new link is created and added to the chain.
 func (l *Link) AddElement(element any) error {
-	return l.AddElementAndObj(element, internal.ObjNotAllocated)
+	return l.AddElementAndObj(element, bobbob.ObjNotAllocated)
 }
 
 // AddElementAndObj adds an element to the link with an associated ObjectId.
@@ -392,7 +392,7 @@ func (l Link) bytesNeeded() int {
 func (l *Link) ChildObjects() []store.ObjectId {
 	objs := make([]store.ObjectId, 0, l.maxSize)
 	for _, objId := range l.elementsFileObjIds {
-		if objId != internal.ObjNotAllocated {
+		if objId != bobbob.ObjNotAllocated {
 			objs = append(objs, objId)
 		}
 	}
@@ -427,7 +427,7 @@ func (l *Link) ObjectId() (store.ObjectId, error) {
 
 func (l *Link) writeElements() error {
 	for i, element := range l.elements {
-		if l.elementsFileObjIds[i] == internal.ObjNotAllocated {
+		if l.elementsFileObjIds[i] == bobbob.ObjNotAllocated {
 			objId, err := store.WriteGeneric(l.chain.store, element)
 			if err != nil {
 				return err
@@ -465,7 +465,7 @@ func (l *Link) Marshal() ([]byte, error) {
 	}
 
 	// Write the prevObjectId
-	prevObjectId := internal.ObjNotAllocated
+	prevObjectId := bobbob.ObjNotAllocated
 	if l.prev != nil && l.prev.objectId != nil {
 		prevObjectId = *l.prev.objectId
 	}
@@ -473,7 +473,7 @@ func (l *Link) Marshal() ([]byte, error) {
 	offset += 8
 
 	// Write the nextObjectId
-	nextObjectId := internal.ObjNotAllocated
+	nextObjectId := bobbob.ObjNotAllocated
 	if l.next != nil && l.next.objectId != nil {
 		nextObjectId = *l.next.objectId
 	}
@@ -481,7 +481,7 @@ func (l *Link) Marshal() ([]byte, error) {
 	offset += 8
 
 	// Write the self objectId
-	selfObjectId := internal.ObjNotAllocated
+	selfObjectId := bobbob.ObjNotAllocated
 	if l.objectId != nil {
 		selfObjectId = *l.objectId
 	}
@@ -511,20 +511,20 @@ func (l *Link) unmarshal(data []byte) error {
 	// Read the prevObjectId
 	prevObjectId := store.ObjectId(binary.LittleEndian.Uint64(data[offset : offset+8]))
 	offset += 8
-	if prevObjectId != internal.ObjNotAllocated {
+	if prevObjectId != bobbob.ObjNotAllocated {
 		l.prev = &Link{objectId: &prevObjectId}
 	}
 
 	// Read the nextObjectId
 	nextObjectId := store.ObjectId(binary.LittleEndian.Uint64(data[offset : offset+8]))
 	offset += 8
-	if nextObjectId != internal.ObjNotAllocated {
+	if nextObjectId != bobbob.ObjNotAllocated {
 		l.next = &Link{objectId: &nextObjectId}
 	}
 
 	// Read the self objectId
 	selfObjectId := store.ObjectId(binary.LittleEndian.Uint64(data[offset : offset+8]))
-	if selfObjectId != internal.ObjNotAllocated {
+	if selfObjectId != bobbob.ObjNotAllocated {
 		l.objectId = &selfObjectId
 	}
 
@@ -541,7 +541,7 @@ func (l *Link) Unmarshal(data []byte, newObj func() any) error {
 	}
 	l.elements = l.elements[:0]
 	for _, objId := range l.elementsFileObjIds {
-		if objId == internal.ObjNotAllocated {
+		if objId == bobbob.ObjNotAllocated {
 			return errors.New("unmarshal failed: elementsFileObjIds not populated")
 		}
 

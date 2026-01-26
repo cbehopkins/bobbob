@@ -59,8 +59,8 @@ import (
 	"errors"
 	"io"
 
+	"github.com/cbehopkins/bobbob"
 	"github.com/cbehopkins/bobbob/allocator/types"
-	"github.com/cbehopkins/bobbob/internal"
 )
 
 // IsValidObjectId reports whether the given ObjectId is valid.
@@ -265,7 +265,7 @@ func WriteGeneric(s Storer, obj any) (ObjectId, error) {
 	case MarshalSimple:
 		data, err := v.Marshal()
 		if err != nil {
-			return internal.ObjNotWritten, err
+			return bobbob.ObjNotWritten, err
 		}
 		return WriteNewObjFromBytes(s, data)
 	default:

@@ -4,7 +4,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/cbehopkins/bobbob/internal"
+	"github.com/cbehopkins/bobbob"
 )
 
 // TestInterfaceCompatibility verifies that the interface hierarchy is properly defined
@@ -224,7 +224,7 @@ func NewMockAllocator() *mockAllocator {
 
 func (m *mockAllocator) Allocate(size int) (ObjectId, FileOffset, error) {
 	if size <= 0 {
-		return internal.ObjNotAllocated, 0, ErrAllocationFailed
+		return bobbob.ObjNotAllocated, 0, ErrAllocationFailed
 	}
 
 	objId := m.nextObjectId

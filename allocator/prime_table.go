@@ -28,6 +28,7 @@ import (
 	"encoding/binary"
 	"errors"
 
+	"github.com/cbehopkins/bobbob"
 	"github.com/cbehopkins/bobbob/allocator/types"
 )
 
@@ -39,9 +40,9 @@ var (
 
 // FileInfo represents the location and size of a persisted allocator.
 type FileInfo struct {
-	ObjId types.ObjectId
-	Fo    types.FileOffset
-	Sz    types.FileSize
+	ObjId bobbob.ObjectId
+	Fo    bobbob.FileOffset
+	Sz    bobbob.FileSize
 }
 
 // Marshal serializes FileInfo to 24 bytes.
@@ -184,8 +185,8 @@ func (p *PrimeTable) Unmarshal(data []byte) error {
 }
 
 // SizeInBytes returns the number of bytes needed to marshal the table.
-func (p *PrimeTable) SizeInBytes() types.FileSize {
-	return types.FileSize(4 + (len(p.entries) * 24))
+func (p *PrimeTable) SizeInBytes() int64 {
+	return int64(4 + (len(p.entries) * 24))
 }
 
 // NumEntries returns the number of allocator slots in the table.

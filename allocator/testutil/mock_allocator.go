@@ -3,22 +3,22 @@ package testutil
 import (
 	"os"
 
+	"github.com/cbehopkins/bobbob"
 	"github.com/cbehopkins/bobbob/allocator/types"
-	"github.com/cbehopkins/bobbob/internal"
 )
 
 // MockAllocator is a functional implementation of all allocator interfaces for testing.
 // It tracks non-overlapping allocations in memory.
 type MockAllocator struct {
-	nextObjectId types.ObjectId
-	nextOffset   types.FileOffset
-	allocations  map[types.ObjectId]allocationInfo
-	callback     func(types.ObjectId, types.FileOffset, int)
+	nextObjectId bobbob.ObjectId
+	nextOffset   bobbob.FileOffset
+	allocations  map[bobbob.ObjectId]allocationInfo
+	callback     func(bobbob.ObjectId, bobbob.FileOffset, int)
 }
 
 type allocationInfo struct {
-	offset types.FileOffset
-	size   types.FileSize
+	offset bobbob.FileOffset
+	size   bobbob.FileSize
 }
 
 // NewMockAllocator creates a new mock allocator for testing.
@@ -26,24 +26,24 @@ func NewMockAllocator() *MockAllocator {
 	return &MockAllocator{
 		nextObjectId: 1,
 		nextOffset:   1,
-		allocations:  make(map[types.ObjectId]allocationInfo),
+		allocations:  make(map[bobbob.ObjectId]allocationInfo),
 	}
 }
 
-func (m *MockAllocator) Allocate(size int) (types.ObjectId, types.FileOffset, error) {
+func (m *MockAllocator) Allocate(size int) (bobbob.ObjectId, bobbob.FileOffset, error) {
 	if size <= 0 {
-		return internal.ObjNotAllocated, 0, types.ErrAllocationFailed
+		return bobbob.ObjNotAllocated, 0, types.ErrAllocationFailed
 	}
 
-	objId := types.ObjectId(m.nextOffset)
+	objId := bobbob.ObjectId(m.nextOffset)
 	offset := m.nextOffset
 
 	m.allocations[objId] = allocationInfo{
 		offset: offset,
-		size:   types.FileSize(size),
+		size:   bobbob.FileSize(size),
 	}
 
-	m.nextOffset += types.FileOffset(size)
+	m.nextOffset += bobbob.FileOffset(size)
 	m.nextObjectId = objId + 1
 
 	if m.callback != nil {
@@ -53,7 +53,7 @@ func (m *MockAllocator) Allocate(size int) (types.ObjectId, types.FileOffset, er
 	return objId, offset, nil
 }
 
-func (m *MockAllocator) DeleteObj(objId types.ObjectId) error {
+func (m *MockAllocator) DeleteObj(objId bobbob.ObjectId) error {
 	if _, exists := m.allocations[objId]; !exists {
 		return types.ErrNotFound
 	}
@@ -61,7 +61,7 @@ func (m *MockAllocator) DeleteObj(objId types.ObjectId) error {
 	return nil
 }
 
-func (m *MockAllocator) GetObjectInfo(objId types.ObjectId) (types.FileOffset, types.FileSize, error) {
+func (m *MockAllocator) GetObjectInfo(objId bobbob.ObjectId) (bobbob.FileOffset, bobbob.FileSize, error) {
 	info, exists := m.allocations[objId]
 	if !exists {
 		return 0, 0, types.ErrNotFound
@@ -78,7 +78,7 @@ func (m *MockAllocator) ContainsObjectId(objId types.ObjectId) bool {
 	return exists
 }
 
-func (m *MockAllocator) AllocateRun(size int, count int) ([]types.ObjectId, []types.FileOffset, error) {
+func (m *MockAllocator) AllocateRun(size int, count int) ([]bobbob.ObjectId, []bobbob.FileOffset, error) {
 	if size <= 0 || count <= 0 {
 		return nil, nil, types.ErrAllocationFailed
 	}
@@ -102,7 +102,7 @@ func (m *MockAllocator) AllocateRun(size int, count int) ([]types.ObjectId, []ty
 	return objIds, offsets, nil
 }
 
-func (m *MockAllocator) SetOnAllocate(callback func(types.ObjectId, types.FileOffset, int)) {
+func (m *MockAllocator) SetOnAllocate(callback func(bobbob.ObjectId, bobbob.FileOffset, int)) {
 	m.callback = callback
 }
 
@@ -118,6 +118,6 @@ func (m *MockAllocator) Parent() types.Allocator {
 	return nil
 }
 
-func (m *MockAllocator) GetObjectIdsInAllocator(blockSize int, allocatorIndex int) []types.ObjectId {
+func (m *MockAllocator) GetObjectIdsInAllocator(blockSize int, allocatorIndex int) []bobbob.ObjectId {
 	return nil
 }

@@ -6,7 +6,7 @@ import (
 	"io"
 	"sync"
 
-	"github.com/cbehopkins/bobbob/internal"
+	"github.com/cbehopkins/bobbob"
 )
 
 // MockStore is an in-memory implementation of store.Storer for fast testing.
@@ -42,7 +42,7 @@ func (m *MockStore) NewObj(size int) (ObjectId, error) {
 	defer m.mu.Unlock()
 
 	if m.closed {
-		return internal.ObjNotAllocated, io.ErrClosedPipe
+		return bobbob.ObjNotAllocated, io.ErrClosedPipe
 	}
 
 	objId := m.nextId
@@ -84,7 +84,7 @@ func (m *MockStore) PrimeObject(size int) (ObjectId, error) {
 	defer m.mu.Unlock()
 
 	if m.closed {
-		return internal.ObjNotAllocated, io.ErrClosedPipe
+		return bobbob.ObjNotAllocated, io.ErrClosedPipe
 	}
 
 	// PrimeTable size: 4 byte header + 3 slots * 24 bytes = 76 bytes
@@ -135,7 +135,7 @@ func (m *MockStore) LateWriteNewObj(size int) (ObjectId, io.Writer, Finisher, er
 	defer m.mu.Unlock()
 
 	if m.closed {
-		return internal.ObjNotAllocated, nil, nil, io.ErrClosedPipe
+		return bobbob.ObjNotAllocated, nil, nil, io.ErrClosedPipe
 	}
 
 	objId := m.nextId

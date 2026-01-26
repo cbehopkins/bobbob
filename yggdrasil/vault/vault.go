@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cbehopkins/bobbob"
 	atypes "github.com/cbehopkins/bobbob/allocator/types"
-	"github.com/cbehopkins/bobbob/internal"
 	"github.com/cbehopkins/bobbob/multistore"
 	"github.com/cbehopkins/bobbob/store"
 	"github.com/cbehopkins/bobbob/yggdrasil/collections"
@@ -328,7 +328,7 @@ func GetOrCreateCollection[K any, P yttypes.PersistentPayload[P]](
 	// Register in the collection registry
 	_, err = v.CollectionRegistry.RegisterCollection(
 		collectionName,
-		internal.ObjNotAllocated, // No root yet
+		bobbob.ObjNotAllocated, // No root yet
 		keyShortCode,
 		payloadShortCode,
 	)
@@ -413,7 +413,7 @@ func GetOrCreateKeyOnlyCollection[K any](
 	// Register in the collection registry (payload short code is 0 for key-only)
 	_, err = v.CollectionRegistry.RegisterCollection(
 		collectionName,
-		internal.ObjNotAllocated, // No root yet
+		bobbob.ObjNotAllocated, // No root yet
 		keyShortCode,
 		0, // No payload type
 	)
@@ -1024,8 +1024,8 @@ func (vs *VaultSession) Allocator() atypes.Allocator {
 // its parent (e.g., BasicAllocator behind OmniBlockAllocator). Returns true if at least one
 // callback was attached.
 func (vs *VaultSession) ConfigureAllocatorCallbacks(
-	childCb func(atypes.ObjectId, atypes.FileOffset, int),
-	parentCb func(atypes.ObjectId, atypes.FileOffset, int),
+	childCb func(bobbob.ObjectId, bobbob.FileOffset, int),
+	parentCb func(bobbob.ObjectId, bobbob.FileOffset, int),
 ) bool {
 	alloc := vs.Allocator()
 	if alloc == nil {
@@ -1033,7 +1033,7 @@ func (vs *VaultSession) ConfigureAllocatorCallbacks(
 	}
 
 	type callbackSetter interface {
-		SetOnAllocate(func(atypes.ObjectId, atypes.FileOffset, int))
+		SetOnAllocate(func(bobbob.ObjectId, bobbob.FileOffset, int))
 	}
 
 	succeeded := false

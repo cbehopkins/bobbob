@@ -6,6 +6,7 @@ import (
 	"os"
 	"sync"
 
+	"github.com/cbehopkins/bobbob"
 	"github.com/cbehopkins/bobbob/allocator/basic"
 	"github.com/cbehopkins/bobbob/allocator/omni"
 	"github.com/cbehopkins/bobbob/allocator/types"
@@ -38,7 +39,7 @@ func NewTop(file *os.File, blockSizes []int, maxBlockCount int) (*Top, error) {
 	}
 
 	// Create BasicAllocator
-	basicAlloc, err := basic.New(file)
+	basicAlloc, err := basic.NewWithFileBasedTracking(file)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create BasicAllocator: %w", err)
 	}
@@ -168,21 +169,21 @@ func NewTopFromFile(file *os.File, blockSizes []int, maxBlockCount int) (*Top, e
 }
 
 // Allocate delegates to OmniAllocator (preferred for fixed-size allocations) or BasicAllocator.
-func (t *Top) Allocate(size int) (types.ObjectId, types.FileOffset, error) {
+func (t *Top) Allocate(size int) (bobbob.ObjectId, bobbob.FileOffset, error) {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 	return t.omniAllocator.Allocate(size)
 }
 
 // DeleteObj delegates to OmniAllocator (which routes to appropriate sub-allocator).
-func (t *Top) DeleteObj(objId types.ObjectId) error {
+func (t *Top) DeleteObj(objId bobbob.ObjectId) error {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 	return t.omniAllocator.DeleteObj(objId)
 }
 
 // GetObjectInfo delegates to OmniAllocator (which routes to appropriate sub-allocator).
-func (t *Top) GetObjectInfo(objId types.ObjectId) (types.FileOffset, types.FileSize, error) {
+func (t *Top) GetObjectInfo(objId bobbob.ObjectId) (bobbob.FileOffset, bobbob.FileSize, error) {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 	return t.omniAllocator.GetObjectInfo(objId)
@@ -194,21 +195,21 @@ func (t *Top) GetFile() *os.File {
 }
 
 // ContainsObjectId delegates to OmniAllocator.
-func (t *Top) ContainsObjectId(objId types.ObjectId) bool {
+func (t *Top) ContainsObjectId(objId bobbob.ObjectId) bool {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 	return t.omniAllocator.ContainsObjectId(objId)
 }
 
 // AllocateRun delegates to OmniAllocator if supported.
-func (t *Top) AllocateRun(size int, count int) ([]types.ObjectId, []types.FileOffset, error) {
+func (t *Top) AllocateRun(size int, count int) ([]bobbob.ObjectId, []bobbob.FileOffset, error) {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 	return t.omniAllocator.AllocateRun(size, count)
 }
 
 // SetOnAllocate delegates to OmniAllocator if supported.
-func (t *Top) SetOnAllocate(cb func(types.ObjectId, types.FileOffset, int)) {
+func (t *Top) SetOnAllocate(cb func(bobbob.ObjectId, bobbob.FileOffset, int)) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.omniAllocator.SetOnAllocate(cb)

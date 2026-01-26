@@ -4,7 +4,7 @@ import (
 	"io"
 	"os"
 
-	"github.com/cbehopkins/bobbob/internal"
+	"github.com/cbehopkins/bobbob"
 )
 
 // DiskTokenManager handles acquisition and release of disk tokens for rate-limiting I/O.
@@ -138,7 +138,7 @@ func LateWriteNewWithTokens(file *os.File, size int, allocateFn func(int) (Objec
 	objId, fileOffset, err := allocateFn(size)
 	if err != nil {
 		tokenManager.Release()
-		return internal.ObjNotAllocated, nil, nil, err
+		return bobbob.ObjNotAllocated, nil, nil, err
 	}
 
 	writer := CreateSectionWriter(file, fileOffset, size)

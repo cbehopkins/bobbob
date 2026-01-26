@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/cbehopkins/bobbob/internal"
+	"github.com/cbehopkins/bobbob"
 	"github.com/cbehopkins/bobbob/store"
 	"github.com/cbehopkins/bobbob/yggdrasil/types"
 )
@@ -225,8 +225,8 @@ func TestPersistentTreapNodeInvalidateObjectId(t *testing.T) {
 	node := NewPersistentTreapNode[types.IntKey](&key, priority, stre, treap)
 
 	// Initially, the ObjectId should be internal.ObjNotAllocated
-	if node.objectId != internal.ObjNotAllocated {
-		t.Fatalf("Expected initial ObjectId to be internal.ObjNotAllocated, got %d", node.objectId)
+	if node.objectId != bobbob.ObjNotAllocated {
+		t.Fatalf("Expected initial ObjectId to be bobbob.ObjNotAllocated, got %d", node.objectId)
 	}
 
 	// Persist the node to assign an ObjectId
@@ -235,9 +235,9 @@ func TestPersistentTreapNodeInvalidateObjectId(t *testing.T) {
 		t.Fatalf("Failed to persist node: %v", err)
 	}
 
-	// Check that the ObjectId is now valid (not internal.ObjNotAllocated)
-	if node.objectId == internal.ObjNotAllocated {
-		t.Fatalf("Expected ObjectId to be valid after persisting, got internal.ObjNotAllocated")
+	// Check that the ObjectId is now valid (not bobbob.ObjNotAllocated)
+	if node.objectId == bobbob.ObjNotAllocated {
+		t.Fatalf("Expected ObjectId to be valid after persisting, got bobbob.ObjNotAllocated")
 	}
 
 	// Add a left child and check if ObjectId is invalidated
@@ -248,8 +248,8 @@ func TestPersistentTreapNodeInvalidateObjectId(t *testing.T) {
 		t.Fatalf("Failed to set left child: %v", err)
 	}
 
-	if node.objectId != internal.ObjNotAllocated {
-		t.Errorf("Expected ObjectId to be invalidated (set to internal.ObjNotAllocated) after setting left child, got %d", node.objectId)
+	if node.objectId != bobbob.ObjNotAllocated {
+		t.Errorf("Expected ObjectId to be invalidated (set to bobbob.ObjNotAllocated) after setting left child, got %d", node.objectId)
 	}
 
 	// Persist the node again to assign a new ObjectId
@@ -258,9 +258,9 @@ func TestPersistentTreapNodeInvalidateObjectId(t *testing.T) {
 		t.Fatalf("Failed to persist node: %v", err)
 	}
 
-	// Check that the ObjectId is now valid (not internal.ObjNotAllocated)
-	if node.objectId == internal.ObjNotAllocated {
-		t.Fatalf("Expected ObjectId to be valid after persisting, got internal.ObjNotAllocated")
+	// Check that the ObjectId is now valid (not bobbob.ObjNotAllocated)
+	if node.objectId == bobbob.ObjNotAllocated {
+		t.Fatalf("Expected ObjectId to be valid after persisting, got bobbob.ObjNotAllocated")
 	}
 
 	// Add a right child and check if ObjectId is invalidated
@@ -271,17 +271,17 @@ func TestPersistentTreapNodeInvalidateObjectId(t *testing.T) {
 		t.Fatalf("Failed to set right child: %v", err)
 	}
 
-	if node.objectId != internal.ObjNotAllocated {
-		t.Errorf("Expected ObjectId to be invalidated (set to internal.ObjNotAllocated) after setting right child, got %d", node.objectId)
+	if node.objectId != bobbob.ObjNotAllocated {
+		t.Errorf("Expected ObjectId to be invalidated (set to bobbob.ObjNotAllocated) after setting right child, got %d", node.objectId)
 	}
 	node.persist()
-	if node.objectId == internal.ObjNotAllocated {
-		t.Fatalf("Expected ObjectId to be valid after persisting, got internal.ObjNotAllocated")
+	if node.objectId == bobbob.ObjNotAllocated {
+		t.Fatalf("Expected ObjectId to be valid after persisting, got bobbob.ObjNotAllocated")
 	}
 
 	rightNode.SetPriority(Priority(80))
-	if rightNode.objectId != internal.ObjNotAllocated {
-		t.Errorf("Expected ObjectId to be invalidated (set to internal.ObjNotAllocated) after setting right child's priority, got %d", rightNode.objectId)
+	if rightNode.objectId != bobbob.ObjNotAllocated {
+		t.Errorf("Expected ObjectId to be invalidated (set to bobbob.ObjNotAllocated) after setting right child's priority, got %d", rightNode.objectId)
 	}
 	node.persist()
 
@@ -291,8 +291,8 @@ func TestPersistentTreapNodeInvalidateObjectId(t *testing.T) {
 	// 2. A new allocation was made (ObjectId was obtained again)
 	// 3. The serialized data includes the child's new ObjectId
 	// We verify this by checking that the parent's ObjectId is now valid (not ObjNotAllocated)
-	if node.objectId == internal.ObjNotAllocated {
-		t.Errorf("Expected ObjectId to be valid after persisting with child change, got internal.ObjNotAllocated")
+	if node.objectId == bobbob.ObjNotAllocated {
+		t.Errorf("Expected ObjectId to be valid after persisting with child change, got bobbob.ObjNotAllocated")
 	}
 }
 

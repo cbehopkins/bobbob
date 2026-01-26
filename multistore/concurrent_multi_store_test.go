@@ -6,7 +6,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/cbehopkins/bobbob/internal"
+	"github.com/cbehopkins/bobbob"
 	"github.com/cbehopkins/bobbob/internal/testutil"
 	"github.com/cbehopkins/bobbob/store"
 )
@@ -29,7 +29,7 @@ func TestNewConcurrentMultiStore(t *testing.T) {
 		t.Fatalf("failed to create object: %v", err)
 	}
 
-	if objID == internal.ObjNotAllocated {
+	if objID == bobbob.ObjNotAllocated {
 		t.Error("expected valid object ID")
 	}
 

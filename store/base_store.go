@@ -6,9 +6,9 @@ import (
 	"io"
 	"os"
 
+	"github.com/cbehopkins/bobbob"
 	"github.com/cbehopkins/bobbob/allocator"
 	"github.com/cbehopkins/bobbob/allocator/types"
-	"github.com/cbehopkins/bobbob/internal"
 )
 
 var errStoreNotInitialized = errors.New("store is not initialized")
@@ -95,11 +95,11 @@ func (s *baseStore) checkFileInitialized() error {
 func (s *baseStore) PrimeObject(size int) (ObjectId, error) {
 	// Sanity check: prevent unreasonably large prime objects
 	if size < 0 || size > MaxPrimeObjectSize {
-		return internal.ObjNotAllocated, fmt.Errorf("invalid prime object size %d (must be between 0 and %d)", size, MaxPrimeObjectSize)
+		return bobbob.ObjNotAllocated, fmt.Errorf("invalid prime object size %d (must be between 0 and %d)", size, MaxPrimeObjectSize)
 	}
 
 	if err := s.checkFileInitialized(); err != nil {
-		return internal.ObjNotAllocated, err
+		return bobbob.ObjNotAllocated, err
 	}
 
 	// For baseStore, the prime object is the first object after the PrimeTable
@@ -113,21 +113,21 @@ func (s *baseStore) PrimeObject(size int) (ObjectId, error) {
 	// Allocate the prime object - this should be the very first allocation
 	objId, fileOffset, err := s.allocator.Allocate(size)
 	if err != nil {
-		return internal.ObjNotAllocated, fmt.Errorf("failed to allocate prime object: %w", err)
+		return bobbob.ObjNotAllocated, fmt.Errorf("failed to allocate prime object: %w", err)
 	}
 
 	// Verify we got the expected ObjectId (should be PrimeTable size for first allocation)
 	if objId != primeObjectId {
-		return internal.ObjNotAllocated, fmt.Errorf("expected prime object to be ObjectId %d, got %d", primeObjectId, objId)
+		return bobbob.ObjNotAllocated, fmt.Errorf("expected prime object to be ObjectId %d, got %d", primeObjectId, objId)
 	}
 
 	// Initialize the object with zeros
 	n, err := WriteZeros(s.file, fileOffset, size)
 	if err != nil {
-		return internal.ObjNotAllocated, fmt.Errorf("failed to initialize prime object: %w", err)
+		return bobbob.ObjNotAllocated, fmt.Errorf("failed to initialize prime object: %w", err)
 	}
 	if n != size {
-		return internal.ObjNotAllocated, errors.New("failed to write all bytes for prime object")
+		return bobbob.ObjNotAllocated, errors.New("failed to write all bytes for prime object")
 	}
 
 	return primeObjectId, nil
@@ -154,12 +154,12 @@ func (s *baseStore) NewObj(size int) (ObjectId, error) {
 // NewObj is a convenience wrapper around this method.
 func (s *baseStore) LateWriteNewObj(size int) (ObjectId, io.Writer, Finisher, error) {
 	if err := s.checkFileInitialized(); err != nil {
-		return internal.ObjNotAllocated, nil, nil, err
+		return bobbob.ObjNotAllocated, nil, nil, err
 	}
 
 	objId, fileOffset, err := s.allocator.Allocate(size)
 	if err != nil {
-		return internal.ObjNotAllocated, nil, nil, err
+		return bobbob.ObjNotAllocated, nil, nil, err
 	}
 	// Create a section writer that writes to the correct offset in the file
 	writer := CreateSectionWriter(s.file, fileOffset, size)

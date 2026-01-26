@@ -18,19 +18,19 @@ const (
 
 // primeTableBootstrapSize mirrors the allocator's PrimeTable layout (Basic, Omni, Store metadata).
 // It constructs a fresh PrimeTable and registers the same three slots to compute the prefix size.
-func primeTableBootstrapSize() int {
+func primeTableBootstrapSize() int64 {
 	pt := allocator.NewPrimeTable()
 	pt.Add() // BasicAllocator
 	pt.Add() // OmniAllocator
 	pt.Add() // Store metadata (reserved for allocator persistence)
-	return int(pt.SizeInBytes())
+	return pt.SizeInBytes()
 }
 
 // PrimeObjectStart returns the ObjectId offset reserved for the prime object.
 // This is aligned to the PrimeTable size so application metadata starts immediately
 // after the PrimeTable bootstrap region.
-func PrimeObjectStart() int {
-	return primeTableBootstrapSize()
+func PrimeObjectStart() ObjectId {
+	return 	ObjectId(primeTableBootstrapSize())
 }
 
 // Timing constants

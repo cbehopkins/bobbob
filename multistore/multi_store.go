@@ -33,9 +33,9 @@ import (
 	"sort"
 	"sync"
 
+	"github.com/cbehopkins/bobbob"
 	"github.com/cbehopkins/bobbob/allocator"
 	"github.com/cbehopkins/bobbob/allocator/types"
-	"github.com/cbehopkins/bobbob/internal"
 	"github.com/cbehopkins/bobbob/store"
 	"github.com/cbehopkins/bobbob/yggdrasil/treap"
 )
@@ -87,7 +87,7 @@ const (
 )
 
 type deleteQueue struct {
-	q       chan store.ObjectId
+	q       chan bobbob.ObjectId
 	wg      sync.WaitGroup
 	closed  sync.Once
 	flushCh chan chan struct{} // For flush synchronization
@@ -95,7 +95,7 @@ type deleteQueue struct {
 
 func newDeleteQueue(bufferSize int, delCallback func(store.ObjectId)) *deleteQueue {
 	dq := &deleteQueue{
-		q:       make(chan store.ObjectId, bufferSize),
+		q:       make(chan bobbob.ObjectId, bufferSize),
 		flushCh: make(chan chan struct{}),
 	}
 	dq.wg.Add(1)
@@ -135,7 +135,7 @@ func (dq *deleteQueue) worker(delCallback func(store.ObjectId)) {
 	}
 }
 
-func (dq *deleteQueue) Enqueue(objId store.ObjectId) {
+func (dq *deleteQueue) Enqueue(objId bobbob.ObjectId) {
 	dq.q <- objId
 }
 
@@ -284,7 +284,7 @@ func (s *multiStore) Close() error {
 
 	// Ensure store metadata is set; use a minimal prime object if needed
 	if s.top.GetStoreMeta().Sz == 0 {
-		primeObjectId := store.ObjectId(store.PrimeObjectStart())
+		primeObjectId := bobbob.ObjectId(store.PrimeObjectStart())
 		if info, err := s.getObjectInfo(primeObjectId); err == nil {
 			s.top.SetStoreMeta(allocator.FileInfo{
 				ObjId: primeObjectId,
@@ -317,7 +317,7 @@ func (s *multiStore) Close() error {
 // All legacy marshal/write helpers removed; allocator.Top.Save handles persistence
 
 // getObjectInfo retrieves object metadata using allocator.Top routing.
-func (s *multiStore) getObjectInfo(objId store.ObjectId) (store.ObjectInfo, error) {
+func (s *multiStore) getObjectInfo(objId bobbob.ObjectId) (store.ObjectInfo, error) {
 	s.lock.RLock()
 	offset, size, err := s.top.GetObjectInfo(objId)
 	s.lock.RUnlock()
@@ -333,8 +333,8 @@ func (s *multiStore) getObjectInfo(objId store.ObjectId) (store.ObjectInfo, erro
 
 // DeleteObj removes an object from the store and frees its space.
 // It retrieves object metadata from the allocator and frees its space.
-func (s *multiStore) DeleteObj(objId store.ObjectId) error {
-	if !store.IsValidObjectId(objId) {
+func (s *multiStore) DeleteObj(objId bobbob.ObjectId) error {
+	if !store.IsValidObjectId(store.ObjectId(objId)) {
 		return nil
 	}
 	s.deleteQueue.Enqueue(objId)
@@ -348,7 +348,7 @@ func (s *multiStore) flushDeletes() {
 		s.deleteQueue.Flush()
 	}
 }
-func (s *multiStore) deleteObj(objId store.ObjectId) {
+func (s *multiStore) deleteObj(objId bobbob.ObjectId) {
 	s.lock.Lock()
 	_ = s.top.DeleteObj(objId)
 	s.lock.Unlock()
@@ -360,14 +360,14 @@ func (s *multiStore) deleteObj(objId store.ObjectId) {
 // This provides a stable, known location for storing top-level metadata. This must
 // be the first allocation in the file; MultiStore disables omni preallocation
 // specifically so this ID is predictable and stable across reloads.
-func (s *multiStore) PrimeObject(size int) (store.ObjectId, error) {
+func (s *multiStore) PrimeObject(size int) (bobbob.ObjectId, error) {
 	// Sanity check: prevent unreasonably large prime objects
 	if size < 0 || size > store.MaxPrimeObjectSize {
-		return internal.ObjNotAllocated, errors.New("invalid prime object size")
+		return bobbob.ObjectId(bobbob.ObjNotAllocated), errors.New("invalid prime object size")
 	}
 
 	// For multiStore, the prime object starts immediately after the PrimeTable
-	primeObjectId := store.ObjectId(store.PrimeObjectStart())
+	primeObjectId := bobbob.ObjectId(store.PrimeObjectStart())
 
 	s.lock.Lock()
 	defer s.lock.Unlock()
@@ -382,21 +382,21 @@ func (s *multiStore) PrimeObject(size int) (store.ObjectId, error) {
 	// Allocate the prime object - this should be the very first allocation
 	objId, fileOffset, err := s.top.Allocate(size)
 	if err != nil {
-		return internal.ObjNotAllocated, err
+		return bobbob.ObjNotAllocated, err
 	}
 
 	// Verify we got the expected ObjectId (should be PrimeTable size for first allocation)
 	if objId != primeObjectId {
-		return internal.ObjNotAllocated, fmt.Errorf("expected prime object to be first allocation at offset %d, got %d", primeObjectId, objId)
+		return bobbob.ObjNotAllocated, fmt.Errorf("expected prime object to be first allocation at offset %d, got %d", primeObjectId, objId)
 	}
 
 	// Initialize the object with zeros
 	n, err := store.WriteZeros(s.file, fileOffset, size)
 	if err != nil {
-		return internal.ObjNotAllocated, err
+		return bobbob.ObjNotAllocated, err
 	}
 	if n != size {
-		return internal.ObjNotAllocated, errors.New("failed to write all bytes for prime object")
+		return bobbob.ObjNotAllocated, errors.New("failed to write all bytes for prime object")
 	}
 
 	s.top.SetStoreMeta(allocator.FileInfo{
@@ -415,7 +415,7 @@ func (s *multiStore) NewObj(size int) (store.ObjectId, error) {
 	objId, _, err := s.top.Allocate(size)
 	s.lock.Unlock()
 	if err != nil {
-		return internal.ObjNotAllocated, err
+		return bobbob.ObjNotAllocated, err
 	}
 
 	return objId, nil

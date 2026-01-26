@@ -4,15 +4,15 @@ import (
 	"bytes"
 	"errors"
 
-	"github.com/cbehopkins/bobbob/internal"
+	"github.com/cbehopkins/bobbob"
 )
 
 // ObjectId is an identifier unique within the store for an object.
 // A user refers to an object by its ObjectId.
-type ObjectId = internal.ObjectId
+type ObjectId = bobbob.ObjectId
 
 // FileOffset represents a byte offset within a file.
-type FileOffset = internal.FileOffset
+type FileOffset = bobbob.FileOffset
 
 // ObjectIdLut represents a lookup table of ObjectIds.
 // It provides marshaling support for a slice of ObjectIds.

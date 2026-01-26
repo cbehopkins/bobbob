@@ -3,7 +3,7 @@ package allocator
 import (
 	"testing"
 
-	"github.com/cbehopkins/bobbob/allocator/types"
+	"github.com/cbehopkins/bobbob"
 )
 
 // TestPrimeTableBasicExample demonstrates the complete read/write flow.
@@ -28,9 +28,9 @@ func TestPrimeTableBasicExample(t *testing.T) {
 	
 	// OmniAllocator persists first
 	omniInfo := FileInfo{
-		ObjId: types.ObjectId(2048),
-		Fo:    types.FileOffset(2048),
-		Sz:    types.FileSize(512),
+		ObjId: bobbob.ObjectId(2048),
+		Fo:    bobbob.FileOffset(2048),
+		Sz:    bobbob.FileSize(512),
 	}
 	if err := table.Store(omniInfo); err != nil {
 		t.Fatalf("Store(omni) failed: %v", err)
@@ -38,9 +38,9 @@ func TestPrimeTableBasicExample(t *testing.T) {
 	
 	// BasicAllocator persists last
 	basicInfo := FileInfo{
-		ObjId: types.ObjectId(4096),
-		Fo:    types.FileOffset(4096),
-		Sz:    types.FileSize(1024),
+		ObjId: bobbob.ObjectId(4096),
+		Fo:    bobbob.FileOffset(4096),
+		Sz:    bobbob.FileSize(1024),
 	}
 	if err := table.Store(basicInfo); err != nil {
 		t.Fatalf("Store(basic) failed: %v", err)
@@ -267,7 +267,7 @@ func TestPrimeTableSizeInBytes(t *testing.T) {
 	tests := []struct {
 		name      string
 		numAdds   int
-		wantBytes types.FileSize
+		wantBytes bobbob.FileSize
 	}{
 		{"empty", 0, 4},                     // Just count field
 		{"one entry", 1, 4 + 24},            // Count + 1 entry
@@ -283,13 +283,13 @@ func TestPrimeTableSizeInBytes(t *testing.T) {
 			}
 			
 			got := table.SizeInBytes()
-			if got != tt.wantBytes {
+			if bobbob.FileSize(got) != tt.wantBytes {
 				t.Errorf("SizeInBytes() = %d, want %d", got, tt.wantBytes)
 			}
 			
 			// Verify Marshal produces that size
 			data, _ := table.Marshal()
-			if types.FileSize(len(data)) != tt.wantBytes {
+			if bobbob.FileSize(len(data)) != tt.wantBytes {
 				t.Errorf("Marshal produced %d bytes, want %d", len(data), tt.wantBytes)
 			}
 		})
@@ -385,10 +385,10 @@ func TestPrimeTableRealWorldScenario(t *testing.T) {
 	
 	// ========== ALLOCATOR SAVES ==========
 	// Simulate OmniAllocator persisting (calls BasicAllocator.Allocate)
-	omniOffset := types.FileOffset(nextAvailableOffset)
-	omniSize := types.FileSize(1024)
-	omniObjId := types.ObjectId(omniOffset) // BasicAllocator: ObjectId == FileOffset
-	nextAvailableOffset += types.FileSize(1024)
+	omniOffset := bobbob.FileOffset(nextAvailableOffset)
+	omniSize := bobbob.FileSize(1024)
+	omniObjId := bobbob.ObjectId(omniOffset) // BasicAllocator: ObjectId == FileOffset
+	nextAvailableOffset += 1024
 	
 	if err := table.Store(FileInfo{
 		ObjId: omniObjId,
@@ -399,9 +399,9 @@ func TestPrimeTableRealWorldScenario(t *testing.T) {
 	}
 	
 	// Simulate BasicAllocator persisting (allocates at end of file)
-	basicOffset := types.FileOffset(nextAvailableOffset)
-	basicSize := types.FileSize(2048)
-	basicObjId := types.ObjectId(basicOffset)
+	basicOffset := bobbob.FileOffset(nextAvailableOffset)
+	basicSize := bobbob.FileSize(2048)
+	basicObjId := bobbob.ObjectId(basicOffset)
 	
 	if err := table.Store(FileInfo{
 		ObjId: basicObjId,

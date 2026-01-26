@@ -4,18 +4,18 @@ package types
 // the allocator system. These types are intentionally simple and decoupled from
 // any particular allocator implementation.
 import (
-	"github.com/cbehopkins/bobbob/internal"
+	"github.com/cbehopkins/bobbob"
 )
 
 // ObjectId is an identifier unique within the store for an object.
 // A user refers to an object by its ObjectId.
-type ObjectId = internal.ObjectId
+type ObjectId = bobbob.ObjectId
 
 // FileOffset represents a byte offset within a file.
-type FileOffset = internal.FileOffset
+type FileOffset = bobbob.FileOffset
 
 // FileSize represents the size of data in bytes.
-type FileSize int64
+type FileSize = bobbob.FileSize
 
 // Common error constants (not exhaustive; implementations may return other errors)
 // These are primarily for testing and documentation purposes.
