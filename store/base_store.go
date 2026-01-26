@@ -321,6 +321,12 @@ func (s *baseStore) Close() error {
 	// Mark as closed to prevent further operations
 	s.closed = true
 
+	// Ensure we always release the file handle and allocator resources,
+	// even if Save or Sync fails. Windows TempDir cleanup is strict about
+	// open handles, so we must release everything.
+	var firstErr error
+	file := s.file
+
 	// Set allocator state metadata (required for proper serialization)
 	s.allocator.SetStoreMeta(allocator.FileInfo{
 		ObjId: 0,
@@ -330,13 +336,24 @@ func (s *baseStore) Close() error {
 
 	// Save the allocator state
 	if err := s.allocator.Save(); err != nil {
-		return fmt.Errorf("failed to save allocator state: %w", err)
+		firstErr = fmt.Errorf("failed to save allocator state: %w", err)
 	}
 
-	if err := s.file.Sync(); err != nil {
-		return fmt.Errorf("failed to sync file to disk: %w", err)
+	if err := s.file.Sync(); err != nil && firstErr == nil {
+		firstErr = fmt.Errorf("failed to sync file to disk: %w", err)
 	}
-	return s.file.Close()
+
+	// Close the allocator (closes file-based trackers) BEFORE closing the file
+	if err := s.allocator.Close(); err != nil && firstErr == nil {
+		firstErr = err
+	}
+
+	if err := file.Close(); err != nil && firstErr == nil {
+		firstErr = err
+	}
+
+	s.file = nil
+	return firstErr
 }
 
 // GetObjectCount returns the number of objects tracked in the allocator.

@@ -175,6 +175,14 @@ func (t *Top) Allocate(size int) (bobbob.ObjectId, bobbob.FileOffset, error) {
 	return t.omniAllocator.Allocate(size)
 }
 
+// AllocateAtParent allocates directly from the parent BasicAllocator (no block pooling).
+// Useful for metadata objects that must have exact sizes (e.g., prime object).
+func (t *Top) AllocateAtParent(size int) (types.ObjectId, types.FileOffset, error) {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return t.basicAllocator.Allocate(size)
+}
+
 // DeleteObj delegates to OmniAllocator (which routes to appropriate sub-allocator).
 func (t *Top) DeleteObj(objId bobbob.ObjectId) error {
 	t.mu.RLock()
@@ -415,6 +423,18 @@ func (t *Top) GetStoreMeta() FileInfo {
 	defer t.mu.RUnlock()
 
 	return t.storeMeta
+}
+
+// Close releases resources associated with the Top allocator.
+// This must be called to properly close any file-based trackers.
+func (t *Top) Close() error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	if t.basicAllocator != nil {
+		return t.basicAllocator.Close()
+	}
+	return nil
 }
 
 // Ensure Top implements types.TopAllocator.

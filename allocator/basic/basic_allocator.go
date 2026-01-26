@@ -481,3 +481,13 @@ func (ba *BasicAllocator) Stats() (allocated, free, gaps int) {
 	free = int(freeBytes)
 	return
 }
+
+// Close releases resources associated with the allocator.
+// This must be called if using file-based tracking to close the tracker file.
+func (ba *BasicAllocator) Close() error {
+	// If the object tracker is file-based, close it
+	if tracker, ok := ba.objectTracking.(interface{ Close() error }); ok {
+		return tracker.Close()
+	}
+	return nil
+}

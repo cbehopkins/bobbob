@@ -186,15 +186,6 @@ func NewMultiStore(filePath string, maxDiskTokens int) (*multiStore, error) {
 		top:          topAlloc,
 		tokenManager: store.NewDiskTokenManager(maxDiskTokens),
 	}
-
-	// Ensure prime object and metadata exist before first use
-	if ms.top.GetStoreMeta().Sz == 0 {
-		primeSize := treap.PersistentTreapObjectSizes()[0]
-		if _, err := ms.PrimeObject(primeSize); err != nil {
-			_ = file.Close()
-			return nil, err
-		}
-	}
 	ms.deleteQueue = newDeleteQueue(DefaultDeleteQueueBufferSize, ms.deleteObj)
 	return ms, nil
 }
@@ -282,36 +273,49 @@ func (s *multiStore) Close() error {
 		return nil
 	}
 
-	// Ensure store metadata is set; use a minimal prime object if needed
+	// Ensure store metadata is set (required by Top.Save)
+	// Use minimal metadata if no prime object exists
 	if s.top.GetStoreMeta().Sz == 0 {
 		primeObjectId := bobbob.ObjectId(store.PrimeObjectStart())
 		if info, err := s.getObjectInfo(primeObjectId); err == nil {
+			// Prime object exists, use it
 			s.top.SetStoreMeta(allocator.FileInfo{
 				ObjId: primeObjectId,
 				Fo:    info.Offset,
 				Sz:    types.FileSize(info.Size),
 			})
 		} else {
-			// Allocate a minimal prime object (16 bytes) to satisfy Top.Save requirements
-			if _, err := s.PrimeObject(16); err != nil {
-				return err
-			}
+			// No prime object; use minimal metadata (1 byte is sufficient for Top.Save check)
+			s.top.SetStoreMeta(allocator.FileInfo{
+				ObjId: 0,
+				Fo:    0,
+				Sz:    1, // Non-zero to pass the Save() check
+			})
 		}
 	}
 
+	// Always try to close resources, even if Save fails, to avoid leaking
+	// open descriptors (Windows TempDir cleanup is strict about open handles).
+	var firstErr error
+	file := s.file
+
 	s.lock.Lock()
-	defer s.lock.Unlock()
-
 	if err := s.top.Save(); err != nil {
-		return err
+		firstErr = err
+	}
+	s.lock.Unlock()
+
+	// Close the allocator (closes file-based trackers) BEFORE closing the file
+	if err := s.top.Close(); err != nil && firstErr == nil {
+		firstErr = err
 	}
 
-	err := s.file.Close()
-	if err != nil {
-		return err
+	if err := file.Close(); err != nil && firstErr == nil {
+		firstErr = err
 	}
+
 	s.file = nil
-	return nil
+	return firstErr
 }
 
 // All legacy marshal/write helpers removed; allocator.Top.Save handles persistence
@@ -373,14 +377,21 @@ func (s *multiStore) PrimeObject(size int) (bobbob.ObjectId, error) {
 	defer s.lock.Unlock()
 
 	// Check if the prime object already exists using the allocator
-	_, _, err := s.top.GetObjectInfo(primeObjectId)
-	if err == nil {
-		// Object exists
+	if offset, existingSize, err := s.top.GetObjectInfo(primeObjectId); err == nil {
+		if int(existingSize) < size {
+			return bobbob.ObjNotAllocated, fmt.Errorf("prime object size %d smaller than requested %d", existingSize, size)
+		}
+		// Object exists and is large enough
+		s.top.SetStoreMeta(allocator.FileInfo{
+			ObjId: primeObjectId,
+			Fo:    offset,
+			Sz:    existingSize,
+		})
 		return primeObjectId, nil
 	}
 
 	// Allocate the prime object - this should be the very first allocation
-	objId, fileOffset, err := s.top.Allocate(size)
+	objId, fileOffset, err := s.top.AllocateAtParent(size)
 	if err != nil {
 		return bobbob.ObjNotAllocated, err
 	}

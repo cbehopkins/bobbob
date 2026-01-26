@@ -22,6 +22,9 @@ func TestPrimeObjectIsFirstAllocation(t *testing.T) {
 	defer ms.Close()
 
 	primeSize := treap.PersistentTreapObjectSizes()[0]
+	if primeSize < 16 {
+		primeSize = 16
+	}
 	primeObjId, err := ms.PrimeObject(primeSize)
 	if err != nil {
 		t.Fatalf("PrimeObject failed: %v", err)

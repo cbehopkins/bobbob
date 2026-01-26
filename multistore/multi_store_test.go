@@ -19,7 +19,11 @@ func TestMultiStoreDeleteObjFreesAllocation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create multi store: %v", err)
 	}
-	defer ms.Close()
+	defer func() {
+		if err := ms.Close(); err != nil {
+			t.Logf("Warning: error closing multistore: %v", err)
+		}
+	}()
 
 	// Determine the block size used by the allocator
 	// PersistentTreapObjectSizes returns the sizes used
@@ -81,7 +85,11 @@ func TestMultiStoreAllocateAndDelete(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create multi store: %v", err)
 	}
-	defer ms.Close()
+	defer func() {
+		if err := ms.Close(); err != nil {
+			t.Logf("Warning: error closing multistore: %v", err)
+		}
+	}()
 
 	blockSizes := treap.PersistentTreapObjectSizes()
 	if len(blockSizes) == 0 {
