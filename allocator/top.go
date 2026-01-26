@@ -1,6 +1,7 @@
 package allocator
 
 import (
+	"encoding/binary"
 	"fmt"
 	"os"
 	"sync"
@@ -24,6 +25,7 @@ type Top struct {
 	basicAllocator *basic.BasicAllocator
 	omniAllocator  *omni.OmniAllocator
 	primeTable     *PrimeTable
+	storeMeta      FileInfo
 	blockSizes     []int // Configuration for OmniAllocator pools
 	maxBlockCount  int   // Configuration for BlockAllocators
 }
@@ -52,6 +54,11 @@ func NewTop(file *os.File, blockSizes []int, maxBlockCount int) (*Top, error) {
 	primeTable := NewPrimeTable()
 	primeTable.Add() // Slot 0: BasicAllocator
 	primeTable.Add() // Slot 1: OmniAllocator
+	primeTable.Add() // Slot 2: Store metadata (ObjectMap location)
+
+	// Reserve the PrimeTable space so BasicAllocator starts after it.
+	primeSize := primeTable.SizeInBytes()
+	basicAlloc.ReservePrefix(types.FileOffset(primeSize))
 
 	return &Top{
 		file:           file,
@@ -70,16 +77,32 @@ func NewTopFromFile(file *os.File, blockSizes []int, maxBlockCount int) (*Top, e
 		return nil, fmt.Errorf("file cannot be nil")
 	}
 
-	// Read PrimeTable from offset 0
-	primeData := make([]byte, 1024) // Conservative initial size for PrimeTable
-	n, err := file.ReadAt(primeData, 0)
+	// Read PrimeTable from offset 0 with exact sizing
+	header := make([]byte, 4)
+	if _, err := file.ReadAt(header, 0); err != nil {
+		return nil, fmt.Errorf("failed to read PrimeTable header: %w", err)
+	}
+
+	entryCount := binary.LittleEndian.Uint32(header)
+	primeSize := 4 + (int(entryCount) * 24)
+	info, err := file.Stat()
 	if err != nil {
-		return nil, fmt.Errorf("failed to read PrimeTable: %w", err)
+		return nil, fmt.Errorf("failed to stat allocator file: %w", err)
+	}
+	if int64(primeSize) > info.Size() {
+		return nil, fmt.Errorf("prime table truncated: need %d bytes, file size %d", primeSize, info.Size())
+	}
+	primeData := make([]byte, primeSize)
+	copy(primeData, header)
+	if primeSize > 4 {
+		if _, err := file.ReadAt(primeData[4:], 4); err != nil {
+			return nil, fmt.Errorf("failed to read PrimeTable body: %w", err)
+		}
 	}
 
 	// Unmarshal PrimeTable
 	primeTable := NewPrimeTable()
-	if err := primeTable.Unmarshal(primeData[:n]); err != nil {
+	if err := primeTable.Unmarshal(primeData); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal PrimeTable: %w", err)
 	}
 
@@ -95,14 +118,17 @@ func NewTopFromFile(file *os.File, blockSizes []int, maxBlockCount int) (*Top, e
 	}
 
 	basicData := make([]byte, basicInfo.Sz)
-	n, err = file.ReadAt(basicData, int64(basicInfo.Fo))
-	if err != nil {
+	if _, err := file.ReadAt(basicData, int64(basicInfo.Fo)); err != nil {
 		return nil, fmt.Errorf("failed to read BasicAllocator data from file: %w", err)
 	}
 
-	if err := basicAlloc.Unmarshal(basicData[:n]); err != nil {
+	if err := basicAlloc.Unmarshal(basicData); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal BasicAllocator: %w", err)
 	}
+
+	// After loading, prevent allocations from using the PrimeTable region
+	basicAlloc.ReservePrefix(types.FileOffset(primeSize))
+	basicAlloc.RemoveGapsBefore(types.FileOffset(primeSize))
 
 	// Load OmniAllocator (with internally-created PoolCache)
 	omniAlloc, err := omni.NewOmniAllocator(blockSizes, basicAlloc, file, nil)
@@ -116,13 +142,18 @@ func NewTopFromFile(file *os.File, blockSizes []int, maxBlockCount int) (*Top, e
 	}
 
 	omniData := make([]byte, omniInfo.Sz)
-	n, err = file.ReadAt(omniData, int64(omniInfo.Fo))
-	if err != nil {
-		return nil, fmt.Errorf("failed to read OmniAllocator data from file: %w", err)
+	if _, err := file.ReadAt(omniData, int64(omniInfo.Fo)); err != nil {
+		return nil, fmt.Errorf("failed to read OmniAllocator data from file (offset=%d, size=%d): %w", omniInfo.Fo, omniInfo.Sz, err)
 	}
 
-	if err := omniAlloc.Unmarshal(omniData[:n]); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal OmniAllocator: %w", err)
+	if err := omniAlloc.Unmarshal(omniData); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal OmniAllocator (data size=%d): %w", len(omniData), err)
+	}
+
+	// Load store metadata (ObjectMap) info
+	storeInfo, err := primeTable.Load()
+	if err != nil {
+		return nil, fmt.Errorf("failed to read store metadata from PrimeTable: %w", err)
 	}
 
 	return &Top{
@@ -130,11 +161,11 @@ func NewTopFromFile(file *os.File, blockSizes []int, maxBlockCount int) (*Top, e
 		basicAllocator: basicAlloc,
 		omniAllocator:  omniAlloc,
 		primeTable:     primeTable,
+		storeMeta:      storeInfo,
 		blockSizes:     blockSizes,
 		maxBlockCount:  maxBlockCount,
 	}, nil
 }
-
 
 // Allocate delegates to OmniAllocator (preferred for fixed-size allocations) or BasicAllocator.
 func (t *Top) Allocate(size int) (types.ObjectId, types.FileOffset, error) {
@@ -199,17 +230,33 @@ func (t *Top) Unmarshal(data []byte) error {
 
 // Save persists the entire allocator hierarchy to disk.
 // Sequence:
-//   1. Marshal OmniAllocator, allocate from BasicAllocator, write to file
-//   2. Update PrimeTable with OmniAllocator ObjectId
-//   3. Marshal BasicAllocator (which stores fileLength), allocate from BasicAllocator, write to file
-//   4. Update PrimeTable with BasicAllocator ObjectId
-//   5. Marshal and write PrimeTable at offset 0 (atomic commit)
+//  1. Marshal OmniAllocator, allocate from BasicAllocator, write to file
+//  2. Update PrimeTable with OmniAllocator ObjectId
+//  3. Marshal BasicAllocator, append at current file length (special behavior - see comment below)
+//  4. Update PrimeTable with BasicAllocator ObjectId
+//  5. Marshal and write PrimeTable at offset 0 (atomic commit)
+//
+// IMPORTANT: BasicAllocator is special - it does NOT allocate space for itself!
+// Instead, it appends its marshaled data directly at the current file length.
+// This works because:
+//  - BasicAllocator is the last allocator to persist
+//  - No more objects will be created after BasicAllocator's data is written
+//  - PrimeTable is always written last (at offset 0), so it can overwrite offset 0..primeSize
+//
+// When loading in a new session, NewTopFromFile must call basicAlloc.ReservePrefix()
+// to prevent gaps from being reconstructed at offset 0..primeSize, which would allow
+// new allocations to overwrite the PrimeTable.
 //
 // Note: PoolCache unloading should be coordinated at a higher level (e.g., by the application)
 // before calling Save(). This ensures flexibility in unload timing and strategy.
 func (t *Top) Save() error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+
+	// Ensure store metadata was provided by the store layer.
+	if t.storeMeta.Sz == 0 {
+		return fmt.Errorf("store metadata not set before Save")
+	}
 
 	// Step 1: Marshal and persist OmniAllocator
 	omniData, err := t.omniAllocator.Marshal()
@@ -227,7 +274,12 @@ func (t *Top) Save() error {
 		return fmt.Errorf("failed to write OmniAllocator data to file: %w", err)
 	}
 
-	// Step 2: Update PrimeTable with OmniAllocator (reverse order: store last allocator first)
+	// Step 2: Update PrimeTable with Store metadata (index 2)
+	if err := t.primeTable.Store(t.storeMeta); err != nil {
+		return fmt.Errorf("failed to store store metadata in PrimeTable: %w", err)
+	}
+
+	// Step 3: Update PrimeTable with OmniAllocator (reverse order: store last allocator first)
 	if err := t.primeTable.Store(FileInfo{
 		ObjId: omniObjId,
 		Fo:    omniOffset,
@@ -236,23 +288,25 @@ func (t *Top) Save() error {
 		return fmt.Errorf("failed to store OmniAllocator info in PrimeTable: %w", err)
 	}
 
-	// Step 3: Marshal and persist BasicAllocator
+	// Step 4: Marshal and persist BasicAllocator
 	basicData, err := t.basicAllocator.Marshal()
 	if err != nil {
 		return fmt.Errorf("failed to marshal BasicAllocator: %w", err)
 	}
 
-	basicObjId, basicOffset, err := t.basicAllocator.Allocate(len(basicData))
-	if err != nil {
-		return fmt.Errorf("failed to allocate space for BasicAllocator: %w", err)
-	}
+	// BasicAllocator is special: it doesn't allocate space for itself.
+	// Instead, it appends directly at the current file length.
+	// This works because BasicAllocator is the last allocator to persist,
+	// so we know no more objects will be created after it.
+	basicOffset := t.basicAllocator.FileLength()
+	basicObjId := types.ObjectId(basicOffset)
 
 	_, err = t.file.WriteAt(basicData, int64(basicOffset))
 	if err != nil {
 		return fmt.Errorf("failed to write BasicAllocator data to file: %w", err)
 	}
 
-	// Step 4: Update PrimeTable with BasicAllocator
+	// Step 5: Update PrimeTable with BasicAllocator
 	if err := t.primeTable.Store(FileInfo{
 		ObjId: basicObjId,
 		Fo:    basicOffset,
@@ -261,7 +315,7 @@ func (t *Top) Save() error {
 		return fmt.Errorf("failed to store BasicAllocator info in PrimeTable: %w", err)
 	}
 
-	// Step 5: Marshal and persist PrimeTable (atomic commit)
+	// Step 6: Marshal and persist PrimeTable (atomic commit)
 	primeData, err := t.primeTable.Marshal()
 	if err != nil {
 		return fmt.Errorf("failed to marshal PrimeTable: %w", err)
@@ -325,7 +379,31 @@ func (t *Top) Load() error {
 		return fmt.Errorf("failed to unmarshal OmniAllocator: %w", err)
 	}
 
+	// Load store metadata
+	storeInfo, err := t.primeTable.Load()
+	if err != nil {
+		return fmt.Errorf("failed to read store metadata from PrimeTable: %w", err)
+	}
+
+	t.storeMeta = storeInfo
+
 	return nil
+}
+
+// SetStoreMeta records the ObjectMap location/size so it can be written into the PrimeTable during Save.
+func (t *Top) SetStoreMeta(fi FileInfo) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	t.storeMeta = fi
+}
+
+// GetStoreMeta returns the stored ObjectMap FileInfo captured during load.
+func (t *Top) GetStoreMeta() FileInfo {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+
+	return t.storeMeta
 }
 
 // Ensure Top implements types.TopAllocator.

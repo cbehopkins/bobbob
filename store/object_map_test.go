@@ -2,11 +2,7 @@ package store
 
 import (
 	"bytes"
-	"fmt"
-	"os"
 	"testing"
-
-	"github.com/cbehopkins/bobbob/store/allocator"
 )
 
 func TestObjectMapSerialize(t *testing.T) {
@@ -57,68 +53,6 @@ func TestObjectMapMarshal(t *testing.T) {
 	for k, v := range objectMap.store {
 		if deserializedMap.store[k] != v {
 			t.Fatalf("expected deserialized map value for key %d to be %v, got %v", k, v, deserializedMap.store[k])
-		}
-	}
-}
-
-func TestFindGapsAfterDeletions(t *testing.T) {
-	dir, store := setupTestStore(t)
-	defer os.RemoveAll(dir)
-
-	// Write multiple objects
-	data1 := []byte("object1")
-	objId1 := createObject(t, store, data1)
-	data2 := []byte("object2")
-	objId2 := createObject(t, store, data2)
-	data3 := []byte("object3")
-	objId3 := createObject(t, store, data3)
-	data4 := []byte("object4")
-	objId4 := createObject(t, store, data4)
-
-	// Delete the first and third objects
-	fmt.Println("Deleting object 1 and 3", objId1, objId3)
-	err := store.DeleteObj(ObjectId(objId1))
-	if err != nil {
-		t.Fatalf("expected no error deleting object, got %v", err)
-	}
-
-	err = store.DeleteObj(ObjectId(objId3))
-	if err != nil {
-		t.Fatalf("expected no error deleting object, got %v", err)
-	}
-
-	// Close and re-open the store
-	err = store.Close()
-	if err != nil {
-		t.Fatalf("expected no error closing store, got %v", err)
-	}
-
-	store, err = LoadBaseStore(store.filePath)
-	if err != nil {
-		t.Fatalf("expected no error loading store, got %v", err)
-	}
-	defer store.Close()
-
-	// Find gaps
-	gapChan := store.objectMap.FindGaps()
-	var gaps []allocator.Gap
-	for gap := range gapChan {
-		gaps = append(gaps, gap)
-	}
-
-	// Verify the gaps
-	expectedGaps := []allocator.Gap{
-		{Start: int64(objId1), End: int64(objId2)},
-		{Start: int64(objId3), End: int64(objId4)},
-	}
-
-	if len(gaps) != len(expectedGaps) {
-		t.Fatalf("expected %d gaps, got %d", len(expectedGaps), len(gaps))
-	}
-
-	for i, gap := range gaps {
-		if gap != expectedGaps[i] {
-			t.Fatalf("expected gap %v, got %v", expectedGaps[i], gap)
 		}
 	}
 }

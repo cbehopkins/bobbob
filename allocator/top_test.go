@@ -37,8 +37,8 @@ func TestTopNew(t *testing.T) {
 		t.Fatal("expected PrimeTable to be initialized")
 	}
 
-	if top.primeTable.NumEntries() != 2 {
-		t.Errorf("expected PrimeTable to have 2 entries, got %d", top.primeTable.NumEntries())
+	if top.primeTable.NumEntries() != 3 {
+		t.Errorf("expected PrimeTable to have 3 entries (Basic, Omni, Store metadata), got %d", top.primeTable.NumEntries())
 	}
 }
 
@@ -169,6 +169,10 @@ func TestTopSaveLoad(t *testing.T) {
 		}
 		objIds = append(objIds, objId)
 	}
+
+	// Set store metadata (required before Save)
+	// Even though we don't have an actual ObjectMap, we need non-zero size
+	top.SetStoreMeta(FileInfo{ObjId: 0, Fo: 0, Sz: 1})
 
 	// Save to disk
 	err = top.Save()

@@ -1,14 +1,14 @@
 package store
 
 import (
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 
+	"github.com/cbehopkins/bobbob/allocator"
+	"github.com/cbehopkins/bobbob/allocator/types"
 	"github.com/cbehopkins/bobbob/internal"
-	"github.com/cbehopkins/bobbob/store/allocator"
 )
 
 var errStoreNotInitialized = errors.New("store is not initialized")
@@ -17,8 +17,8 @@ type baseStore struct {
 	filePath  string
 	file      *os.File
 	objectMap *ObjectMap
-	allocator allocator.Allocator
-	closed    bool // Track if store is closed
+	allocator *TopAllocatorAdapter // Use the adapter wrapping the new TopAllocator
+	closed    bool                 // Track if store is closed
 }
 
 // NewBasicStore creates a new baseStore at the given file path.
@@ -32,26 +32,23 @@ func NewBasicStore(filePath string) (*baseStore, error) {
 	if err != nil {
 		return nil, err
 	}
-	alloc, err := allocator.NewBasicAllocator(file)
+
+	// Create the new TopAllocator
+	blockSizes := []int{64, 256, 1024}
+	maxBlockCount := 1024
+	topAlloc, err := allocator.NewTop(file, blockSizes, maxBlockCount)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to create TopAllocator: %w", err)
 	}
-	// Background flush removed as part of pre-refactor cleanup
-	// New design: explicit Marshal/Unmarshal only
-	alloc.End = int64(HeaderSize)
+
+	adapter := NewTopAllocatorAdapter(topAlloc)
+
 	// Initialize the Store
 	store := &baseStore{
 		filePath:  filePath,
 		file:      file,
 		objectMap: NewObjectMap(),
-		allocator: alloc,
-	}
-	store.objectMap.Set(0, ObjectInfo{Offset: 0, Size: HeaderSize})
-
-	// Write the initial offset (zero) to the store
-	_, err = file.Write(make([]byte, HeaderSize))
-	if err != nil {
-		return nil, err
+		allocator: adapter,
 	}
 
 	return store, nil
@@ -66,43 +63,38 @@ func LoadBaseStore(filePath string) (*baseStore, error) {
 	}
 
 	// Read the initial offset
-	var initialOffset int64
-	err = binary.Read(file, binary.LittleEndian, &initialOffset)
+
+	// Load the new TopAllocator from the file
+	blockSizes := []int{64, 256, 1024}
+	maxBlockCount := 1024
+	topAlloc, err := allocator.NewTopFromFile(file, blockSizes, maxBlockCount)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read initial offset from %q: %w", filePath, err)
+		return nil, fmt.Errorf("failed to load TopAllocator from %q: %w", filePath, err)
 	}
 
-	// Seek to the initial offset
-	_, err = file.Seek(initialOffset, io.SeekStart)
+	adapter := NewTopAllocatorAdapter(topAlloc)
+
+	// Retrieve store metadata (ObjectMap location/size) from PrimeTable via adapter
+	storeMeta := adapter.GetStoreMeta()
+
+	// Seek to ObjectMap and deserialize
+	_, err = file.Seek(int64(storeMeta.Fo), io.SeekStart)
 	if err != nil {
-		return nil, fmt.Errorf("failed to seek to offset %d in %q: %w", initialOffset, filePath, err)
+		return nil, fmt.Errorf("failed to seek to object map at offset %d in %q: %w", storeMeta.Fo, filePath, err)
 	}
 
-	// Deserialize the ObjectMap directly from the file
 	objectMap := NewObjectMap()
 	err = objectMap.Deserialize(file)
 	if err != nil {
 		return nil, fmt.Errorf("failed to deserialize object map from %q: %w", filePath, err)
 	}
-	alloc, err := allocator.NewBasicAllocator(file)
-	if err != nil {
-		return nil, fmt.Errorf("failed to init allocator: %w", err)
-	}
-	// Start background flush of allocator cache
-	// alloc.StartBackgroundFlush(AllocatorBackgroundFlushInterval)  // REMOVED - pre-refactor cleanup
-	// New design: explicit Marshal/Unmarshal only
-	alloc.End = initialOffset
+
 	// Initialize the Store
 	store := &baseStore{
 		filePath:  filePath,
 		file:      file,
 		objectMap: objectMap,
-		allocator: alloc,
-	}
-
-	err = alloc.RefreshFreeListFromGaps(objectMap.FindGaps())
-	if err != nil {
-		return nil, fmt.Errorf("failed to refresh free list for %q: %w", filePath, err)
+		allocator: adapter,
 	}
 	return store, nil
 }
@@ -115,21 +107,6 @@ func (s *baseStore) checkFileInitialized() error {
 	if s.closed {
 		return errors.New("store is closed")
 	}
-	return nil
-}
-
-// Helper function to update the initial offset in the file
-func (s *baseStore) updateInitialOffset(fileOffset FileOffset) error {
-	objOffset := int64(fileOffset)
-	offsetBytes := make([]byte, 8)
-	for i := uint(0); i < 8; i++ {
-		offsetBytes[i] = byte(objOffset >> (i * 8))
-	}
-
-	if _, err := s.file.WriteAt(offsetBytes, 0); err != nil {
-		return err
-	}
-
 	return nil
 }
 
@@ -147,8 +124,8 @@ func (s *baseStore) PrimeObject(size int) (ObjectId, error) {
 		return internal.ObjNotAllocated, err
 	}
 
-	// For baseStore, the prime object is the first object after the header
-	const primeObjectId = ObjectId(PrimeObjectId)
+	// For baseStore, the prime object is the first object after the PrimeTable
+	primeObjectId := ObjectId(PrimeObjectStart())
 
 	// Check if the prime object already exists
 	_, found := s.objectMap.Get(primeObjectId)
@@ -162,7 +139,7 @@ func (s *baseStore) PrimeObject(size int) (ObjectId, error) {
 		return internal.ObjNotAllocated, fmt.Errorf("failed to allocate prime object: %w", err)
 	}
 
-	// Verify we got the expected ObjectId (should be headerSize for first allocation)
+	// Verify we got the expected ObjectId (should be PrimeTable size for first allocation)
 	if objId != primeObjectId {
 		return internal.ObjNotAllocated, fmt.Errorf("expected prime object to be ObjectId %d, got %d", primeObjectId, objId)
 	}
@@ -228,12 +205,7 @@ func (s *baseStore) AllocateRun(size int, count int) ([]ObjectId, []FileOffset, 
 		return nil, nil, err
 	}
 
-	ra, ok := s.allocator.(allocator.RunAllocator)
-	if !ok {
-		return nil, nil, ErrAllocateRunUnsupported
-	}
-
-	objIds, offsets, err := ra.AllocateRun(size, count)
+	objIds, offsets, err := s.allocator.AllocateRun(size, count)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -357,15 +329,16 @@ func (s *baseStore) DeleteObj(objId ObjectId) error {
 		return err
 	}
 
-	var freeErr error
+	var deleteErr error
 	_, found := s.objectMap.GetAndDelete(objId, func(obj ObjectInfo) {
-		freeErr = s.allocator.Free(obj.Offset, obj.Size)
+		// Use the new allocator's DeleteObj method via the adapter
+		deleteErr = s.allocator.DeleteObjID(objId)
 	})
 	if !found {
 		return errors.New("object not found")
 	}
-	if freeErr != nil {
-		return freeErr
+	if deleteErr != nil {
+		return deleteErr
 	}
 
 	return nil
@@ -385,24 +358,21 @@ func (s *baseStore) Close() error {
 		return err
 	}
 
-	// Stop allocator background flush (best effort) and mark closed
-	if ba, ok := s.allocator.(*allocator.BasicAllocator); ok {
-		// Background flush removed as part of pre-refactor cleanup
-		// Marshal must be called explicitly before Close if persistence needed
-		_ = ba
-	}
 	// Mark as closed to prevent further operations
 	s.closed = true
 
+	// First, write the ObjectMap to the file before saving allocator state
 	data, err := s.objectMap.Serialize()
 	if err != nil {
 		return fmt.Errorf("failed to marshal object map: %w", err)
 	}
-	// We need a special method here to allocate LAST item in the file
-	// This is because we need to write the object map to the end of the file
-	_, fileOffset, err := s.allocator.Allocate(len(data))
+	// Append the ObjectMap to the end of the file directly to avoid interfering with allocator state
+	objId, fileOffset, err := s.allocator.Allocate(len(data))
 	if err != nil {
 		return fmt.Errorf("failed to allocate space for object map: %w", err)
+	}
+	if fileOffset < FileOffset(PrimeObjectStart()) {
+		return fmt.Errorf("object map offset %d is before PrimeTable prefix", fileOffset)
 	}
 
 	n, err := s.file.WriteAt(data, int64(fileOffset))
@@ -413,9 +383,17 @@ func (s *baseStore) Close() error {
 		return errors.New("did not write all the data")
 	}
 
-	// Update the first object in the store with the offset of the serialized ObjectMap
-	if err := s.updateInitialOffset(FileOffset(fileOffset)); err != nil {
-		return fmt.Errorf("failed to update initial offset to %d: %w", fileOffset, err)
+	// Record store metadata in the allocator so it is persisted via PrimeTable
+	storeMeta := allocator.FileInfo{
+		ObjId: types.ObjectId(objId),
+		Fo:    types.FileOffset(fileOffset),
+		Sz:    types.FileSize(len(data)),
+	}
+	s.allocator.SetStoreMeta(storeMeta)
+
+	// Now save the allocator state after all allocations are done
+	if err := s.allocator.Save(); err != nil {
+		return fmt.Errorf("failed to save allocator state: %w", err)
 	}
 
 	err = s.file.Sync()
@@ -432,6 +410,6 @@ func (s *baseStore) GetObjectCount() int {
 
 // Allocator returns the allocator backing this store, enabling external callers
 // to configure allocation callbacks (e.g., SetOnAllocate).
-func (s *baseStore) Allocator() allocator.Allocator {
+func (s *baseStore) Allocator() *TopAllocatorAdapter {
 	return s.allocator
 }

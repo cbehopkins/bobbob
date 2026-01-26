@@ -2,6 +2,7 @@ package omni
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"sort"
 
@@ -167,8 +168,9 @@ func (o *OmniAllocator) Unmarshal(data []byte) error {
         return errors.New("insufficient data for unmarshal")
     }
     count := int(binaryBigEndianUint32(data[0:4]))
-    if len(data) < 4+(count*4) {
-        return errors.New("incomplete block size data")
+    expectedSize := 4 + (count * 4)
+    if len(data) < expectedSize {
+        return fmt.Errorf("incomplete block size data: have %d bytes, need %d for count=%d", len(data), expectedSize, count)
     }
     sizes := make([]int, 0, count)
     cursor := 4

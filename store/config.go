@@ -1,24 +1,37 @@
 package store
 
-import "time"
+import (
+	"time"
+
+	"github.com/cbehopkins/bobbob/allocator"
+)
 
 // Config contains tunable constants for store behavior.
 // These values can be adjusted based on performance requirements and memory constraints.
 
 const (
-	// HeaderSize is the size in bytes of the store header (ObjectId offset).
-	// This must match the ObjectId type size (8 bytes for int64).
-	HeaderSize = 8
-
 	// MaxPrimeObjectSize is the maximum size allowed for a prime object.
 	// Prime objects store application metadata (like collection registries, type maps).
 	// Default: 1 MB, which should be plenty for most metadata.
 	MaxPrimeObjectSize = 1 << 20 // 1MB
-
-	// PrimeObjectId is the reserved ObjectId for application metadata.
-	// It's the first object allocated after the header.
-	PrimeObjectId = HeaderSize
 )
+
+// primeTableBootstrapSize mirrors the allocator's PrimeTable layout (Basic, Omni, Store metadata).
+// It constructs a fresh PrimeTable and registers the same three slots to compute the prefix size.
+func primeTableBootstrapSize() int {
+	pt := allocator.NewPrimeTable()
+	pt.Add() // BasicAllocator
+	pt.Add() // OmniAllocator
+	pt.Add() // Store metadata (ObjectMap)
+	return int(pt.SizeInBytes())
+}
+
+// PrimeObjectStart returns the ObjectId offset reserved for the prime object.
+// This is aligned to the PrimeTable size so application metadata starts immediately
+// after the PrimeTable bootstrap region.
+func PrimeObjectStart() int {
+	return primeTableBootstrapSize()
+}
 
 // Timing constants
 const (

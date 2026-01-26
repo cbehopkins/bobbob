@@ -2,7 +2,6 @@ package store
 
 import (
 	"bytes"
-	"encoding/binary"
 	"fmt"
 	"io"
 	"math/rand"
@@ -62,24 +61,14 @@ func TestNewBob(t *testing.T) {
 		t.Fatalf("expected file to be created, but it does not exist")
 	}
 
-	// Verify the initial offset is zero using ReadObj
-	reader, finisher, err := store.lateReadObj(0)
+	// Prime object should allocate at the PrimeTable boundary
+	expectedPrime := ObjectId(PrimeObjectStart())
+	primeId, err := store.PrimeObject(32)
 	if err != nil {
-		t.Fatalf("expected no error reading initial offset, got %v", err)
+		t.Fatalf("expected no error priming store, got %v", err)
 	}
-
-	var initialOffset int64
-	err = binary.Read(reader, binary.LittleEndian, &initialOffset)
-	if err != nil {
-		t.Fatalf("expected no error reading initial offset, got %v", err)
-	}
-	err = finisher()
-	if err != nil {
-		t.Fatalf("expected no error closing reader, got %v", err)
-	}
-
-	if initialOffset != 0 {
-		t.Fatalf("expected initial offset to be 0, got %d", initialOffset)
+	if primeId != expectedPrime {
+		t.Fatalf("expected prime object id %d, got %d", expectedPrime, primeId)
 	}
 }
 
@@ -106,12 +95,13 @@ func TestWriteNewObj(t *testing.T) {
 		t.Fatalf("expected no error closing writer, got %v", err)
 	}
 
-	if objectId != 8 { // Initial offset is 8 bytes
-		t.Fatalf("expected offset to be 8, got %d", objectId)
+	expectedOffset := ObjectId(PrimeObjectStart())
+	if objectId != expectedOffset {
+		t.Fatalf("expected offset to be %d, got %d", expectedOffset, objectId)
 	}
 
-	if len(store.objectMap.store) != 2 {
-		t.Fatalf("expected objectMap length to be 2, got %d", len(store.objectMap.store))
+	if len(store.objectMap.store) != 1 {
+		t.Fatalf("expected objectMap length to be 1, got %d", len(store.objectMap.store))
 	}
 
 	obj, found := store.objectMap.Get(ObjectId(objectId))
@@ -757,16 +747,30 @@ func ExampleLoadBaseStore() {
 	defer os.Remove(tmpFile)
 
 	// Create and populate a store
-	s, _ := NewBasicStore(tmpFile)
-	objId, _ := WriteNewObjFromBytes(s, []byte("Persistent data"))
-	s.Close()
+	s, err := NewBasicStore(tmpFile)
+	if err != nil {
+		panic(err)
+	}
+	objId, err := WriteNewObjFromBytes(s, []byte("Persistent data"))
+	if err != nil {
+		panic(err)
+	}
+	if err := s.Close(); err != nil {
+		panic(err)
+	}
 
 	// Load the store from disk
-	loadedStore, _ := LoadBaseStore(tmpFile)
+	loadedStore, err := LoadBaseStore(tmpFile)
+	if err != nil {
+		panic(err)
+	}
 	defer loadedStore.Close()
 
 	// Read the persisted object
-	data, _ := ReadBytesFromObj(loadedStore, objId)
+	data, err := ReadBytesFromObj(loadedStore, objId)
+	if err != nil {
+		panic(err)
+	}
 	fmt.Printf("%s\n", string(data))
 	// Output: Persistent data
 }

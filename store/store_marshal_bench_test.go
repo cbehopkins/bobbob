@@ -39,14 +39,14 @@ func TestDetectConsecutiveObjects(t *testing.T) {
 	defer os.RemoveAll(dir)
 	defer store.Close()
 
-	// Allocate 5 consecutive objects of same size
-	objectIds := make([]ObjectId, 5)
-	for i := 0; i < 5; i++ {
-		objId, err := store.NewObj(100)
-		if err != nil {
-			t.Fatalf("failed to allocate object: %v", err)
-		}
-		objectIds[i] = objId
+	// Allocate 5 consecutive objects of same size using AllocateRun to ensure contiguity
+	const objSize = 64
+	objectIds, _, err := store.AllocateRun(objSize, 5)
+	if err == ErrAllocateRunUnsupported {
+		t.Skip("AllocateRun unsupported")
+	}
+	if err != nil {
+		t.Fatalf("failed to allocate objects: %v", err)
 	}
 
 	// Create ObjectAndByteFunc list
@@ -56,7 +56,7 @@ func TestDetectConsecutiveObjects(t *testing.T) {
 		objects[i] = ObjectAndByteFunc{
 			ObjectId: objectIds[i],
 			ByteFunc: func() ([]byte, error) {
-				return make([]byte, 100), nil
+				return make([]byte, objSize), nil
 			},
 		}
 		_ = idx // Silence unused warning

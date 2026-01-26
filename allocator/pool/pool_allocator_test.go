@@ -2,11 +2,11 @@ package pool
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/cbehopkins/bobbob/allocator/testutil"
 	"github.com/cbehopkins/bobbob/allocator/types"
-	itestutil "github.com/cbehopkins/bobbob/internal/testutil"
 )
 
 // TestPoolAllocatorBasicAllocation verifies basic single allocation.
@@ -351,10 +351,10 @@ func TestPoolAllocatorStats(t *testing.T) {
 
 // TestPoolAllocatorMarshalUnmarshal verifies persistence.
 func TestPoolAllocatorMarshalUnmarshal(t *testing.T) {
-	dir, cleanup := itestutil.CreateTempFile(t, "pool_test.bin")
-	defer cleanup()
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "pool_test.bin")
 	
-	file, err := os.Create(dir)
+	file, err := os.Create(filePath)
 	if err != nil {
 		t.Fatalf("Create file failed: %v", err)
 	}

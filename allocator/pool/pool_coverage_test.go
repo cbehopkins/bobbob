@@ -2,11 +2,11 @@ package pool
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/cbehopkins/bobbob/allocator/testutil"
 	"github.com/cbehopkins/bobbob/allocator/types"
-	itestutil "github.com/cbehopkins/bobbob/internal/testutil"
 )
 
 // TestPoolAllocatorAllocateRunPartialFill tests AllocateRun filling available allocators.
@@ -216,10 +216,10 @@ func TestPoolAllocatorCallbackFiring(t *testing.T) {
 
 // TestPoolAllocatorGetFile verifies GetFile returns correct file.
 func TestPoolAllocatorGetFile(t *testing.T) {
-	dir, cleanup := itestutil.CreateTempFile(t, "pool_test.bin")
-	defer cleanup()
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "pool_test.bin")
 
-	file, err := os.Create(dir)
+	file, err := os.Create(filePath)
 	if err != nil {
 		t.Fatalf("Create file failed: %v", err)
 	}
@@ -307,10 +307,10 @@ func TestPoolAllocatorStressAllocationLarge(t *testing.T) {
 
 // TestPoolAllocatorMarshalRoundtrip tests full persistence cycle.
 func TestPoolAllocatorMarshalRoundtrip(t *testing.T) {
-	dir, cleanup := itestutil.CreateTempFile(t, "pool_roundtrip.bin")
-	defer cleanup()
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "pool_roundtrip.bin")
 
-	file, _ := os.Create(dir)
+	file, _ := os.Create(filePath)
 	defer file.Close()
 
 	parent1 := testutil.NewMockAllocator()

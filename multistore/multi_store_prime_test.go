@@ -27,9 +27,10 @@ func TestPrimeObjectIsFirstAllocation(t *testing.T) {
 		t.Fatalf("PrimeObject failed: %v", err)
 	}
 
-	// Prime must be the first allocation right after the 8-byte header.
-	if primeObjId != store.ObjectId(8) {
-		t.Fatalf("expected prime ObjectId 8, got %d", primeObjId)
+	// Prime must be the first allocation right after the PrimeTable prefix.
+	expectedPrime := store.ObjectId(store.PrimeObjectStart())
+	if primeObjId != expectedPrime {
+		t.Fatalf("expected prime ObjectId %d, got %d", expectedPrime, primeObjId)
 	}
 
 	primeInfo, found := ms.GetObjectInfo(primeObjId)

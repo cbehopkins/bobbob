@@ -1,4 +1,4 @@
-package testutil
+package store
 
 import (
 	"bytes"
@@ -7,7 +7,6 @@ import (
 	"sync"
 
 	"github.com/cbehopkins/bobbob/internal"
-	"github.com/cbehopkins/bobbob/store"
 )
 
 // MockStore is an in-memory implementation of store.Storer for fast testing.
@@ -23,8 +22,8 @@ import (
 // - Persistence/serialization tests
 // - Benchmark tests measuring disk I/O
 type MockStore struct {
-	objects map[store.ObjectId][]byte
-	nextId  store.ObjectId
+	objects map[ObjectId][]byte
+	nextId  ObjectId
 	mu      sync.RWMutex
 	closed  bool
 }
@@ -32,13 +31,13 @@ type MockStore struct {
 // NewMockStore creates a new in-memory mock store.
 func NewMockStore() *MockStore {
 	return &MockStore{
-		objects: make(map[store.ObjectId][]byte),
-		nextId:  store.ObjectId(8), // Start after header (8 bytes)
+		objects: make(map[ObjectId][]byte),
+		nextId:  ObjectId(76), // Start after PrimeTable (3 slots * 24 + 4 byte header = 76 bytes)
 	}
 }
 
 // NewObj allocates a new object of the given size and returns its ID.
-func (m *MockStore) NewObj(size int) (store.ObjectId, error) {
+func (m *MockStore) NewObj(size int) (ObjectId, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -53,7 +52,7 @@ func (m *MockStore) NewObj(size int) (store.ObjectId, error) {
 }
 
 // DeleteObj removes the object with the given ID.
-func (m *MockStore) DeleteObj(objId store.ObjectId) error {
+func (m *MockStore) DeleteObj(objId ObjectId) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -79,8 +78,8 @@ func (m *MockStore) Close() error {
 }
 
 // PrimeObject returns a dedicated ObjectId for application metadata.
-// For MockStore, this is ObjectId(8), consistent with real stores.
-func (m *MockStore) PrimeObject(size int) (store.ObjectId, error) {
+// Align with real stores by using the PrimeTable-derived start offset.
+func (m *MockStore) PrimeObject(size int) (ObjectId, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -88,7 +87,8 @@ func (m *MockStore) PrimeObject(size int) (store.ObjectId, error) {
 		return internal.ObjNotAllocated, io.ErrClosedPipe
 	}
 
-	const primeObjectId = store.ObjectId(8)
+	// PrimeTable size: 4 byte header + 3 slots * 24 bytes = 76 bytes
+	primeObjectId := ObjectId(76)
 
 	// Check if prime object already exists
 	if _, exists := m.objects[primeObjectId]; exists {
@@ -107,7 +107,7 @@ func (m *MockStore) PrimeObject(size int) (store.ObjectId, error) {
 }
 
 // LateReadObj returns a reader for the object with the given ID.
-func (m *MockStore) LateReadObj(id store.ObjectId) (io.Reader, store.Finisher, error) {
+func (m *MockStore) LateReadObj(id ObjectId) (io.Reader, Finisher, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -130,7 +130,7 @@ func (m *MockStore) LateReadObj(id store.ObjectId) (io.Reader, store.Finisher, e
 }
 
 // LateWriteNewObj allocates a new object and returns a writer for it.
-func (m *MockStore) LateWriteNewObj(size int) (store.ObjectId, io.Writer, store.Finisher, error) {
+func (m *MockStore) LateWriteNewObj(size int) (ObjectId, io.Writer, Finisher, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -154,7 +154,7 @@ func (m *MockStore) LateWriteNewObj(size int) (store.ObjectId, io.Writer, store.
 }
 
 // WriteToObj returns a writer for an existing object.
-func (m *MockStore) WriteToObj(objectId store.ObjectId) (io.Writer, store.Finisher, error) {
+func (m *MockStore) WriteToObj(objectId ObjectId) (io.Writer, Finisher, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -180,25 +180,25 @@ func (m *MockStore) WriteToObj(objectId store.ObjectId) (io.Writer, store.Finish
 
 // GetObjectInfo returns the ObjectInfo for a given ObjectId.
 // This is used by store composition helpers.
-func (m *MockStore) GetObjectInfo(objId store.ObjectId) (store.ObjectInfo, bool) {
+func (m *MockStore) GetObjectInfo(objId ObjectId) (ObjectInfo, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
 	data, exists := m.objects[objId]
 	if !exists {
-		return store.ObjectInfo{}, false
+		return ObjectInfo{}, false
 	}
 
 	// MockStore doesn't have real file offsets, so we use objId as fake offset
-	return store.ObjectInfo{
-		Offset: store.FileOffset(objId),
+	return ObjectInfo{
+		Offset: FileOffset(objId),
 		Size:   len(data),
 	}, true
 }
 
 // WriteBatchedObjs writes multiple objects in a batch for efficiency.
 // For MockStore, this extracts each object's data from the combined data slice using sizes.
-func (m *MockStore) WriteBatchedObjs(objIds []store.ObjectId, data []byte, sizes []int) error {
+func (m *MockStore) WriteBatchedObjs(objIds []ObjectId, data []byte, sizes []int) error {
 	if len(objIds) != len(sizes) {
 		return errors.New("objIds and sizes slices must have the same length")
 	}
@@ -228,7 +228,7 @@ func (m *MockStore) WriteBatchedObjs(objIds []store.ObjectId, data []byte, sizes
 // mockWriter implements io.Writer for MockStore objects.
 type mockWriter struct {
 	store  *MockStore
-	objId  store.ObjectId
+	objId  ObjectId
 	buffer *bytes.Buffer
 }
 

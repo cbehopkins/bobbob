@@ -176,6 +176,7 @@ func (a *BasicAllocator) Allocate(size int) (ObjectId, FileOffset, error) {
 	var gap Gap
 	if len(a.FreeList) > 0 {
 		gap = heap.Pop(&a.FreeList).(Gap)
+
 		if gap.End-gap.Start >= int64(size) {
 			objId := ObjectId(gap.Start)
 			fileOffset := FileOffset(gap.Start)
@@ -223,7 +224,7 @@ func (a *BasicAllocator) DeleteObj(objId ObjectId) error {
 	if err != nil {
 		return err
 	}
-	
+
 	// Delegate to existing Free implementation
 	return a.Free(fileOffset, size)
 }

@@ -192,7 +192,7 @@ func LoadVault(stre store.Storer) (*Vault, error) {
 		backgroundMonitoringEnabled: true,
 	}
 
-	// Get the prime object (ObjectId 1) where vault metadata is stored
+	// Get the prime object where vault metadata is stored
 	primeObjectId, err := stre.PrimeObject(16)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get prime object: %w", err)

@@ -1,4 +1,4 @@
-package testutil
+package store
 
 import (
 	"bytes"
@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/cbehopkins/bobbob/internal"
-	"github.com/cbehopkins/bobbob/store"
 )
 
 func TestMockStore_NewObj(t *testing.T) {
@@ -143,8 +142,8 @@ func TestMockStore_PrimeObject(t *testing.T) {
 		t.Fatalf("PrimeObject failed: %v", err)
 	}
 
-	if primeId != store.ObjectId(8) {
-		t.Errorf("Expected prime object ID to be 8, got %d", primeId)
+	if primeId != ObjectId(76) {
+		t.Errorf("Expected prime object ID to be 76, got %d", primeId)
 	}
 
 	// Should be idempotent
@@ -209,7 +208,7 @@ func TestMockStore_GetObjectInfo(t *testing.T) {
 	}
 
 	// Non-existent object
-	_, exists = ms.GetObjectInfo(store.ObjectId(9999))
+	_, exists = ms.GetObjectInfo(ObjectId(9999))
 	if exists {
 		t.Error("Expected non-existent object info to not exist")
 	}

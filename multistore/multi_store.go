@@ -150,11 +150,8 @@ func NewMultiStore(filePath string, maxDiskTokens int) (*multiStore, error) {
 
 	// If new file, reserve first 8 bytes for metadata offset header
 	if fileInfo.Size() == 0 {
-		_, _, err = rootAllocator.Allocate(8)
-		if err != nil {
-			_ = file.Close()
-			return nil, err
-		}
+		// Align start of allocatable space with the PrimeTable-sized prefix used across stores
+		rootAllocator.End = int64(store.PrimeObjectStart())
 	}
 
 	blockCount := DefaultBlockCount
@@ -567,7 +564,7 @@ func (s *multiStore) deleteObj(objId store.ObjectId) {
 }
 
 // PrimeObject returns a dedicated ObjectId for application metadata.
-// For multiStore, this is the first object after the 8-byte header at ObjectId 0.
+// For multiStore, this is the first object after the PrimeTable region at ObjectId 0.
 // If it doesn't exist yet, it allocates it with the specified size.
 // This provides a stable, known location for storing top-level metadata. This must
 // be the first allocation in the file; MultiStore disables omni preallocation
@@ -578,8 +575,8 @@ func (s *multiStore) PrimeObject(size int) (store.ObjectId, error) {
 		return internal.ObjNotAllocated, errors.New("invalid prime object size")
 	}
 
-	// For multiStore, the prime object is the first object after the header
-	const primeObjectId = store.ObjectId(store.PrimeObjectId)
+	// For multiStore, the prime object starts immediately after the PrimeTable
+	primeObjectId := store.ObjectId(store.PrimeObjectStart())
 
 	// Check if the prime object already exists using the allocator
 	_, err := s.getObjectInfo(primeObjectId)
@@ -595,7 +592,7 @@ func (s *multiStore) PrimeObject(size int) (store.ObjectId, error) {
 		return internal.ObjNotAllocated, err
 	}
 
-	// Verify we got the expected ObjectId (should be headerSize for first allocation)
+	// Verify we got the expected ObjectId (should be PrimeTable size for first allocation)
 	if objId != primeObjectId {
 		return internal.ObjNotAllocated, fmt.Errorf("expected prime object to be first allocation at offset %d, got %d", primeObjectId, objId)
 	}

@@ -5,11 +5,9 @@ import (
 	"encoding/gob"
 	"errors"
 	"io"
-	"slices"
 	"sync"
 
 	"github.com/cbehopkins/bobbob/internal"
-	"github.com/cbehopkins/bobbob/store/allocator"
 )
 
 // ObjectId is an identifier unique within the store for an object.
@@ -139,30 +137,4 @@ func (om *ObjectMap) Marshal() ([]byte, error) {
 // Unmarshal decodes the ObjectMap from bytes by wrapping in a reader.
 func (om *ObjectMap) Unmarshal(data []byte) error {
 	return om.Deserialize(bytes.NewReader(data))
-}
-
-// FindGaps returns a channel that yields gaps (unused regions) in the file.
-// The gaps are computed by sorting all object offsets and finding regions
-// between consecutive objects.
-func (om *ObjectMap) FindGaps() <-chan allocator.Gap {
-	gapChan := make(chan allocator.Gap)
-	go func() {
-		defer close(gapChan)
-		om.mu.RLock()
-		defer om.mu.RUnlock()
-		var offsets []int64
-		for _, obj := range om.store {
-			offsets = append(offsets, int64(obj.Offset))
-		}
-		slices.Sort(offsets)
-		for i := 1; i < len(offsets); i++ {
-			prevObj := om.store[ObjectId(offsets[i-1])]
-			currOffset := offsets[i]
-			prevEnd := int64(prevObj.Offset) + int64(prevObj.Size)
-			if currOffset > prevEnd {
-				gapChan <- allocator.Gap{Start: prevEnd, End: currOffset}
-			}
-		}
-	}()
-	return gapChan
 }

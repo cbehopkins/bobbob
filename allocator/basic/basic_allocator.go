@@ -121,6 +121,27 @@ type BasicAllocator struct {
 	onAllocate func(types.ObjectId, types.FileOffset, int)
 }
 
+// ReservePrefix sets the initial file length/ObjectId cursor. This is used at
+// allocator bootstrap time to skip over reserved regions (e.g. PrimeTable).
+// It only moves the cursor forward; it never shrinks it.
+func (ba *BasicAllocator) ReservePrefix(offset types.FileOffset) {
+	if offset > ba.fileLength {
+		ba.fileLength = offset
+	}
+}
+
+// RemoveGapsBefore removes all gaps that start before the given offset.
+// This is used after loading to prevent allocations from using reserved regions.
+func (ba *BasicAllocator) RemoveGapsBefore(offset types.FileOffset) {
+	filtered := make([]Gap, 0, len(ba.freeList.gaps))
+	for _, gap := range ba.freeList.gaps {
+		if gap.FileOffset >= offset {
+			filtered = append(filtered, gap)
+		}
+	}
+	ba.freeList.gaps = filtered
+}
+
 // New creates a new BasicAllocator for a file.
 func New(file *os.File) (*BasicAllocator, error) {
 	if file == nil {
@@ -270,6 +291,12 @@ func (ba *BasicAllocator) GetObjectInfo(objId types.ObjectId) (types.FileOffset,
 // GetFile returns the file handle.
 func (ba *BasicAllocator) GetFile() *os.File {
 	return ba.file
+}
+
+// FileLength returns the current end-of-file position.
+// Used by Top.Save() to know where to append BasicAllocator's own marshaled data.
+func (ba *BasicAllocator) FileLength() types.FileOffset {
+	return ba.fileLength
 }
 
 // ContainsObjectId returns true if this allocator owns the ObjectId.

@@ -107,8 +107,9 @@ func TestConcurrentStorePrimeObject(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error getting prime object, got %v", err)
 	}
-	if primeId != ObjectId(8) {
-		t.Errorf("expected prime object to be ObjectId(8), got %d", primeId)
+	expectedPrime := ObjectId(PrimeObjectStart())
+	if primeId != expectedPrime {
+		t.Errorf("expected prime object to be ObjectId(%d), got %d", expectedPrime, primeId)
 	}
 
 	// Second call should return same ID
@@ -302,14 +303,14 @@ func TestConcurrentStoreWriteBatchedObjs(t *testing.T) {
 	}
 	defer cs.Close()
 
-	// Create multiple objects
-	objIds := make([]ObjectId, 3)
-	sizes := []int{10, 10, 10}
-	for i := range objIds {
-		objIds[i], err = cs.NewObj(sizes[i])
-		if err != nil {
-			t.Fatalf("NewObj failed: %v", err)
-		}
+	// Create multiple objects with a size that matches allocator block stride to ensure contiguity
+	sizes := []int{64, 64, 64}
+	objIds, _, err := cs.AllocateRun(64, len(sizes))
+	if err == ErrAllocateRunUnsupported {
+		t.Skip("AllocateRun unsupported")
+	}
+	if err != nil {
+		t.Fatalf("AllocateRun failed: %v", err)
 	}
 
 	// Write batched data
