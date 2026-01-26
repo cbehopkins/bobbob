@@ -110,8 +110,9 @@ type BasicAllocator struct {
 	file       *os.File
 
 	// objectTracking: tracks object locations and sizes
-	// Uses objectTracker for abstraction layer that allows future optimization
-	objectTracking *objectTracker
+	// Uses objectTracker interface for abstraction layer that allows switching
+	// between in-memory and file-based implementations
+	objectTracking objectTracker
 
 	// FreeList: not persisted, reconstructed on load
 	freeList *FreeList
@@ -148,6 +149,7 @@ func (ba *BasicAllocator) RemoveGapsBefore(offset types.FileOffset) {
 }
 
 // New creates a new BasicAllocator for a file.
+// Uses in-memory object tracking by default.
 func New(file *os.File) (*BasicAllocator, error) {
 	if file == nil {
 		return nil, errors.New("file cannot be nil")
@@ -161,7 +163,37 @@ func New(file *os.File) (*BasicAllocator, error) {
 
 	return &BasicAllocator{
 		file:           file,
-		objectTracking: newObjectTracker(),
+		objectTracking: newMemoryObjectTracker(),
+		freeList:       NewFreeList(),
+		fileLength:     types.FileOffset(stat.Size()),
+	}, nil
+}
+
+// NewWithFileBasedTracking creates a new BasicAllocator with file-based object tracking.
+// The trackerFile is a separate file used to store object tracking information.
+func NewWithFileBasedTracking(dataFile *os.File, trackerFile *os.File) (*BasicAllocator, error) {
+	if dataFile == nil {
+		return nil, errors.New("data file cannot be nil")
+	}
+	if trackerFile == nil {
+		return nil, errors.New("tracker file cannot be nil")
+	}
+
+	// Get initial file size
+	stat, err := dataFile.Stat()
+	if err != nil {
+		return nil, err
+	}
+
+	// Create file-based tracker
+	tracker, err := newFileBasedObjectTracker(trackerFile)
+	if err != nil {
+		return nil, err
+	}
+
+	return &BasicAllocator{
+		file:           dataFile,
+		objectTracking: tracker,
 		freeList:       NewFreeList(),
 		fileLength:     types.FileOffset(stat.Size()),
 	}, nil

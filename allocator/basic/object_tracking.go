@@ -9,27 +9,37 @@ import (
 	"github.com/cbehopkins/bobbob/allocator/types"
 )
 
-// objectTracker tracks object locations and sizes in the allocator.
-// This type abstracts the underlying storage mechanism to allow future
-// optimization (e.g., disk-based tracking instead of in-memory).
-//
-// For now it uses a simple in-memory map, but the interface allows
-// swapping to file-based storage without changing BasicAllocator.
-type objectTracker struct {
+// objectTracker defines the interface for object location tracking
+type objectTracker interface {
+	Get(objId types.ObjectId) (types.FileSize, bool)
+	Set(objId types.ObjectId, size types.FileSize)
+	Delete(objId types.ObjectId)
+	Len() int
+	Contains(objId types.ObjectId) bool
+	ForEach(fn func(types.ObjectId, types.FileSize))
+	GetAllObjectIds() []types.ObjectId
+	Clear()
+	Marshal() ([]byte, error)
+	Unmarshal(data []byte) error
+}
+
+// memoryObjectTracker tracks object locations and sizes in memory.
+// This is the original in-memory implementation.
+type memoryObjectTracker struct {
 	mu    sync.RWMutex
 	store map[types.ObjectId]types.FileSize
 }
 
-// newObjectTracker creates a new empty object tracking map.
-func newObjectTracker() *objectTracker {
-	return &objectTracker{
+// newMemoryObjectTracker creates a new empty object tracking map.
+func newMemoryObjectTracker() *memoryObjectTracker {
+	return &memoryObjectTracker{
 		store: make(map[types.ObjectId]types.FileSize),
 	}
 }
 
 // Get retrieves the size for an ObjectId.
 // Returns (size, found).
-func (om *objectTracker) Get(objId types.ObjectId) (types.FileSize, bool) {
+func (om *memoryObjectTracker) Get(objId types.ObjectId) (types.FileSize, bool) {
 	om.mu.RLock()
 	defer om.mu.RUnlock()
 
@@ -38,7 +48,7 @@ func (om *objectTracker) Get(objId types.ObjectId) (types.FileSize, bool) {
 }
 
 // Set stores the size for an ObjectId.
-func (om *objectTracker) Set(objId types.ObjectId, size types.FileSize) {
+func (om *memoryObjectTracker) Set(objId types.ObjectId, size types.FileSize) {
 	om.mu.Lock()
 	defer om.mu.Unlock()
 
@@ -46,7 +56,7 @@ func (om *objectTracker) Set(objId types.ObjectId, size types.FileSize) {
 }
 
 // Delete removes an ObjectId from tracking.
-func (om *objectTracker) Delete(objId types.ObjectId) {
+func (om *memoryObjectTracker) Delete(objId types.ObjectId) {
 	om.mu.Lock()
 	defer om.mu.Unlock()
 
@@ -54,7 +64,7 @@ func (om *objectTracker) Delete(objId types.ObjectId) {
 }
 
 // Len returns the number of tracked objects.
-func (om *objectTracker) Len() int {
+func (om *memoryObjectTracker) Len() int {
 	om.mu.RLock()
 	defer om.mu.RUnlock()
 
@@ -62,7 +72,7 @@ func (om *objectTracker) Len() int {
 }
 
 // Contains returns whether an ObjectId is tracked.
-func (om *objectTracker) Contains(objId types.ObjectId) bool {
+func (om *memoryObjectTracker) Contains(objId types.ObjectId) bool {
 	om.mu.RLock()
 	defer om.mu.RUnlock()
 
@@ -72,7 +82,7 @@ func (om *objectTracker) Contains(objId types.ObjectId) bool {
 
 // ForEach iterates over all tracked objects, calling fn for each.
 // The function signature is fn(objId, size).
-func (om *objectTracker) ForEach(fn func(types.ObjectId, types.FileSize)) {
+func (om *memoryObjectTracker) ForEach(fn func(types.ObjectId, types.FileSize)) {
 	om.mu.RLock()
 	defer om.mu.RUnlock()
 
@@ -83,7 +93,7 @@ func (om *objectTracker) ForEach(fn func(types.ObjectId, types.FileSize)) {
 
 // GetAllObjectIds returns a slice of all tracked ObjectIds.
 // Useful for iteration without holding locks during processing.
-func (om *objectTracker) GetAllObjectIds() []types.ObjectId {
+func (om *memoryObjectTracker) GetAllObjectIds() []types.ObjectId {
 	om.mu.RLock()
 	defer om.mu.RUnlock()
 
@@ -95,7 +105,7 @@ func (om *objectTracker) GetAllObjectIds() []types.ObjectId {
 }
 
 // Clear removes all tracked objects.
-func (om *objectTracker) Clear() {
+func (om *memoryObjectTracker) Clear() {
 	om.mu.Lock()
 	defer om.mu.Unlock()
 
@@ -105,7 +115,7 @@ func (om *objectTracker) Clear() {
 // Marshal serializes the tracked objects to bytes.
 // Format: numEntries (4) | [objId (8) | size (8)]...
 // Entries are sorted by ObjectId for deterministic output.
-func (om *objectTracker) Marshal() ([]byte, error) {
+func (om *memoryObjectTracker) Marshal() ([]byte, error) {
 	om.mu.RLock()
 	defer om.mu.RUnlock()
 
@@ -138,7 +148,7 @@ func (om *objectTracker) Marshal() ([]byte, error) {
 
 // Unmarshal restores tracked objects from bytes.
 // Clears existing state before restoring.
-func (om *objectTracker) Unmarshal(data []byte) error {
+func (om *memoryObjectTracker) Unmarshal(data []byte) error {
 	if len(data) < 4 {
 		return errors.New("insufficient data for objectTracker unmarshal")
 	}
