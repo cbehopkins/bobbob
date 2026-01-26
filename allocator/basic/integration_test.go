@@ -11,21 +11,15 @@ import (
 func TestBasicAllocatorWithFileBasedTracking(t *testing.T) {
 	tmpDir := t.TempDir()
 	dataPath := filepath.Join(tmpDir, "data.bin")
-	trackerPath := filepath.Join(tmpDir, "tracker.bin")
 
-	// Create files
+	// Create data file
 	dataFile, err := os.Create(dataPath)
 	if err != nil {
 		t.Fatalf("Failed to create data file: %v", err)
 	}
 
-	trackerFile, err := os.Create(trackerPath)
-	if err != nil {
-		t.Fatalf("Failed to create tracker file: %v", err)
-	}
-
 	// Create allocator with file-based tracking
-	allocator, err := NewWithFileBasedTracking(dataFile, trackerFile)
+	allocator, err := NewWithFileBasedTracking(dataFile)
 	if err != nil {
 		t.Fatalf("Failed to create allocator: %v", err)
 	}
@@ -76,38 +70,8 @@ func TestBasicAllocatorWithFileBasedTracking(t *testing.T) {
 		ft.Close()
 	}
 
-	// Reopen and verify persistence
-	dataFile2, err := os.OpenFile(dataPath, os.O_RDWR, 0644)
-	if err != nil {
-		t.Fatalf("Failed to reopen data file: %v", err)
-	}
-	defer dataFile2.Close()
-
-	trackerFile2, err := os.OpenFile(trackerPath, os.O_RDWR, 0644)
-	if err != nil {
-		t.Fatalf("Failed to reopen tracker file: %v", err)
-	}
-	defer trackerFile2.Close()
-
-	allocator2, err := NewWithFileBasedTracking(dataFile2, trackerFile2)
-	if err != nil {
-		t.Fatalf("Failed to reload allocator: %v", err)
-	}
-
-	// Verify persistence
-	if allocator2.GetObjectCount() != 2 {
-		t.Errorf("Expected 2 objects after reload, got %d", allocator2.GetObjectCount())
-	}
-
-	if !allocator2.ContainsObjectId(obj1) {
-		t.Error("Object 1 should be tracked after reload")
-	}
-	if allocator2.ContainsObjectId(obj2) {
-		t.Error("Object 2 should not be tracked after reload (was deleted)")
-	}
-	if !allocator2.ContainsObjectId(obj3) {
-		t.Error("Object 3 should be tracked after reload")
-	}
+	// Note: Cannot test persistence across sessions since tracker file is temporary
+	// and deleted when allocator is closed.
 }
 
 func TestBasicAllocatorFileBasedVsMemory(t *testing.T) {
@@ -128,7 +92,6 @@ func TestBasicAllocatorFileBasedVsMemory(t *testing.T) {
 
 	// Create file-based allocator
 	dataPath2 := filepath.Join(tmpDir, "data2.bin")
-	trackerPath := filepath.Join(tmpDir, "tracker.bin")
 
 	dataFile2, err := os.Create(dataPath2)
 	if err != nil {
@@ -136,13 +99,7 @@ func TestBasicAllocatorFileBasedVsMemory(t *testing.T) {
 	}
 	defer dataFile2.Close()
 
-	trackerFile, err := os.Create(trackerPath)
-	if err != nil {
-		t.Fatalf("Failed to create tracker file: %v", err)
-	}
-	defer trackerFile.Close()
-
-	fileAllocator, err := NewWithFileBasedTracking(dataFile2, trackerFile)
+	fileAllocator, err := NewWithFileBasedTracking(dataFile2)
 	if err != nil {
 		t.Fatalf("Failed to create file allocator: %v", err)
 	}

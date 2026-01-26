@@ -106,8 +106,8 @@ func (fl *FreeList) Remove(idx int) Gap {
 // BasicAllocator is the lowest-level allocator.
 // ObjectId always equals FileOffset (1:1 mapping).
 type BasicAllocator struct {
-	mu         sync.RWMutex
-	file       *os.File
+	mu   sync.RWMutex
+	file *os.File
 
 	// objectTracking: tracks object locations and sizes
 	// Uses objectTracker interface for abstraction layer that allows switching
@@ -170,24 +170,29 @@ func New(file *os.File) (*BasicAllocator, error) {
 }
 
 // NewWithFileBasedTracking creates a new BasicAllocator with file-based object tracking.
-// The trackerFile is a separate file used to store object tracking information.
-func NewWithFileBasedTracking(dataFile *os.File, trackerFile *os.File) (*BasicAllocator, error) {
+// The tracker file is created as a temporary file and will be cleaned up by the OS.
+func NewWithFileBasedTracking(dataFile *os.File) (*BasicAllocator, error) {
 	if dataFile == nil {
 		return nil, errors.New("data file cannot be nil")
 	}
-	if trackerFile == nil {
-		return nil, errors.New("tracker file cannot be nil")
+
+	// Create temporary tracker file
+	trackerFile, err := os.CreateTemp("", "bobbob-tracker-*.bin")
+	if err != nil {
+		return nil, err
 	}
 
 	// Get initial file size
 	stat, err := dataFile.Stat()
 	if err != nil {
+		trackerFile.Close()
 		return nil, err
 	}
 
-	// Create file-based tracker
-	tracker, err := newFileBasedObjectTracker(trackerFile)
+	// Create file-based tracker (temporary file removed on Close)
+	tracker, err := newFileBasedObjectTrackerWithOptions(trackerFile, true)
 	if err != nil {
+		trackerFile.Close()
 		return nil, err
 	}
 

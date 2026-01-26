@@ -45,31 +45,39 @@ type trackerEntry struct {
 
 // TrackerStats provides statistics about the file-based tracker
 type TrackerStats struct {
-	NumBuckets         uint32  // Number of hash buckets
-	LiveEntries        uint32  // Number of live (non-deleted) entries
-	DeletedEntries     uint32  // Number of deleted entries in free list
-	TotalEntries       uint32  // Total entries (live + deleted)
-	MaxChainLength     int     // Longest collision chain
-	AvgChainLength     float64 // Average collision chain length
-	EmptyBuckets       int     // Number of empty buckets
-	LoadFactorPercent  float64 // Current load factor (live entries / buckets * 100)
-	FileSize           int64   // Total tracker file size in bytes
-	DataRegionSize     uint64  // Size of data region
-	FreeListLength     int     // Number of entries in free list
+	NumBuckets        uint32  // Number of hash buckets
+	LiveEntries       uint32  // Number of live (non-deleted) entries
+	DeletedEntries    uint32  // Number of deleted entries in free list
+	TotalEntries      uint32  // Total entries (live + deleted)
+	MaxChainLength    int     // Longest collision chain
+	AvgChainLength    float64 // Average collision chain length
+	EmptyBuckets      int     // Number of empty buckets
+	LoadFactorPercent float64 // Current load factor (live entries / buckets * 100)
+	FileSize          int64   // Total tracker file size in bytes
+	DataRegionSize    uint64  // Size of data region
+	FreeListLength    int     // Number of entries in free list
 }
 
 // fileBasedObjectTracker uses a hash index file for object tracking
 type fileBasedObjectTracker struct {
 	mu      sync.RWMutex
 	file    *os.File
+	// deleteOnClose signals that the underlying file should be removed after Close.
+	deleteOnClose bool
 	header  trackerHeader
 	buckets []uint64 // In-memory bucket table (offsets to first entry in chain)
 }
 
 // newFileBasedObjectTracker creates a new file-based object tracker
 func newFileBasedObjectTracker(file *os.File) (*fileBasedObjectTracker, error) {
+	return newFileBasedObjectTrackerWithOptions(file, false)
+}
+
+// newFileBasedObjectTrackerWithOptions allows configuring tracker behavior (internal use).
+func newFileBasedObjectTrackerWithOptions(file *os.File, deleteOnClose bool) (*fileBasedObjectTracker, error) {
 	ft := &fileBasedObjectTracker{
-		file: file,
+		file:          file,
+		deleteOnClose: deleteOnClose,
 	}
 
 	// Check if file is empty (new file)
@@ -558,11 +566,23 @@ func (ft *fileBasedObjectTracker) Close() error {
 	ft.mu.Lock()
 	defer ft.mu.Unlock()
 
+	// Capture path before closing in case the file handle becomes invalid.
+	trackerPath := ft.file.Name()
+
 	if err := ft.file.Sync(); err != nil {
 		return err
 	}
 
-	return ft.file.Close()
+	if err := ft.file.Close(); err != nil {
+		return err
+	}
+
+	if ft.deleteOnClose {
+		// Best-effort removal; ignore errors to avoid masking close status.
+		_ = os.Remove(trackerPath)
+	}
+
+	return nil
 }
 
 // Stats returns statistics about the tracker
