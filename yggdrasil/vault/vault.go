@@ -8,9 +8,9 @@ import (
 
 	atypes "github.com/cbehopkins/bobbob/allocator/types"
 	"github.com/cbehopkins/bobbob/internal"
-	multistore "github.com/cbehopkins/bobbob/multistore"
+	"github.com/cbehopkins/bobbob/multistore"
 	"github.com/cbehopkins/bobbob/store"
-	ycollections "github.com/cbehopkins/bobbob/yggdrasil/collections"
+	"github.com/cbehopkins/bobbob/yggdrasil/collections"
 	"github.com/cbehopkins/bobbob/yggdrasil/treap"
 	yttypes "github.com/cbehopkins/bobbob/yggdrasil/types"
 )
@@ -144,7 +144,7 @@ type Vault struct {
 	TypeMap *yttypes.TypeMap
 
 	// CollectionRegistry tracks all collections in this vault
-	CollectionRegistry *ycollections.CollectionRegistry
+	CollectionRegistry *collections.CollectionRegistry
 
 	// ActiveCollections caches loaded collections
 	// Maps collection name to the actual treap instance
@@ -187,7 +187,7 @@ func LoadVault(stre store.Storer) (*Vault, error) {
 	vault := &Vault{
 		Store:                       stre,
 		TypeMap:                     yttypes.NewTypeMap(),
-		CollectionRegistry:          ycollections.NewCollectionRegistry(),
+		CollectionRegistry:          collections.NewCollectionRegistry(),
 		activeCollections:           make(map[string]CollectionInterface),
 		backgroundMonitoringEnabled: true,
 	}
@@ -226,7 +226,7 @@ func LoadVault(stre store.Storer) (*Vault, error) {
 	if store.IsValidObjectId(metadata.CollectionRegistryObjectId) {
 		registryData, err := store.ReadBytesFromObj(stre, metadata.CollectionRegistryObjectId)
 		if err == nil {
-			loadedRegistry := ycollections.NewCollectionRegistry()
+			loadedRegistry := collections.NewCollectionRegistry()
 			if err := loadedRegistry.Unmarshal(registryData); err == nil {
 				vault.CollectionRegistry = loadedRegistry
 			}

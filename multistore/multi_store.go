@@ -30,6 +30,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"sync"
 
 	"github.com/cbehopkins/bobbob/allocator"
@@ -38,6 +39,42 @@ import (
 	"github.com/cbehopkins/bobbob/store"
 	"github.com/cbehopkins/bobbob/yggdrasil/treap"
 )
+
+// buildComprehensiveBlockSizes creates a complete set of block allocator sizes.
+// It combines:
+// 1. Treap node sizes (predictable fixed sizes for treap internal nodes)
+// 2. Binary growth pattern from 32 to 4096 bytes (covers common allocation ranges)
+//
+// The binary growth pattern ensures efficient block allocation coverage across
+// a wide range of object sizes without gaps that would cause allocation fallthrough
+// to the parent allocator.
+func buildComprehensiveBlockSizes() []int {
+	// Binary growth pattern: 32, 64, 128, 256, 512, 1024, 2048, 4096
+	binaryGrowth := []int{
+		32, 64, 128, 256, 512, 1024, 2048, 4096,
+	}
+
+	// Add treap-specific sizes
+	treapSizes := treap.PersistentTreapObjectSizes()
+
+	// Combine and deduplicate
+	sizeMap := make(map[int]bool)
+	for _, size := range binaryGrowth {
+		sizeMap[size] = true
+	}
+	for _, size := range treapSizes {
+		sizeMap[size] = true
+	}
+
+	// Convert map to sorted slice
+	sizes := make([]int, 0, len(sizeMap))
+	for size := range sizeMap {
+		sizes = append(sizes, size)
+	}
+	sort.Ints(sizes)
+
+	return sizes
+}
 
 const (
 	// DefaultBlockCount is the default number of blocks to allocate per block size
@@ -137,7 +174,7 @@ func NewMultiStore(filePath string, maxDiskTokens int) (*multiStore, error) {
 		return nil, err
 	}
 
-	topAlloc, err := allocator.NewTop(file, treap.PersistentTreapObjectSizes(), DefaultBlockCount)
+	topAlloc, err := allocator.NewTop(file, buildComprehensiveBlockSizes(), DefaultBlockCount)
 	if err != nil {
 		_ = file.Close()
 		return nil, err
@@ -171,7 +208,7 @@ func LoadMultiStore(filePath string, maxDiskTokens int) (*multiStore, error) {
 		return nil, err
 	}
 
-	topAlloc, err := allocator.NewTopFromFile(file, treap.PersistentTreapObjectSizes(), DefaultBlockCount)
+	topAlloc, err := allocator.NewTopFromFile(file, buildComprehensiveBlockSizes(), DefaultBlockCount)
 	if err != nil {
 		_ = file.Close()
 		return nil, err

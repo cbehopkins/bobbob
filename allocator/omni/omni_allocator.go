@@ -363,10 +363,23 @@ func normalizeSizes(sizes []int) []int {
 }
 
 func (o *OmniAllocator) selectBlockSize(size int) (int, bool) {
+	// First try to find an exact fit in configured sizes
 	idx := sort.SearchInts(o.blockSizes, size)
 	if idx < len(o.blockSizes) {
 		return o.blockSizes[idx], true
 	}
+
+	// If no configured size is large enough, only delegate to parent if size
+	// is larger than maxBlockSize. For sizes that fall through the cracks,
+	// dynamically create a block allocator to avoid parent allocations for
+	// small objects. Return true with the requested size as the block size.
+	if len(o.blockSizes) > 0 && size <= o.blockSizes[len(o.blockSizes)-1]*2 {
+		// Size is not more than 2x the largest configured block size,
+		// so we'll create a dynamic block allocator for it
+		return size, true
+	}
+
+	// Size is too large for block allocation, delegate to parent
 	return 0, false
 }
 

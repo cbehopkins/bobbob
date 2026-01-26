@@ -214,6 +214,15 @@ func (t *Top) SetOnAllocate(cb func(types.ObjectId, types.FileOffset, int)) {
 	t.omniAllocator.SetOnAllocate(cb)
 }
 
+// Parent returns the BasicAllocator (parent of OmniAllocator).
+// This allows external code to distinguish between allocations handled by
+// OmniAllocator (small, fixed-size) vs BasicAllocator (large, variable-size).
+func (t *Top) Parent() types.Allocator {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return t.basicAllocator
+}
+
 // Marshal delegates to OmniAllocator.
 func (t *Top) Marshal() ([]byte, error) {
 	t.mu.RLock()

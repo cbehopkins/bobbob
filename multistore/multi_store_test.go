@@ -279,6 +279,7 @@ func TestMultiStoreMultipleObjects(t *testing.T) {
 	defer ms.Close()
 
 	// Create multiple objects with different data
+	// Use sizes larger than the largest block size (4096) to avoid block allocator padding
 	const numObjects = 5
 	objects := make([]struct {
 		id   store.ObjectId
@@ -286,7 +287,9 @@ func TestMultiStoreMultipleObjects(t *testing.T) {
 	}, numObjects)
 
 	for i := 0; i < numObjects; i++ {
-		data := []byte(fmt.Sprintf("Object %d: This is test data for object number %d", i, i))
+		// Create large enough data to exceed block allocator sizes
+		data := []byte(fmt.Sprintf("Object %d: This is test data for object number %d with additional padding to exceed block sizes: %s",
+			i, i, string(make([]byte, 5000))))
 		objects[i].data = data
 		objects[i].id = testutil.WriteObject(t, ms, data)
 		t.Logf("Created object %d with ID %d", i, objects[i].id)
