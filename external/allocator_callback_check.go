@@ -1,7 +1,8 @@
 package external_test
 
 import (
-	"github.com/cbehopkins/bobbob/store/allocator"
+	"github.com/cbehopkins/bobbob/allocator/basic"
+	atypes "github.com/cbehopkins/bobbob/allocator/types"
 	"github.com/cbehopkins/bobbob/yggdrasil/vault"
 )
 
@@ -20,7 +21,7 @@ func ExampleConfigureAllocatorCallbacks(v *vault.Vault) {
 	// The allocator might support callback configuration via a SetOnAllocate method
 	// Type assert to the interface that provides callback configuration
 	type callbackSetter interface {
-		SetOnAllocate(func(allocator.ObjectId, allocator.FileOffset, int))
+		SetOnAllocate(func(atypes.ObjectId, atypes.FileOffset, int))
 	}
 	alloc := v.Allocator()
 	if alloc == nil {
@@ -28,7 +29,7 @@ func ExampleConfigureAllocatorCallbacks(v *vault.Vault) {
 	}
 
 	if setter, ok := alloc.(callbackSetter); ok {
-		setter.SetOnAllocate(func(objId allocator.ObjectId, offset allocator.FileOffset, size int) {
+		setter.SetOnAllocate(func(objId atypes.ObjectId, offset atypes.FileOffset, size int) {
 			// External logging/monitoring logic here
 			_ = objId
 			_ = offset
@@ -38,14 +39,14 @@ func ExampleConfigureAllocatorCallbacks(v *vault.Vault) {
 
 	// The allocator might also provide access to its parent via a Parent() method
 	type parentProvider interface {
-		Parent() allocator.Allocator
+		Parent() atypes.Allocator
 	}
 
 	if provider, ok := alloc.(parentProvider); ok {
 		if parent := provider.Parent(); parent != nil {
 			// Type assert to BasicAllocator to access its SetOnAllocate
-			if basicAlloc, ok := parent.(*allocator.BasicAllocator); ok {
-				basicAlloc.SetOnAllocate(func(objId allocator.ObjectId, offset allocator.FileOffset, size int) {
+			if basicAlloc, ok := parent.(*basic.BasicAllocator); ok {
+				basicAlloc.SetOnAllocate(func(objId atypes.ObjectId, offset atypes.FileOffset, size int) {
 					// External logging/monitoring logic for parent allocations
 					_ = objId
 					_ = offset
@@ -58,6 +59,6 @@ func ExampleConfigureAllocatorCallbacks(v *vault.Vault) {
 
 // Compile-time verification that BasicAllocator.SetOnAllocate is accessible
 // from outside the package. This proves the method is public.
-func _verifyBasicAllocatorSetOnAllocate(a *allocator.BasicAllocator) {
-	a.SetOnAllocate(func(allocator.ObjectId, allocator.FileOffset, int) {})
+func _verifyBasicAllocatorSetOnAllocate(a *basic.BasicAllocator) {
+	a.SetOnAllocate(func(atypes.ObjectId, atypes.FileOffset, int) {})
 }

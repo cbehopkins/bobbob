@@ -32,9 +32,10 @@ import (
 	"os"
 	"sync"
 
+	"github.com/cbehopkins/bobbob/allocator"
+	"github.com/cbehopkins/bobbob/allocator/types"
 	"github.com/cbehopkins/bobbob/internal"
 	"github.com/cbehopkins/bobbob/store"
-	"github.com/cbehopkins/bobbob/store/allocator"
 	"github.com/cbehopkins/bobbob/yggdrasil/treap"
 )
 
@@ -119,9 +120,10 @@ func (dq *deleteQueue) Flush() {
 type multiStore struct {
 	filePath     string
 	file         *os.File
-	allocators   []allocator.Allocator
+	top          *allocator.Top
 	tokenManager *store.DiskTokenManager // nil for unlimited, otherwise limits concurrent disk ops
 	deleteQueue  *deleteQueue
+	lock         sync.RWMutex
 }
 
 // NewMultiStore creates a new multiStore at the given file path.
@@ -130,38 +132,12 @@ type multiStore struct {
 // If maxDiskTokens > 0, limits concurrent disk I/O operations to that count.
 // Pass 0 for unlimited concurrent disk operations.
 func NewMultiStore(filePath string, maxDiskTokens int) (*multiStore, error) {
-	file, err := os.OpenFile(filePath, os.O_RDWR|os.O_CREATE, 0o666)
+	file, err := os.OpenFile(filePath, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0o666)
 	if err != nil {
 		return nil, err
 	}
 
-	// Check if file is new (empty)
-	fileInfo, err := file.Stat()
-	if err != nil {
-		_ = file.Close()
-		return nil, err
-	}
-
-	rootAllocator, err := allocator.NewBasicAllocator(file)
-	if err != nil {
-		_ = file.Close()
-		return nil, err
-	}
-
-	// If new file, reserve first 8 bytes for metadata offset header
-	if fileInfo.Size() == 0 {
-		// Align start of allocatable space with the PrimeTable-sized prefix used across stores
-		rootAllocator.End = int64(store.PrimeObjectStart())
-	}
-
-	blockCount := DefaultBlockCount
-	omniAllocator, err := allocator.NewOmniBlockAllocator(
-		treap.PersistentTreapObjectSizes(),
-		blockCount,
-		rootAllocator,
-		file,
-		allocator.WithoutPreallocation(),
-	)
+	topAlloc, err := allocator.NewTop(file, treap.PersistentTreapObjectSizes(), DefaultBlockCount)
 	if err != nil {
 		_ = file.Close()
 		return nil, err
@@ -170,8 +146,17 @@ func NewMultiStore(filePath string, maxDiskTokens int) (*multiStore, error) {
 	ms := &multiStore{
 		filePath:     filePath,
 		file:         file,
-		allocators:   []allocator.Allocator{rootAllocator, omniAllocator},
+		top:          topAlloc,
 		tokenManager: store.NewDiskTokenManager(maxDiskTokens),
+	}
+
+	// Ensure prime object and metadata exist before first use
+	if ms.top.GetStoreMeta().Sz == 0 {
+		primeSize := treap.PersistentTreapObjectSizes()[0]
+		if _, err := ms.PrimeObject(primeSize); err != nil {
+			_ = file.Close()
+			return nil, err
+		}
 	}
 	ms.deleteQueue = newDeleteQueue(DefaultDeleteQueueBufferSize, ms.deleteObj)
 	return ms, nil
@@ -186,22 +171,7 @@ func LoadMultiStore(filePath string, maxDiskTokens int) (*multiStore, error) {
 		return nil, err
 	}
 
-	// Read metadata offset from header
-	metadataOffset, err := readHeader(file)
-	if err != nil {
-		_ = file.Close()
-		return nil, err
-	}
-
-	// Read and parse metadata
-	omniData, rootData, err := readMetadata(file, metadataOffset)
-	if err != nil {
-		_ = file.Close()
-		return nil, err
-	}
-
-	// Restore allocators (allocations tracked internally by allocators)
-	rootAllocator, omniAllocator, err := unmarshalComponents(rootData, omniData, file)
+	topAlloc, err := allocator.NewTopFromFile(file, treap.PersistentTreapObjectSizes(), DefaultBlockCount)
 	if err != nil {
 		_ = file.Close()
 		return nil, err
@@ -210,7 +180,7 @@ func LoadMultiStore(filePath string, maxDiskTokens int) (*multiStore, error) {
 	ms := &multiStore{
 		filePath:     filePath,
 		file:         file,
-		allocators:   []allocator.Allocator{rootAllocator, omniAllocator},
+		top:          topAlloc,
 		tokenManager: store.NewDiskTokenManager(maxDiskTokens),
 	}
 	ms.deleteQueue = newDeleteQueue(DefaultDeleteQueueBufferSize, ms.deleteObj)
@@ -255,119 +225,18 @@ func LoadConcurrentMultiStore(filePath string, maxDiskTokens int) (store.Storer,
 // Allocator returns the primary allocator (OmniBlockAllocator) backing the multiStore.
 // External callers can use this to attach allocation callbacks and, via Parent(),
 // reach the root BasicAllocator for monitoring.
-func (s *multiStore) Allocator() allocator.Allocator {
-	if len(s.allocators) > 1 {
-		return s.allocators[1]
+func (s *multiStore) Allocator() types.Allocator {
+	if s.top == nil {
+		return nil
 	}
-	if len(s.allocators) == 1 {
-		return s.allocators[0]
-	}
-	return nil
+	return s.top
 }
 
-// readHeader reads the metadata offset from the first 8 bytes of the file.
-func readHeader(file *os.File) (int64, error) {
-	header := make([]byte, 8)
-	_, err := file.ReadAt(header, 0)
-	if err != nil {
-		return 0, err
-	}
-
-	metadataOffset := int64(header[0])<<56 | int64(header[1])<<48 |
-		int64(header[2])<<40 | int64(header[3])<<32 |
-		int64(header[4])<<24 | int64(header[5])<<16 |
-		int64(header[6])<<8 | int64(header[7])
-
-	return metadataOffset, nil
-}
-
-// readMetadata reads and parses the metadata block from the file.
-func readMetadata(file *os.File, metadataOffset int64) (omniData, rootData []byte, err error) {
-	// Read length headers (8 bytes: 2 x 4-byte lengths)
-	lengthHeader := make([]byte, 8)
-	_, err = file.ReadAt(lengthHeader, metadataOffset)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	offset := 0
-	omniLen, offset := readInt32(lengthHeader, offset)
-	rootLen, _ := readInt32(lengthHeader, offset)
-
-	// Read all metadata
-	totalLen := omniLen + rootLen
-	metadata := make([]byte, totalLen)
-	_, err = file.ReadAt(metadata, metadataOffset+8)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	// Extract individual components
-	omniData = metadata[0:omniLen]
-	rootData = metadata[omniLen : omniLen+rootLen]
-
-	return omniData, rootData, nil
-}
-
-// unmarshalComponents deserializes the allocators from their byte representations.
-func unmarshalComponents(rootData, omniData []byte, file *os.File) (*allocator.BasicAllocator, allocator.Allocator, error) {
-	type unmarshaler interface {
-		Unmarshal([]byte) error
-	}
-
-	// Create and unmarshal rootAllocator
-	rootAllocator := allocator.NewEmptyBasicAllocator()
-	rootAllocator.SetFile(file)
-
-	rootUnmarshaler, ok := any(rootAllocator).(unmarshaler)
-	if !ok {
-		return nil, nil, errors.New("rootAllocator does not support unmarshaling")
-	}
-
-	if err := rootUnmarshaler.Unmarshal(rootData); err != nil {
-		return nil, nil, err
-	}
-
-	// Create and unmarshal omniAllocator
-	blockCount := DefaultBlockCount
-	omniAllocator, err := allocator.NewOmniBlockAllocator(
-		treap.PersistentTreapObjectSizes(),
-		blockCount,
-		rootAllocator,
-		file,
-		allocator.WithoutPreallocation(),
-	)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	omniUnmarshaler, ok := any(omniAllocator).(unmarshaler)
-	if !ok {
-		return nil, nil, errors.New("omniAllocator does not support unmarshaling")
-	}
-
-	if err := omniUnmarshaler.Unmarshal(omniData); err != nil {
-		return nil, nil, err
-	}
-
-	return rootAllocator, omniAllocator, nil
-}
-
-// readInt32 reads a 32-bit integer from the buffer at the given offset.
-// Returns the value and the new offset after reading.
-func readInt32(buf []byte, offset int) (int, int) {
-	value := int(buf[offset])<<24 | int(buf[offset+1])<<16 |
-		int(buf[offset+2])<<8 | int(buf[offset+3])
-	return value, offset + 4
-}
+// All legacy metadata marshal/unmarshal helpers removed; allocator.Top handles persistence
 
 // Close closes the multiStore and releases the file handle.
-// It marshals the allocators to the file for persistence.
-// The layout is:
-// - First 8 bytes: offset to metadata object (allocated by root allocator)
-// - Metadata object contains:
-//   - omniAllocator marshaled state
-//   - rootAllocator marshaled state
+// Persistence is delegated to allocator.Top.Save, which writes allocator
+// state and prime table metadata.
 func (s *multiStore) Close() error {
 	if s.deleteQueue != nil {
 		s.deleteQueue.Close()
@@ -376,167 +245,53 @@ func (s *multiStore) Close() error {
 		return nil
 	}
 
-	// Marshal allocators only
-	omniData, rootData, err := s.marshalComponents()
-	if err != nil {
+	// Ensure store metadata is set; use a minimal prime object if needed
+	if s.top.GetStoreMeta().Sz == 0 {
+		primeObjectId := store.ObjectId(store.PrimeObjectStart())
+		if info, err := s.getObjectInfo(primeObjectId); err == nil {
+			s.top.SetStoreMeta(allocator.FileInfo{
+				ObjId: primeObjectId,
+				Fo:    info.Offset,
+				Sz:    types.FileSize(info.Size),
+			})
+		} else {
+			// Allocate a minimal prime object (16 bytes) to satisfy Top.Save requirements
+			if _, err := s.PrimeObject(16); err != nil {
+				return err
+			}
+		}
+	}
+
+	s.lock.Lock()
+	defer s.lock.Unlock()
+
+	if err := s.top.Save(); err != nil {
 		return err
 	}
 
-	// Create combined metadata block
-	metadata := s.buildMetadata(omniData, rootData)
-
-	// Write metadata to file and update header
-	if err := s.writeMetadataToFile(metadata); err != nil {
-		return err
-	}
-
-	// Close file
-	err = s.file.Close()
+	err := s.file.Close()
 	if err != nil {
 		return err
 	}
 	s.file = nil
-
 	return nil
 }
 
-// marshalComponents marshals all store components (allocators only).
-func (s *multiStore) marshalComponents() (omniData, rootData []byte, err error) {
+// All legacy marshal/write helpers removed; allocator.Top.Save handles persistence
 
-	// Marshal omniAllocator
-
-	if omniComplexMarshaler, ok := s.Allocator().(store.MarshalComplex); ok {
-		// MarshalComplex is currently single-object: use MarshalMultiple() output directly.
-		sizes, err := omniComplexMarshaler.PreMarshal()
-		if err != nil {
-			return nil, nil, err
-		}
-		// Expect a single payload size; fall back if empty.
-		var objIds []allocator.ObjectId
-		if len(sizes) > 0 {
-			objIds = []allocator.ObjectId{allocator.ObjectId(1)}
-		} else {
-			objIds = []allocator.ObjectId{allocator.ObjectId(1)}
-		}
-		identityFn, byteFuncs, err := omniComplexMarshaler.MarshalMultiple(objIds)
-		if err != nil {
-			return nil, nil, err
-		}
-		_ = identityFn // identity unused in metadata storage
-		if len(byteFuncs) == 0 {
-			return nil, nil, errors.New("MarshalMultiple returned no payloads")
-		}
-		if len(byteFuncs) != 1 {
-			return nil, nil, errors.New("MarshalMultiple expected single payload")
-		}
-		omniData, err = byteFuncs[0].ByteFunc()
-		if err != nil {
-			return nil, nil, err
-		}
-	} else if omniSimpleMarshaler, ok := s.Allocator().(store.MarshalSimple); ok {
-		omniData, err = omniSimpleMarshaler.Marshal()
-		if err != nil {
-			return nil, nil, err
-		}
-	} else {
-		return nil, nil, errors.New("omniAllocator does not support marshaling")
-	}
-
-	// Marshal rootAllocator
-	rootSimpleMarshaler, ok := s.allocators[0].(store.MarshalSimple)
-	if !ok {
-		return nil, nil, errors.New("rootAllocator does not support marshaling")
-	}
-	rootData, err = rootSimpleMarshaler.Marshal()
-	if err != nil {
-		return nil, nil, err
-	}
-
-	return omniData, rootData, nil
-}
-
-// buildMetadata creates a combined metadata block with length prefixes.
-// Format: [omniLen:4][rootLen:4][omniData][rootData]
-func (s *multiStore) buildMetadata(omniData, rootData []byte) []byte {
-	metadataSize := 8 + len(omniData) + len(rootData)
-	metadata := make([]byte, metadataSize)
-
-	offset := 0
-	// Write omni length
-	offset = writeInt32(metadata, offset, len(omniData))
-	// Write root length
-	offset = writeInt32(metadata, offset, len(rootData))
-
-	// Copy data
-	copy(metadata[offset:], omniData)
-	offset += len(omniData)
-	copy(metadata[offset:], rootData)
-
-	return metadata
-}
-
-// writeMetadataToFile writes the metadata block to the file and updates the header.
-func (s *multiStore) writeMetadataToFile(metadata []byte) error {
-	// Allocate space for metadata using root allocator
-	_, metadataOffset, err := s.allocators[0].Allocate(len(metadata))
-	if err != nil {
-		return err
-	}
-
-	// Write metadata to file
-	_, err = s.file.WriteAt(metadata, int64(metadataOffset))
-	if err != nil {
-		return err
-	}
-
-	// Write metadata offset to first 8 bytes of file
-	return s.writeHeader(metadataOffset)
-}
-
-// writeHeader writes the metadata offset to the first 8 bytes of the file.
-func (s *multiStore) writeHeader(metadataOffset store.FileOffset) error {
-	header := make([]byte, 8)
-	header[0] = byte(metadataOffset >> 56)
-	header[1] = byte(metadataOffset >> 48)
-	header[2] = byte(metadataOffset >> 40)
-	header[3] = byte(metadataOffset >> 32)
-	header[4] = byte(metadataOffset >> 24)
-	header[5] = byte(metadataOffset >> 16)
-	header[6] = byte(metadataOffset >> 8)
-	header[7] = byte(metadataOffset)
-
-	_, err := s.file.WriteAt(header, 0)
-	return err
-}
-
-// writeInt32 writes a 32-bit integer to the buffer at the given offset.
-// Returns the new offset after writing.
-func writeInt32(buf []byte, offset, value int) int {
-	buf[offset] = byte(value >> 24)
-	buf[offset+1] = byte(value >> 16)
-	buf[offset+2] = byte(value >> 8)
-	buf[offset+3] = byte(value)
-	return offset + 4
-}
-
-// getObjectInfo retrieves object metadata using the allocator hierarchy.
-// It queries the OmniBlockAllocator (which will check BlockAllocators and fall back to BasicAllocator).
+// getObjectInfo retrieves object metadata using allocator.Top routing.
 func (s *multiStore) getObjectInfo(objId store.ObjectId) (store.ObjectInfo, error) {
-	type objectInfoGetter interface {
-		GetObjectInfo(store.ObjectId) (store.FileOffset, int, error)
-	}
-
-	allocator, ok := s.allocators[1].(objectInfoGetter)
-	if !ok {
-		return store.ObjectInfo{}, errors.New("allocator does not support GetObjectInfo")
-	}
-
-	offset, size, err := allocator.GetObjectInfo(objId)
+	s.lock.RLock()
+	offset, size, err := s.top.GetObjectInfo(objId)
+	s.lock.RUnlock()
 	if err != nil {
 		return store.ObjectInfo{}, err
 	}
+	if size > types.FileSize(^uint(0)>>1) {
+		return store.ObjectInfo{}, fmt.Errorf("object size %d exceeds int range", size)
+	}
 
-	return store.ObjectInfo{Offset: offset, Size: size}, nil
+	return store.ObjectInfo{Offset: offset, Size: int(size)}, nil
 }
 
 // DeleteObj removes an object from the store and frees its space.
@@ -557,10 +312,9 @@ func (s *multiStore) flushDeletes() {
 	}
 }
 func (s *multiStore) deleteObj(objId store.ObjectId) {
-	// Retrieve object info from allocator
-	// err means not found == nothing to delete
-	objectInfo, _ := s.getObjectInfo(objId)
-	_ = s.allocators[1].Free(objectInfo.Offset, objectInfo.Size)
+	s.lock.Lock()
+	_ = s.top.DeleteObj(objId)
+	s.lock.Unlock()
 }
 
 // PrimeObject returns a dedicated ObjectId for application metadata.
@@ -578,16 +332,18 @@ func (s *multiStore) PrimeObject(size int) (store.ObjectId, error) {
 	// For multiStore, the prime object starts immediately after the PrimeTable
 	primeObjectId := store.ObjectId(store.PrimeObjectStart())
 
+	s.lock.Lock()
+	defer s.lock.Unlock()
+
 	// Check if the prime object already exists using the allocator
-	_, err := s.getObjectInfo(primeObjectId)
+	_, _, err := s.top.GetObjectInfo(primeObjectId)
 	if err == nil {
 		// Object exists
 		return primeObjectId, nil
 	}
 
 	// Allocate the prime object - this should be the very first allocation
-	// Use the omni allocator to avoid ObjectId collisions
-	objId, fileOffset, err := s.allocators[1].Allocate(size)
+	objId, fileOffset, err := s.top.Allocate(size)
 	if err != nil {
 		return internal.ObjNotAllocated, err
 	}
@@ -606,13 +362,21 @@ func (s *multiStore) PrimeObject(size int) (store.ObjectId, error) {
 		return internal.ObjNotAllocated, errors.New("failed to write all bytes for prime object")
 	}
 
+	s.top.SetStoreMeta(allocator.FileInfo{
+		ObjId: primeObjectId,
+		Fo:    fileOffset,
+		Sz:    types.FileSize(size),
+	})
+
 	return primeObjectId, nil
 }
 
 // NewObj allocates a new object of the given size.
 // It uses the block allocator to find space. The allocator records the allocation internally.
 func (s *multiStore) NewObj(size int) (store.ObjectId, error) {
-	objId, _, err := s.allocators[1].Allocate(size)
+	s.lock.Lock()
+	objId, _, err := s.top.Allocate(size)
+	s.lock.Unlock()
 	if err != nil {
 		return internal.ObjNotAllocated, err
 	}
@@ -630,7 +394,10 @@ func (s *multiStore) LateReadObj(id store.ObjectId) (io.Reader, store.Finisher, 
 // The object is allocated from the omni block allocator. The allocator records the allocation internally.
 func (s *multiStore) LateWriteNewObj(size int) (store.ObjectId, io.Writer, store.Finisher, error) {
 	allocateFn := func(size int) (store.ObjectId, store.FileOffset, error) {
-		return s.allocators[1].Allocate(size)
+		s.lock.Lock()
+		objId, fo, err := s.top.Allocate(size)
+		s.lock.Unlock()
+		return objId, fo, err
 	}
 	return store.LateWriteNewWithTokens(s.file, size, allocateFn, s.tokenManager)
 }

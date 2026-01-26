@@ -110,6 +110,16 @@ func (p *PoolAllocator) Allocate(size int) (types.ObjectId, types.FileOffset, er
 	return objId, offset, nil
 }
 
+// NextBlockCount returns the planned block count for the next BlockAllocator created.
+func (p *PoolAllocator) NextBlockCount() int {
+	return p.nextBlockCount
+}
+
+// SetNextBlockCount restores the nextBlockCount cursor (used during unmarshal).
+func (p *PoolAllocator) SetNextBlockCount(count int) {
+	p.nextBlockCount = count
+}
+
 // AllocateRun allocates a contiguous run of blocks.
 // Delegates to a single BlockAllocator for contiguity.
 func (p *PoolAllocator) AllocateRun(size int, count int) ([]types.ObjectId, []types.FileOffset, error) {
@@ -425,4 +435,10 @@ func (p *PoolAllocator) FullAllocators() []*block.BlockAllocator {
 	allocs := make([]*block.BlockAllocator, len(p.full))
 	copy(allocs, p.full)
 	return allocs
+}
+
+// RestoreAllocators replaces the available and full allocator lists.
+func (p *PoolAllocator) RestoreAllocators(available []*block.BlockAllocator, full []*block.BlockAllocator) {
+	p.available = available
+	p.full = full
 }

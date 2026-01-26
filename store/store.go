@@ -59,8 +59,8 @@ import (
 	"errors"
 	"io"
 
+	"github.com/cbehopkins/bobbob/allocator/types"
 	"github.com/cbehopkins/bobbob/internal"
-	"github.com/cbehopkins/bobbob/store/allocator"
 )
 
 // IsValidObjectId reports whether the given ObjectId is valid.
@@ -149,7 +149,7 @@ var ErrAllocateRunUnsupported = errors.New("allocate run unsupported")
 // This enables external consumers (like vault sessions) to configure allocation
 // callbacks without needing direct access to the store implementation type.
 type AllocatorProvider interface {
-	Allocator() allocator.Allocator
+	Allocator() types.Allocator
 }
 
 // Storer is the primary interface for object storage.

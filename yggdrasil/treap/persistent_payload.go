@@ -7,7 +7,6 @@ import (
 
 	"github.com/cbehopkins/bobbob/internal"
 	"github.com/cbehopkins/bobbob/store"
-	"github.com/cbehopkins/bobbob/store/allocator"
 	"github.com/cbehopkins/bobbob/yggdrasil/types"
 )
 
@@ -521,6 +520,13 @@ func (t *PersistentPayloadTreap[K, P]) CompactSuboptimalAllocations() (int, erro
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
+	// TODO: BlockAllocatorCompactor interface not yet ported to new allocator package
+	// This feature requires the new allocator to support detailed BlockAllocator inspection
+	// For now, compaction is disabled until the interface is re-implemented
+	return 0, nil
+
+	// CODE BELOW TEMPORARILY DISABLED - BlockAllocatorCompactor not yet ported
+	/*
 	provider, ok := t.Store.(store.AllocatorProvider)
 	if !ok {
 		return 0, nil
@@ -573,6 +579,7 @@ func (t *PersistentPayloadTreap[K, P]) CompactSuboptimalAllocations() (int, erro
 
 	walk(t.root)
 	return deleted, nil
+	*/
 }
 
 // PayloadNodeInfo contains information about a payload node in memory, including its access timestamp.

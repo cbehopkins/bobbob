@@ -4,7 +4,7 @@ import (
 	"io"
 	"sync"
 
-	"github.com/cbehopkins/bobbob/store/allocator"
+	"github.com/cbehopkins/bobbob/allocator/types"
 )
 
 // concurrentStore wraps any Storer with per-object locking to allow
@@ -240,8 +240,8 @@ func (s *concurrentStore) Close() error {
 // Allocator returns the underlying allocator when the wrapped store exposes it.
 // This allows external callers to configure allocation callbacks through the
 // concurrency wrapper without breaking encapsulation.
-func (s *concurrentStore) Allocator() allocator.Allocator {
-	if provider, ok := s.innerStore.(interface{ Allocator() allocator.Allocator }); ok {
+func (s *concurrentStore) Allocator() types.Allocator {
+	if provider, ok := s.innerStore.(interface{ Allocator() types.Allocator }); ok {
 		return provider.Allocator()
 	}
 	return nil

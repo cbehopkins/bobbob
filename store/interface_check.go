@@ -1,6 +1,9 @@
 package store
 
-import "github.com/cbehopkins/bobbob/store/allocator"
+import (
+	"github.com/cbehopkins/bobbob/allocator/basic"
+	"github.com/cbehopkins/bobbob/allocator/types"
+)
 
 // This file contains compile-time interface compliance checks.
 // If any type doesn't properly implement its intended interface,
@@ -21,5 +24,5 @@ var _ Storer = (*baseStore)(nil)
 // Verify concurrentStore implements Storer
 var _ Storer = (*concurrentStore)(nil)
 
-// Verify BasicAllocator implements Allocator
-var _ allocator.Allocator = (*allocator.BasicAllocator)(nil)
+// Verify BasicAllocator implements types.Allocator
+var _ types.Allocator = (*basic.BasicAllocator)(nil)
