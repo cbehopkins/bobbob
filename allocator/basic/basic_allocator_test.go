@@ -36,8 +36,8 @@ func TestBasicAllocatorNew(t *testing.T) {
 		t.Errorf("Expected file %v, got %v", file, allocator.file)
 	}
 	
-	if len(allocator.objectMap) != 0 {
-		t.Errorf("Expected empty objectMap, got %d entries", len(allocator.objectMap))
+	if allocator.GetObjectCount() != 0 {
+		t.Errorf("Expected empty object tracking, got %d entries", allocator.GetObjectCount())
 	}
 	
 	if allocator.fileLength != 0 {
@@ -78,10 +78,16 @@ func TestBasicAllocatorAllocate(t *testing.T) {
 	}
 	
 	// Check ObjectMap
-	if storedSize, exists := allocator.objectMap[objId]; !exists {
-		t.Error("ObjectId not found in objectMap")
-	} else if storedSize != types.FileSize(size) {
-		t.Errorf("Expected size %d, got %d", size, storedSize)
+	if !allocator.ContainsObjectId(objId) {
+		t.Error("ObjectId not found in object tracking")
+	}
+	
+	offset_check, size_check, _ := allocator.GetObjectInfo(objId)
+	if size_check != types.FileSize(size) {
+		t.Errorf("Expected size %d, got %d", size, size_check)
+	}
+	if offset_check != offset {
+		t.Errorf("Expected offset %d, got %d", offset, offset_check)
 	}
 	
 	// Check file length updated
@@ -125,9 +131,9 @@ func TestBasicAllocatorMultipleAllocations(t *testing.T) {
 		t.Errorf("Expected fileLength %d, got %d", totalSize, allocator.fileLength)
 	}
 	
-	// Check all objects in map
-	if len(allocator.objectMap) != 3 {
-		t.Errorf("Expected 3 objects in map, got %d", len(allocator.objectMap))
+	// Check all objects in tracking
+	if allocator.GetObjectCount() != 3 {
+		t.Errorf("Expected 3 objects in tracking, got %d", allocator.GetObjectCount())
 	}
 }
 
@@ -150,8 +156,8 @@ func TestBasicAllocatorDeleteObj(t *testing.T) {
 		t.Fatalf("DeleteObj failed: %v", err)
 	}
 	
-	// Check removed from map
-	if _, exists := allocator.objectMap[objId1]; exists {
+	// Check removed from tracking
+	if allocator.ContainsObjectId(objId1) {
 		t.Error("ObjectId should not exist after delete")
 	}
 	

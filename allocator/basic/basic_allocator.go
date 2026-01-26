@@ -109,9 +109,9 @@ type BasicAllocator struct {
 	mu         sync.RWMutex
 	file       *os.File
 
-	// ObjectMap: ObjectId/FileOffset -> Size
-	// FIXME - this needs to be disk based for memory overhead reasons
-	objectMap map[types.ObjectId]types.FileSize
+	// objectTracking: tracks object locations and sizes
+	// Uses objectTracker for abstraction layer that allows future optimization
+	objectTracking *objectTracker
 
 	// FreeList: not persisted, reconstructed on load
 	freeList *FreeList
@@ -160,10 +160,10 @@ func New(file *os.File) (*BasicAllocator, error) {
 	}
 
 	return &BasicAllocator{
-		file:       file,
-		objectMap:  make(map[types.ObjectId]types.FileSize),
-		freeList:   NewFreeList(),
-		fileLength: types.FileOffset(stat.Size()),
+		file:           file,
+		objectTracking: newObjectTracker(),
+		freeList:       NewFreeList(),
+		fileLength:     types.FileOffset(stat.Size()),
 	}, nil
 }
 
@@ -192,8 +192,8 @@ func (ba *BasicAllocator) Allocate(size int) (types.ObjectId, types.FileOffset, 
 			ba.freeList.Insert(remainder)
 		}
 
-		// Record in ObjectMap
-		ba.objectMap[objId] = fileSize
+		// Record in object tracking
+		ba.objectTracking.Set(objId, fileSize)
 
 		// Fire callback
 		if ba.onAllocate != nil {
@@ -207,7 +207,7 @@ func (ba *BasicAllocator) Allocate(size int) (types.ObjectId, types.FileOffset, 
 	objId := types.ObjectId(ba.fileLength)
 	offset := ba.fileLength
 
-	ba.objectMap[objId] = fileSize
+	ba.objectTracking.Set(objId, fileSize)
 	ba.fileLength += types.FileOffset(fileSize)
 
 	// Fire callback
@@ -230,29 +230,29 @@ func (ba *BasicAllocator) DeleteObj(objId types.ObjectId) error {
 	ba.mu.Lock()
 	defer ba.mu.Unlock()
 
-	size, exists := ba.objectMap[objId]
+	size, exists := ba.objectTracking.Get(objId)
 	if !exists {
 		return ErrInvalidObjectId
 	}
 
 	offset := types.FileOffset(objId) // ObjectId == FileOffset
 
-	// Remove from ObjectMap
-	delete(ba.objectMap, objId)
+	// Remove from object tracking
+	ba.objectTracking.Delete(objId)
 
 	// Special case: if this is the last object in the file, truncate
 	if offset+types.FileOffset(size) == ba.fileLength {
 		// Find new file length by checking for objects at end
 		newLength := types.FileOffset(0)
 
-		// Scan backwards to find highest allocated object
-		for allocObjId, allocSize := range ba.objectMap {
+		// Scan to find highest allocated object
+		ba.objectTracking.ForEach(func(allocObjId types.ObjectId, allocSize types.FileSize) {
 			allocOffset := types.FileOffset(allocObjId)
 			allocEnd := allocOffset + types.FileOffset(allocSize)
 			if allocEnd > newLength {
 				newLength = allocEnd
 			}
-		}
+		})
 
 		ba.fileLength = newLength
 
@@ -293,7 +293,7 @@ func (ba *BasicAllocator) GetObjectInfo(objId types.ObjectId) (types.FileOffset,
 	ba.mu.RLock()
 	defer ba.mu.RUnlock()
 
-	size, exists := ba.objectMap[objId]
+	size, exists := ba.objectTracking.Get(objId)
 	if !exists {
 		return 0, 0, ErrInvalidObjectId
 	}
@@ -318,8 +318,16 @@ func (ba *BasicAllocator) ContainsObjectId(objId types.ObjectId) bool {
 	ba.mu.RLock()
 	defer ba.mu.RUnlock()
 
-	_, exists := ba.objectMap[objId]
-	return exists
+	return ba.objectTracking.Contains(objId)
+}
+
+// GetObjectCount returns the number of currently tracked objects.
+// Used primarily for testing.
+func (ba *BasicAllocator) GetObjectCount() int {
+	ba.mu.RLock()
+	defer ba.mu.RUnlock()
+
+	return ba.objectTracking.Len()
 }
 
 // SetOnAllocate registers a callback invoked after each allocation.
@@ -331,67 +339,47 @@ func (ba *BasicAllocator) SetOnAllocate(callback func(types.ObjectId, types.File
 }
 
 // Marshal serializes the allocator state to bytes.
-// Format: fileLength (8) | numEntries (4) | [objId (8) | size (8)]...
+// Format: fileLength (8) | objectTracker marshaled data
 // Note: FreeList is NOT persisted - it's reconstructed on load.
 func (ba *BasicAllocator) Marshal() ([]byte, error) {
-	numEntries := uint32(len(ba.objectMap))
-	totalSize := 8 + 4 + (numEntries * 16) // fileLength + count + entries
+	ba.mu.RLock()
+	defer ba.mu.RUnlock()
+
+	// Get marshaled object tracker data
+	trackerData, err := ba.objectTracking.Marshal()
+	if err != nil {
+		return nil, err
+	}
+
+	// Create buffer: fileLength (8) + tracker data
+	totalSize := 8 + len(trackerData)
 	data := make([]byte, totalSize)
 
 	// Write file length
 	binary.LittleEndian.PutUint64(data[0:8], uint64(ba.fileLength))
 
-	// Write entry count
-	binary.LittleEndian.PutUint32(data[8:12], numEntries)
-
-	// Write entries (sorted by ObjectId for deterministic output)
-	objIds := make([]types.ObjectId, 0, len(ba.objectMap))
-	for objId := range ba.objectMap {
-		objIds = append(objIds, objId)
-	}
-	sort.Slice(objIds, func(i, j int) bool {
-		return objIds[i] < objIds[j]
-	})
-
-	offset := 12
-	for _, objId := range objIds {
-		size := ba.objectMap[objId]
-		binary.LittleEndian.PutUint64(data[offset:offset+8], uint64(objId))
-		binary.LittleEndian.PutUint64(data[offset+8:offset+16], uint64(size))
-		offset += 16
-	}
+	// Write tracker data
+	copy(data[8:], trackerData)
 
 	return data, nil
 }
 
 // Unmarshal restores allocator state from bytes and reconstructs FreeList.
 func (ba *BasicAllocator) Unmarshal(data []byte) error {
-	if len(data) < 12 {
+	if len(data) < 8 {
 		return ErrInsufficientData
 	}
 
 	// Read file length
 	ba.fileLength = types.FileOffset(binary.LittleEndian.Uint64(data[0:8]))
 
-	// Read entry count
-	numEntries := binary.LittleEndian.Uint32(data[8:12])
-	expectedSize := 12 + (numEntries * 16)
-
-	if len(data) < int(expectedSize) {
-		return ErrInsufficientData
-	}
-
-	// Clear existing state
-	ba.objectMap = make(map[types.ObjectId]types.FileSize)
+	// Clear freeList
 	ba.freeList = NewFreeList()
 
-	// Restore ObjectMap
-	offset := 12
-	for i := uint32(0); i < numEntries; i++ {
-		objId := types.ObjectId(binary.LittleEndian.Uint64(data[offset : offset+8]))
-		size := types.FileSize(binary.LittleEndian.Uint64(data[offset+8 : offset+16]))
-		ba.objectMap[objId] = size
-		offset += 16
+	// Restore object tracking from remaining data
+	err := ba.objectTracking.Unmarshal(data[8:])
+	if err != nil {
+		return err
 	}
 
 	// Reconstruct FreeList from gaps
@@ -402,7 +390,7 @@ func (ba *BasicAllocator) Unmarshal(data []byte) error {
 
 // reconstructFreeList builds FreeList by finding gaps between allocations.
 func (ba *BasicAllocator) reconstructFreeList() {
-	if len(ba.objectMap) == 0 {
+	if ba.objectTracking.Len() == 0 {
 		// No allocations - entire file is one gap (but we don't track it)
 		return
 	}
@@ -413,13 +401,13 @@ func (ba *BasicAllocator) reconstructFreeList() {
 		size   types.FileSize
 	}
 
-	allocs := make([]allocation, 0, len(ba.objectMap))
-	for objId, size := range ba.objectMap {
+	allocs := make([]allocation, 0, ba.objectTracking.Len())
+	ba.objectTracking.ForEach(func(objId types.ObjectId, size types.FileSize) {
 		allocs = append(allocs, allocation{
 			offset: types.FileOffset(objId), // ObjectId == FileOffset
 			size:   size,
 		})
-	}
+	})
 
 	sort.Slice(allocs, func(i, j int) bool {
 		return allocs[i].offset < allocs[j].offset
@@ -445,7 +433,7 @@ func (ba *BasicAllocator) reconstructFreeList() {
 
 // Stats returns allocation statistics.
 func (ba *BasicAllocator) Stats() (allocated, free, gaps int) {
-	allocated = len(ba.objectMap)
+	allocated = ba.objectTracking.Len()
 	gaps = len(ba.freeList.gaps)
 
 	var freeBytes types.FileSize

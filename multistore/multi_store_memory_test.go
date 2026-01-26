@@ -50,9 +50,8 @@ func TestMultiStoreAllocatorMemoryUsage(t *testing.T) {
 	heapUsed := int64(ms2.Alloc - baselineAlloc)
 
 	// Calculate expected memory usage
-	// With BlockAllocator tracking, memory overhead is minimal:
-	// - BlockAllocator uses ~1 byte per object (bitmap-based)
-	// - Much lower than the old centralized ObjectMap (~48 bytes per object)
+	// BlockAllocator uses bitmap-based tracking (~1 byte per object)
+	// This is significantly more efficient than map-based tracking would be
 	objectCount := int64(numObjects)
 
 	t.Logf("=== MultiStore Memory Analysis (BlockAllocator-Based Tracking) ===")
@@ -64,7 +63,7 @@ func TestMultiStoreAllocatorMemoryUsage(t *testing.T) {
 		float64(heapUsed)/float64(objectCount))
 	t.Logf("")
 
-	// The test should pass because we've eliminated the centralized ObjectMap
+	// The test should pass because BlockAllocator tracking is very memory-efficient
 	if heapUsed > heapCeiling {
 		t.Errorf("Heap usage %d bytes (%.2f MB) exceeds ceiling %d bytes (%.2f MB)",
 			heapUsed, float64(heapUsed)/(1024*1024),

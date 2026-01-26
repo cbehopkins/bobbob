@@ -45,11 +45,11 @@ MultiStore (allocator routing)
         ├── BlockAllocator[160 bytes] (treap+payload)
         └── BlockAllocator[200 bytes] (payload variants)
     ↓
-BaseStore (core I/O and ObjectMap)
+BaseStore (core I/O layer)
     ↓
-File: [Hdr] [BlockMeta] [Block120] [Block160] [Block200] [ObjMap]
+File: [Hdr] [BlockMeta] [Block120] [Block160] [Block200]
        ^
-       Metadata tracking
+       Allocator state tracking
 
 Characteristics:
 - Optimized allocation for treap-heavy workloads

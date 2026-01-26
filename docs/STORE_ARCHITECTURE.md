@@ -283,7 +283,7 @@ cs, _ := store.NewConcurrentStore(path, 4)  // Wraps BasicStore
 ## Summary
 
 The ideal architecture is:
-1. **baseStore**: File I/O, basic allocation, ObjectMap tracking
+1. **baseStore**: File I/O, basic allocation, allocator delegation
 2. **multiStore**: Multi-allocator routing, wraps baseStore
 3. **concurrentStore**: Locking layer, wraps any Storer (baseStore, multiStore, etc.)
 
