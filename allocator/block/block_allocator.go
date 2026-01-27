@@ -32,6 +32,9 @@ type BlockAllocator struct {
 	// Optimization: track if all blocks are allocated
 	allAllocated bool
 
+	// Track remaining free blocks to avoid rescanning the bitmap on every allocation check
+	freeCount int
+
 	// Optional callback fired on each allocation
 	onAllocate func(types.ObjectId, types.FileOffset, int)
 }
@@ -47,6 +50,7 @@ func New(blockSize, blockCount int, startingFileOffset types.FileOffset, startin
 		file:               file,
 		allocatedBitmap:    make([]bool, blockCount),
 		allAllocated:       false,
+		freeCount:          blockCount,
 	}
 }
 
@@ -65,6 +69,7 @@ func (a *BlockAllocator) Allocate(size int) (types.ObjectId, types.FileOffset, e
 	for i, allocated := range a.allocatedBitmap {
 		if !allocated {
 			a.allocatedBitmap[i] = true
+			a.freeCount--
 
 			objId := a.startingObjectId + types.ObjectId(i)
 			offset := a.startingFileOffset + types.FileOffset(i*a.blockSize)
@@ -72,6 +77,11 @@ func (a *BlockAllocator) Allocate(size int) (types.ObjectId, types.FileOffset, e
 			// Fire callback if registered
 			if a.onAllocate != nil {
 				a.onAllocate(objId, offset, size)
+			}
+
+			// If we just allocated the last slot, mark as full
+			if a.freeCount == 0 {
+				a.allAllocated = true
 			}
 
 			return objId, offset, nil
@@ -92,6 +102,10 @@ func (a *BlockAllocator) AllocateRun(size int, count int) ([]types.ObjectId, []t
 	}
 	if count <= 0 {
 		return nil, nil, ErrInvalidCount
+	}
+
+	if a.allAllocated {
+		return []types.ObjectId{}, []types.FileOffset{}, nil
 	}
 
 	// Find longest contiguous run up to min(count, blockCount)
@@ -145,6 +159,7 @@ func (a *BlockAllocator) AllocateRun(size int, count int) ([]types.ObjectId, []t
 	for j := 0; j < bestLength; j++ {
 		idx := bestStart + j
 		a.allocatedBitmap[idx] = true
+		a.freeCount--
 
 		objIds[j] = a.startingObjectId + types.ObjectId(idx)
 		offsets[j] = a.startingFileOffset + types.FileOffset(idx*a.blockSize)
@@ -153,6 +168,11 @@ func (a *BlockAllocator) AllocateRun(size int, count int) ([]types.ObjectId, []t
 		if a.onAllocate != nil {
 			a.onAllocate(objIds[j], offsets[j], size)
 		}
+	}
+
+	// If no free blocks remain, mark allocator as full
+	if a.freeCount == 0 {
+		a.allAllocated = true
 	}
 
 	return objIds, offsets, nil
@@ -174,6 +194,7 @@ func (a *BlockAllocator) DeleteObj(objId types.ObjectId) error {
 	}
 
 	a.allocatedBitmap[slot] = false
+	a.freeCount++
 	a.allAllocated = false
 
 	return nil
@@ -259,14 +280,15 @@ func (a *BlockAllocator) Unmarshal(data []byte) error {
 		a.allocatedBitmap[i] = (data[8+i/8] & (1 << (i % 8))) != 0
 	}
 
-	// Recompute allAllocated flag
-	a.allAllocated = true
+	// Recompute freeCount and allAllocated flag
+	free := 0
 	for _, allocated := range a.allocatedBitmap {
 		if !allocated {
-			a.allAllocated = false
-			break
+			free++
 		}
 	}
+	a.freeCount = free
+	a.allAllocated = (free == 0)
 
 	return nil
 }
@@ -305,14 +327,9 @@ func (a *BlockAllocator) BaseFileOffset() types.FileOffset {
 
 // Stats returns allocation statistics for monitoring.
 func (a *BlockAllocator) Stats() (allocated, free, total int) {
-	allocated = 0
-	for _, alloc := range a.allocatedBitmap {
-		if alloc {
-			allocated++
-		}
-	}
+	free = a.freeCount
+	allocated = a.blockCount - free
 	total = a.blockCount
-	free = total - allocated
 	return
 }
 

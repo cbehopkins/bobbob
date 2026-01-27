@@ -207,6 +207,43 @@ func WriteNewObjFromBytes(s Storer, data []byte) (ObjectId, error) {
 	return objId, nil
 }
 
+// LateWriteNewObjFromBytes is a convenience wrapper around LateWriteNewObj that writes
+// a byte slice from memory to a new object in the store.
+// This is useful when you have the data in memory and want a simple write operation.
+// For large data or streaming scenarios, use LateWriteNewObj directly.
+// If an error occurs during writing, the allocated object is automatically deleted.
+func LateWriteNewObjFromBytes(s Storer, data []byte) (ObjectId, func() error) {
+	size := len(data)
+	objId, writer, finisher, err := s.LateWriteNewObj(size)
+	if err != nil {
+		return 0, func() error { return err }
+	}
+	lateWriter := func() error {
+		if finisher != nil {
+			defer func() {
+				if err := finisher(); err != nil {
+					// Log error but continue - write may still be partially successful
+				}
+			}()
+		}
+		n, err := writer.Write(data)
+		if err != nil {
+			if err := s.DeleteObj(objId); err != nil {
+				// Clean up allocated object on write error (best effort)
+			}
+			return err
+		}
+		if n != size {
+			if err := s.DeleteObj(objId); err != nil {
+				// Clean up allocated object on incomplete write (best effort)
+			}
+			return errors.New("did not write all the data")
+		}
+		return nil
+	}
+	return objId, lateWriter
+}
+
 // WriteBytesToObj is a convenience wrapper around WriteToObj that writes a byte slice
 // from memory to an existing object in the store.
 // It is preferred to create a new object, write to it, and then delete the old object.

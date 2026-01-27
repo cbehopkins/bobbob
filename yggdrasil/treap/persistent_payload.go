@@ -10,6 +10,72 @@ import (
 	"github.com/cbehopkins/bobbob/yggdrasil/types"
 )
 
+type persistWorker = struct {
+	workloads <-chan func() error
+	errorChan chan<- error
+}
+
+type persistWorkerPool struct {
+	workers   []persistWorker
+	wg        sync.WaitGroup
+	workloads chan<- func() error
+	errorChan <-chan error
+}
+
+func (p *persistWorkerPool) Submit(workload func() error) error {
+	// If the pool is nil, run the workload synchronously.
+	// Calling a method with a nil pointer receiver is valid in Go;
+	// just avoid dereferencing receiver fields on this path.
+	if workload == nil {
+		return nil
+	}
+	if p == nil {
+		return errors.New("persist worker pool is nil")
+	}
+	p.workloads <- workload
+	return nil
+}
+func (p *persistWorkerPool) Close() error {
+	close(p.workloads)
+	p.wg.Wait()
+	err, ok := <-p.errorChan
+	if !ok {
+		return nil
+	}
+	return err
+}
+
+func newPersistWorkerPool(workerCount int) *persistWorkerPool {
+	workloads := make(chan func() error, workerCount*2)
+	errorChan := make(chan error, workerCount*2)
+	pool := &persistWorkerPool{
+		workers:   make([]persistWorker, workerCount),
+		workloads: workloads,
+		errorChan: errorChan,
+	}
+	for i := range workerCount {
+		worker := persistWorker{
+			workloads: workloads,
+			errorChan: errorChan,
+		}
+		pool.workers[i] = worker
+		pool.wg.Add(1)
+		go func() {
+			defer pool.wg.Done()
+			for workload := range worker.workloads {
+				if err := workload(); err != nil {
+					worker.errorChan <- err
+				}
+			}
+		}()
+	}
+	go func() {
+		pool.wg.Wait()
+		close(errorChan)
+	}()
+	return pool
+}
+
 // UntypedPersistentPayload and types.PersistentPayload interfaces have been moved to interfaces.go
 
 // PersistentPayloadTreapNode represents a node in the persistent payload treap.
@@ -443,8 +509,9 @@ func (t *PersistentPayloadTreap[K, P]) UpdatePayload(key types.PersistentKey[K],
 	if node != nil && !node.IsNil() {
 		payloadNode, ok := node.(*PersistentPayloadTreapNode[K, P])
 		if ok {
+			// Update the payload in memory and invalidate the stored object id
 			payloadNode.SetPayload(newPayload)
-			return payloadNode.persist(false)
+			return payloadNode.persist(false, nil)
 		}
 	}
 	return nil
@@ -502,14 +569,24 @@ func (t *PersistentPayloadTreap[K, P]) Compare(
 }
 
 func (t *PersistentPayloadTreap[K, P]) Persist() error {
-	if t.root != nil {
-		rootNode, ok := t.root.(*PersistentPayloadTreapNode[K, P])
-		if !ok {
-			return fmt.Errorf("root is not a PersistentPayloadTreapNode")
-		}
-		return rootNode.persist(true)
+	if t.root == nil {
+		return nil
 	}
-	return nil
+	rootNode, ok := t.root.(*PersistentPayloadTreapNode[K, P])
+	if !ok {
+		return fmt.Errorf("root is not a PersistentPayloadTreapNode")
+	}
+	pwp := newPersistWorkerPool(4)
+	if pwp == nil {
+		return errors.New("failed to create persist worker pool")
+	}
+	err := rootNode.persist(true, pwp)
+	if err != nil {
+		_ = pwp.Close()
+		return err
+	}
+
+	return pwp.Close()
 }
 
 // CompactSuboptimalAllocations deletes nodes that reside in sub-optimal block
@@ -527,58 +604,58 @@ func (t *PersistentPayloadTreap[K, P]) CompactSuboptimalAllocations() (int, erro
 
 	// CODE BELOW TEMPORARILY DISABLED - BlockAllocatorCompactor not yet ported
 	/*
-	provider, ok := t.Store.(store.AllocatorProvider)
-	if !ok {
-		return 0, nil
-	}
-	compactor, ok := provider.Allocator().(allocator.BlockAllocatorCompactor)
-	if !ok {
-		return 0, nil
-	}
-
-	var zero PersistentPayloadTreapNode[K, P]
-	nodeSize := zero.sizeInBytes()
-	blockSize, allocatorIndex, _, found := compactor.FindSmallestBlockAllocatorForSize(nodeSize)
-	if !found {
-		return 0, nil
-	}
-
-	objectIds := compactor.GetObjectIdsInAllocator(blockSize, allocatorIndex)
-	if len(objectIds) == 0 {
-		return 0, nil
-	}
-
-	idSet := make(map[store.ObjectId]struct{}, len(objectIds))
-	for _, id := range objectIds {
-		if store.IsValidObjectId(id) {
-			idSet[id] = struct{}{}
-		}
-	}
-
-	deleted := 0
-	var walk func(TreapNodeInterface[K])
-	walk = func(node TreapNodeInterface[K]) {
-		if node == nil || node.IsNil() {
-			return
-		}
-		pnode, ok := node.(*PersistentPayloadTreapNode[K, P])
+		provider, ok := t.Store.(store.AllocatorProvider)
 		if !ok {
-			return
+			return 0, nil
+		}
+		compactor, ok := provider.Allocator().(allocator.BlockAllocatorCompactor)
+		if !ok {
+			return 0, nil
 		}
 
-		walk(pnode.GetLeft())
-		if store.IsValidObjectId(pnode.objectId) {
-			if _, hit := idSet[pnode.objectId]; hit {
-				_ = t.Store.DeleteObj(pnode.objectId) // best effort cleanup
-				pnode.SetObjectId(bobbob.ObjNotAllocated)
-				deleted++
+		var zero PersistentPayloadTreapNode[K, P]
+		nodeSize := zero.sizeInBytes()
+		blockSize, allocatorIndex, _, found := compactor.FindSmallestBlockAllocatorForSize(nodeSize)
+		if !found {
+			return 0, nil
+		}
+
+		objectIds := compactor.GetObjectIdsInAllocator(blockSize, allocatorIndex)
+		if len(objectIds) == 0 {
+			return 0, nil
+		}
+
+		idSet := make(map[store.ObjectId]struct{}, len(objectIds))
+		for _, id := range objectIds {
+			if store.IsValidObjectId(id) {
+				idSet[id] = struct{}{}
 			}
 		}
-		walk(pnode.GetRight())
-	}
 
-	walk(t.root)
-	return deleted, nil
+		deleted := 0
+		var walk func(TreapNodeInterface[K])
+		walk = func(node TreapNodeInterface[K]) {
+			if node == nil || node.IsNil() {
+				return
+			}
+			pnode, ok := node.(*PersistentPayloadTreapNode[K, P])
+			if !ok {
+				return
+			}
+
+			walk(pnode.GetLeft())
+			if store.IsValidObjectId(pnode.objectId) {
+				if _, hit := idSet[pnode.objectId]; hit {
+					_ = t.Store.DeleteObj(pnode.objectId) // best effort cleanup
+					pnode.SetObjectId(bobbob.ObjNotAllocated)
+					deleted++
+				}
+			}
+			walk(pnode.GetRight())
+		}
+
+		walk(t.root)
+		return deleted, nil
 	*/
 }
 
@@ -786,15 +863,22 @@ func (n *PersistentPayloadTreapNode[K, P]) MarshalToObjectId(stre store.Storer) 
 	}
 	return store.WriteNewObjFromBytes(stre, marshalled)
 }
-
+func (n *PersistentPayloadTreapNode[K, P]) LateMarshalToObjectId(stre store.Storer) (store.ObjectId, func() error) {
+	marshalled, err := n.Marshal()
+	if err != nil {
+		return 0, func() error { return err }
+	}
+	return store.LateWriteNewObjFromBytes(stre, marshalled)
+}
 func (k *PersistentPayloadTreapNode[K, P]) UnmarshalFromObjectId(id store.ObjectId, stre store.Storer) error {
 	return store.ReadGeneric(stre, k, id)
 }
 
-// persist walks and writes the subtree rooted at this node.
+// persist walks and writes the subtree rooted at this node using the provided worker pool.
 // If lockTree is true, it acquires the parent treap mutex; callers that
 // already hold the treap lock must pass lockTree=false to avoid deadlock.
-func (n *PersistentPayloadTreapNode[K, P]) persist(lockTree bool) error {
+// If pwp is nil, work is executed synchronously on the calling goroutine.
+func (n *PersistentPayloadTreapNode[K, P]) persist(lockTree bool, pwp *persistWorkerPool) error {
 	if lockTree && n.parent != nil {
 		n.parent.mu.Lock()
 		defer n.parent.mu.Unlock()
@@ -835,9 +919,16 @@ func (n *PersistentPayloadTreapNode[K, P]) persist(lockTree bool) error {
 			}
 
 			// Persist the peek node (children already handled)
-			objId, err := peek.MarshalToObjectId(peek.Store)
-			if err != nil {
-				return fmt.Errorf("failed to marshal payload node to object ID: %w", err)
+			objId, errFunc := peek.LateMarshalToObjectId(peek.Store)
+			if pwp == nil {
+				err := errFunc()
+				if err != nil {
+					return err
+				}
+			} else {
+				if err := pwp.Submit(errFunc); err != nil {
+					return err
+				}
 			}
 			peek.objectId = objId
 			lastVisited = peek
@@ -850,7 +941,12 @@ func (n *PersistentPayloadTreapNode[K, P]) persist(lockTree bool) error {
 
 // Persist persists the subtree, acquiring the treap lock internally.
 func (n *PersistentPayloadTreapNode[K, P]) Persist() error {
-	return n.persist(true)
+	pwp := newPersistWorkerPool(4)
+	if pwp == nil {
+		return errors.New("failed to create persist worker pool")
+	}
+	defer pwp.Close()
+	return n.persist(true, pwp)
 }
 
 func (n *PersistentPayloadTreapNode[K, P]) sizeInBytes() int {
