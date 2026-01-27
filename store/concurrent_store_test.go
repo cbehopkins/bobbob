@@ -539,23 +539,54 @@ func TestConcurrentStoreLookupObjectMutex(t *testing.T) {
 
 	objId := ObjectId(42)
 
-	// First lookup creates the mutex
-	mutex1 := cs.lookupObjectMutex(objId)
-	if mutex1 == nil {
-		t.Fatal("expected non-nil mutex")
+	// First acquire creates the lock
+	lock1 := cs.acquireObjectLock(objId)
+	if lock1 == nil {
+		t.Fatal("expected non-nil lock")
+	}
+	if lock1.refCount.Load() != 1 {
+		t.Errorf("expected refCount=1, got %d", lock1.refCount.Load())
 	}
 
-	// Second lookup returns the same mutex
-	mutex2 := cs.lookupObjectMutex(objId)
-	if mutex2 != mutex1 {
-		t.Error("expected same mutex instance")
+	// Second acquire returns the same lock (while ref count > 0)
+	lock2 := cs.acquireObjectLock(objId)
+	if lock2 != lock1 {
+		t.Error("expected same lock instance while in use")
+	}
+	if lock2.refCount.Load() != 2 {
+		t.Errorf("expected refCount=2, got %d", lock2.refCount.Load())
 	}
 
-	// Different object gets different mutex
-	mutex3 := cs.lookupObjectMutex(ObjectId(99))
-	if mutex3 == mutex1 {
-		t.Error("expected different mutex for different object")
+	// Release both references
+	cs.releaseObjectLock(objId, lock1)
+	cs.releaseObjectLock(objId, lock2)
+
+	// Lock should be removed from map after all references released
+	cs.lock.RLock()
+	_, stillInMap := cs.lockMap[objId]
+	cs.lock.RUnlock()
+	if stillInMap {
+		t.Error("expected lock to be removed from map after all references released")
 	}
+
+	// After removal, next acquire gets a lock (may be pooled, that's fine)
+	lock3 := cs.acquireObjectLock(objId)
+	if lock3 == nil {
+		t.Fatal("expected non-nil lock on re-acquire")
+	}
+	if lock3.refCount.Load() != 1 {
+		t.Errorf("expected refCount=1 on new acquire, got %d", lock3.refCount.Load())
+	}
+	cs.releaseObjectLock(objId, lock3)
+
+	// Different object gets different lock (while both are in the map)
+	lock4 := cs.acquireObjectLock(ObjectId(99))
+	lock5 := cs.acquireObjectLock(objId)
+	if lock4 == lock5 {
+		t.Error("expected different lock instances for different objects")
+	}
+	cs.releaseObjectLock(ObjectId(99), lock4)
+	cs.releaseObjectLock(objId, lock5)
 }
 
 func TestConcurrentStoreFinisherUnlocksCorrectly(t *testing.T) {
