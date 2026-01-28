@@ -809,9 +809,13 @@ func (t *PersistentTreap[T]) Compare(
 // Iter returns an in-order iterator over the persistent treap using the Go iterator protocol.
 // It respects context cancellation and surfaces iteration errors via Seq2.
 func (t *PersistentTreap[T]) Iter(ctx context.Context) iter.Seq2[TreapNodeInterface[T], error] {
+	// Capture iteration mode and root state immediately while it's safe to access.
+	// This is important because when Iter() is called from Compare(), which holds RLock,
+	// the returned function will be executed in a separate goroutine without the lock.
+	mode := t.getIterationMode()
+	root := t.root
+	
 	return func(yield func(TreapNodeInterface[T], error) bool) {
-		mode := t.getIterationMode()
-
 		callback := func(node TreapNodeInterface[T]) error {
 			select {
 			case <-ctx.Done():
@@ -828,9 +832,9 @@ func (t *PersistentTreap[T]) Iter(ctx context.Context) iter.Seq2[TreapNodeInterf
 		var err error
 		switch mode {
 		case IterateInMemoryOnly:
-			err = t.iterateInMemory(t.root, callback)
+			err = t.iterateInMemory(root, callback)
 		case IterateOnDiskTransient:
-			rootNode, ok := t.root.(PersistentTreapNodeInterface[T])
+			rootNode, ok := root.(PersistentTreapNodeInterface[T])
 			if !ok {
 				err = fmt.Errorf("root is not a PersistentTreapNode")
 				break
@@ -841,12 +845,12 @@ func (t *PersistentTreap[T]) Iter(ctx context.Context) iter.Seq2[TreapNodeInterf
 				break
 			}
 			if !store.IsValidObjectId(objId) {
-				err = t.iterateInMemory(t.root, callback)
+				err = t.iterateInMemory(root, callback)
 				break
 			}
 			err = t.iterateOnDiskTransient(objId, callback)
 		case IterateOnDiskAndLoad:
-			rootNode, ok := t.root.(PersistentTreapNodeInterface[T])
+			rootNode, ok := root.(PersistentTreapNodeInterface[T])
 			if !ok {
 				err = fmt.Errorf("root is not a PersistentTreapNode")
 				break
@@ -857,7 +861,7 @@ func (t *PersistentTreap[T]) Iter(ctx context.Context) iter.Seq2[TreapNodeInterf
 				break
 			}
 			if !store.IsValidObjectId(objId) {
-				err = t.iterateInMemory(t.root, callback)
+				err = t.iterateInMemory(root, callback)
 				break
 			}
 			err = t.iterateOnDiskAndLoad(objId, callback)
@@ -876,32 +880,11 @@ func (t *PersistentTreap[T]) Iter(ctx context.Context) iter.Seq2[TreapNodeInterf
 }
 
 // getIterationMode determines which iteration mode to use for this tree.
-// If nodes are cached in memory, use in-memory iteration.
-// If the tree has been persisted, use transient disk iteration.
-// Otherwise fall back to in-memory iteration for unpersisted trees.
+// For now, always use in-memory iteration to avoid complexity with locking
+// and disk access during Compare operations.
+// TODO: Re-enable disk iteration optimization once we can safely handle it with Compare.
 func (t *PersistentTreap[T]) getIterationMode() IterationMode {
-	if t.root == nil {
-		return IterateInMemoryOnly
-	}
-
-	// Check if we have in-memory nodes
-	inMemoryCount := t.countInMemoryNodes(t.root)
-	if inMemoryCount > 0 {
-		return IterateInMemoryOnly
-	}
-
-	// No in-memory nodes, but check if the root has been persisted
-	rootNode, ok := t.root.(*PersistentTreapNode[T])
-	if !ok {
-		return IterateInMemoryOnly
-	}
-	objId, err := rootNode.ObjectId()
-	if err != nil || !store.IsValidObjectId(objId) {
-		return IterateInMemoryOnly
-	}
-
-	// Use transient disk iteration for persisted trees without in-memory nodes
-	return IterateOnDiskTransient
+	return IterateInMemoryOnly
 }
 
 // Persist persists the entire treap to the store.

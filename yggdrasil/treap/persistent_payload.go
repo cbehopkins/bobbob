@@ -198,6 +198,8 @@ func (n *PersistentPayloadTreapNode[K, P]) Marshal() ([]byte, error) {
 		return nil, fmt.Errorf("failed to marshal base treap node: %w", err)
 	}
 
+	// FIXME Could we late marshal here???
+	// e.g. what happens if payload is a string?
 	payloadData, err := n.payload.Marshal()
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal payload: %w", err)
@@ -570,8 +572,6 @@ func (t *PersistentPayloadTreap[K, P]) Compare(
 }
 
 func (t *PersistentPayloadTreap[K, P]) Persist() error {
-	// FIXME: Payloads may support Lazy Writing - we should encourage this by supporting it here and
-	// delegating to the workers
 	if t.root == nil {
 		return nil
 	}
@@ -982,4 +982,86 @@ func (t *PersistentPayloadTreap[K, P]) Unmarshal(data []byte) (types.UntypedPers
 	}
 	t.root = root
 	return t, nil
+}
+
+// iterateOnDiskTransient loads payload nodes transiently via object IDs without caching.
+// This overrides the base PersistentTreap method to ensure we load PersistentPayloadTreapNodes.
+func (t *PersistentPayloadTreap[K, P]) iterateOnDiskTransient(rootObjId store.ObjectId, callback IterationCallback[K]) error {
+	if !store.IsValidObjectId(rootObjId) {
+		return nil
+	}
+
+	// Stack for in-order traversal: (objId, state)
+	// state: 0=enter, 1=visiting node, 2=exit right
+	type stackFrame struct {
+		objId store.ObjectId
+		state int
+	}
+
+	stack := []stackFrame{{objId: rootObjId, state: 0}}
+
+	for len(stack) > 0 {
+		frame := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+
+		if !store.IsValidObjectId(frame.objId) {
+			continue
+		}
+
+		// Load payload node transiently
+		node, err := NewPayloadFromObjectId[K, P](frame.objId, &t.PersistentTreap, t.Store)
+		if err != nil {
+			return fmt.Errorf("failed to load payload node from disk (objId=%d): %w", frame.objId, err)
+		}
+
+		switch frame.state {
+		case 0: // Enter: push right, visit node, push left
+			if store.IsValidObjectId(node.rightObjectId) {
+				stack = append(stack, stackFrame{objId: node.rightObjectId, state: 0})
+			}
+			stack = append(stack, stackFrame{objId: frame.objId, state: 1})
+			if store.IsValidObjectId(node.leftObjectId) {
+				stack = append(stack, stackFrame{objId: node.leftObjectId, state: 0})
+			}
+
+		case 1: // Visit node
+			if err := callback(node); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+// iterateOnDiskAndLoad loads payload nodes and retains them in the in-memory tree.
+// This overrides the base PersistentTreap method to ensure we load PersistentPayloadTreapNodes.
+func (t *PersistentPayloadTreap[K, P]) iterateOnDiskAndLoad(objId store.ObjectId, callback IterationCallback[K]) error {
+	if !store.IsValidObjectId(objId) {
+		return nil
+	}
+
+	node, err := NewPayloadFromObjectId[K, P](objId, &t.PersistentTreap, t.Store)
+	if err != nil {
+		return fmt.Errorf("failed to load payload node from disk (objId=%d): %w", objId, err)
+	}
+
+	// In-order: left, node, right
+	if store.IsValidObjectId(node.leftObjectId) {
+		if err := t.iterateOnDiskAndLoad(node.leftObjectId, callback); err != nil {
+			return err
+		}
+	}
+
+	if err := callback(node); err != nil {
+		return err
+	}
+
+	if store.IsValidObjectId(node.rightObjectId) {
+		if err := t.iterateOnDiskAndLoad(node.rightObjectId, callback); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
