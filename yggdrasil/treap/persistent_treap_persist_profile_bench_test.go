@@ -1,6 +1,8 @@
 package treap_test
 
 import (
+	"encoding/binary"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"runtime"
@@ -10,6 +12,33 @@ import (
 	"github.com/cbehopkins/bobbob/yggdrasil/treap"
 	"github.com/cbehopkins/bobbob/yggdrasil/types"
 )
+
+// fixedPayload is a simple constant-size payload for persistence benchmarks.
+type fixedPayload struct {
+	A uint64
+	B uint64
+}
+
+func (p fixedPayload) Marshal() ([]byte, error) {
+	buf := make([]byte, 16)
+	binary.LittleEndian.PutUint64(buf[0:8], p.A)
+	binary.LittleEndian.PutUint64(buf[8:16], p.B)
+	return buf, nil
+}
+
+func (p fixedPayload) Unmarshal(data []byte) (types.UntypedPersistentPayload, error) {
+	if len(data) < 16 {
+		return nil, errors.New("insufficient data for payload")
+	}
+	return fixedPayload{
+		A: binary.LittleEndian.Uint64(data[0:8]),
+		B: binary.LittleEndian.Uint64(data[8:16]),
+	}, nil
+}
+
+func (p fixedPayload) SizeInBytes() int {
+	return 16
+}
 
 // BenchmarkPersistLargeTrees benchmarks the Persist operation on large trees
 // to identify bottlenecks, particularly in AllocatorIndex.Get() operations.
@@ -131,123 +160,6 @@ func BenchmarkPersistLargeTreesWithPayload(b *testing.B) {
 			}
 		})
 	}
-}
-
-// BenchmarkBatchPersistVsRegularPersist compares BatchPersist with regular Persist
-// to understand the performance difference and validate that the bottleneck is in Get().
-func BenchmarkBatchPersistVsRegularPersist(b *testing.B) {
-	nodeCounts := []int{10000, 50000, 100000}
-
-	for _, nodeCount := range nodeCounts {
-		b.Run(fmt.Sprintf("Regular_Persist/nodes=%d", nodeCount), func(b *testing.B) {
-			ms, err := collections.NewMultiStore(filepath.Join(b.TempDir(), "regular_persist.bin"), 0)
-			if err != nil {
-				b.Fatalf("failed to create multistore: %v", err)
-			}
-			defer ms.Close()
-
-			var keyTemplate *types.IntKey = (*types.IntKey)(new(int32))
-
-			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
-				b.StopTimer()
-				pt := treap.NewPersistentTreap[types.IntKey](types.IntLess, keyTemplate, ms)
-				for j := 0; j < nodeCount; j++ {
-					key := (*types.IntKey)(new(int32))
-					*key = types.IntKey(j)
-					pt.Insert(key)
-				}
-				b.StartTimer()
-
-				if err := pt.Persist(); err != nil {
-					b.Fatalf("Persist failed: %v", err)
-				}
-			}
-		})
-
-		b.Run(fmt.Sprintf("Batch_Persist/nodes=%d", nodeCount), func(b *testing.B) {
-			ms, err := collections.NewMultiStore(filepath.Join(b.TempDir(), "batch_persist.bin"), 0)
-			if err != nil {
-				b.Fatalf("failed to create multistore: %v", err)
-			}
-			defer ms.Close()
-
-			var keyTemplate *types.IntKey = (*types.IntKey)(new(int32))
-
-			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
-				b.StopTimer()
-				pt := treap.NewPersistentTreap[types.IntKey](types.IntLess, keyTemplate, ms)
-				for j := 0; j < nodeCount; j++ {
-					key := (*types.IntKey)(new(int32))
-					*key = types.IntKey(j)
-					pt.Insert(key)
-				}
-				b.StartTimer()
-
-				if err := pt.BatchPersist(); err != nil {
-					b.Fatalf("BatchPersist failed: %v", err)
-				}
-			}
-		})
-	}
-}
-
-// BenchmarkBatchPersistVsRegularPersist_Old is the old single-size test (kept for backward compat)
-func BenchmarkBatchPersistVsRegularPersist_Old(b *testing.B) {
-	nodeCount := 10000
-
-	b.Run("Regular_Persist", func(b *testing.B) {
-		ms, err := collections.NewMultiStore(filepath.Join(b.TempDir(), "regular_persist.bin"), 0)
-		if err != nil {
-			b.Fatalf("failed to create multistore: %v", err)
-		}
-		defer ms.Close()
-
-		var keyTemplate *types.IntKey = (*types.IntKey)(new(int32))
-
-		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
-			b.StopTimer()
-			pt := treap.NewPersistentTreap[types.IntKey](types.IntLess, keyTemplate, ms)
-			for j := 0; j < nodeCount; j++ {
-				key := (*types.IntKey)(new(int32))
-				*key = types.IntKey(j)
-				pt.Insert(key)
-			}
-			b.StartTimer()
-
-			if err := pt.Persist(); err != nil {
-				b.Fatalf("Persist failed: %v", err)
-			}
-		}
-	})
-
-	b.Run("Batch_Persist", func(b *testing.B) {
-		ms, err := collections.NewMultiStore(filepath.Join(b.TempDir(), "batch_persist.bin"), 0)
-		if err != nil {
-			b.Fatalf("failed to create multistore: %v", err)
-		}
-		defer ms.Close()
-
-		var keyTemplate *types.IntKey = (*types.IntKey)(new(int32))
-
-		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
-			b.StopTimer()
-			pt := treap.NewPersistentTreap[types.IntKey](types.IntLess, keyTemplate, ms)
-			for j := 0; j < nodeCount; j++ {
-				key := (*types.IntKey)(new(int32))
-				*key = types.IntKey(j)
-				pt.Insert(key)
-			}
-			b.StartTimer()
-
-			if err := pt.BatchPersist(); err != nil {
-				b.Fatalf("BatchPersist failed: %v", err)
-			}
-		}
-	})
 }
 
 // BenchmarkPersistSequentialVsRandom compares persist performance with sequential vs random keys
