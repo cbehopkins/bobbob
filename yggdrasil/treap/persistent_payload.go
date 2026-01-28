@@ -3,6 +3,7 @@ package treap
 import (
 	"errors"
 	"fmt"
+	"sort"
 	"sync"
 
 	"github.com/cbehopkins/bobbob"
@@ -569,6 +570,7 @@ func (t *PersistentPayloadTreap[K, P]) Compare(
 }
 
 func (t *PersistentPayloadTreap[K, P]) Persist() error {
+	// FIXME can this use workers like PersistentTreap.Persist()?
 	if t.root == nil {
 		return nil
 	}
@@ -795,6 +797,7 @@ func (t *PersistentPayloadTreap[K, P]) FlushOldestPercentile(percentage int) (in
 	}
 
 	// First, persist the entire tree to ensure all nodes are saved
+	// FIXME can we use BatchPersist here to be more efficient?
 	err := t.Persist()
 	if err != nil {
 		return 0, err
@@ -806,31 +809,22 @@ func (t *PersistentPayloadTreap[K, P]) FlushOldestPercentile(percentage int) (in
 		return 0, nil
 	}
 
-	// Sort nodes by access time (oldest first)
-	sortedNodes := make([]PayloadNodeInfo[K, P], len(nodes))
-	copy(sortedNodes, nodes)
-
-	// Simple insertion sort by LastAccessTime (ascending)
-	for i := 1; i < len(sortedNodes); i++ {
-		key := sortedNodes[i]
-		j := i - 1
-		for j >= 0 && sortedNodes[j].LastAccessTime > key.LastAccessTime {
-			sortedNodes[j+1] = sortedNodes[j]
-			j--
-		}
-		sortedNodes[j+1] = key
-	}
+	// Sort nodes by access time (oldest first) using Go's introsort
+	// This is O(n log n) instead of O(n²) insertion sort
+	sort.Slice(nodes, func(i, j int) bool {
+		return nodes[i].LastAccessTime < nodes[j].LastAccessTime
+	})
 
 	// Calculate how many nodes to flush
-	numToFlush := (len(sortedNodes) * percentage) / 100
+	numToFlush := (len(nodes) * percentage) / 100
 	if numToFlush == 0 && percentage > 0 {
 		numToFlush = 1 // Flush at least one node if percentage > 0
 	}
 
 	// Flush the oldest nodes
 	flushedCount := 0
-	for i := 0; i < numToFlush && i < len(sortedNodes); i++ {
-		err := sortedNodes[i].Node.Flush()
+	for i := 0; i < numToFlush && i < len(nodes); i++ {
+		err := nodes[i].Node.Flush()
 		if err != nil {
 			if !errors.Is(err, errNotFullyPersisted) {
 				return flushedCount, err

@@ -35,6 +35,10 @@ type BlockAllocator struct {
 	// Track remaining free blocks to avoid rescanning the bitmap on every allocation check
 	freeCount int
 
+	// Hint cursor: start search from this position to improve locality
+	// When allocating, we scan forward from this position, wrapping around if needed
+	lastAllocatedSlot int
+
 	// Optional callback fired on each allocation
 	onAllocate func(types.ObjectId, types.FileOffset, int)
 }
@@ -51,6 +55,7 @@ func New(blockSize, blockCount int, startingFileOffset types.FileOffset, startin
 		allocatedBitmap:    make([]bool, blockCount),
 		allAllocated:       false,
 		freeCount:          blockCount,
+		lastAllocatedSlot:  0,
 	}
 }
 
@@ -65,14 +70,16 @@ func (a *BlockAllocator) Allocate(size int) (types.ObjectId, types.FileOffset, e
 		return types.ObjectId(0), 0, ErrAllAllocated
 	}
 
-	// Find first free slot
-	for i, allocated := range a.allocatedBitmap {
-		if !allocated {
-			a.allocatedBitmap[i] = true
+	// Find first free slot starting from hint cursor
+	for i := 0; i < a.blockCount; i++ {
+		slot := (a.lastAllocatedSlot + i) % a.blockCount
+		if !a.allocatedBitmap[slot] {
+			a.allocatedBitmap[slot] = true
 			a.freeCount--
+			a.lastAllocatedSlot = (slot + 1) % a.blockCount
 
-			objId := a.startingObjectId + types.ObjectId(i)
-			offset := a.startingFileOffset + types.FileOffset(i*a.blockSize)
+			objId := a.startingObjectId + types.ObjectId(slot)
+			offset := a.startingFileOffset + types.FileOffset(slot*a.blockSize)
 
 			// Fire callback if registered
 			if a.onAllocate != nil {
@@ -197,6 +204,12 @@ func (a *BlockAllocator) DeleteObj(objId types.ObjectId) error {
 	a.freeCount++
 	a.allAllocated = false
 
+	// Update hint cursor to point to the freed slot only if it's before the current cursor.
+	// This ensures we'll revisit freed slots when the cursor wraps around, promoting reuse.
+	if slot < a.lastAllocatedSlot {
+		a.lastAllocatedSlot = slot
+	}
+
 	return nil
 }
 
@@ -289,6 +302,9 @@ func (a *BlockAllocator) Unmarshal(data []byte) error {
 	}
 	a.freeCount = free
 	a.allAllocated = (free == 0)
+
+	// Reset hint cursor to start of allocator
+	a.lastAllocatedSlot = 0
 
 	return nil
 }
