@@ -216,7 +216,7 @@ func (k MD5Key) Priority() uint32 {
 
 // MD5Less is a comparison function for MD5Key values.
 func MD5Less(a, b MD5Key) bool {
-	for i := 0; i < 16; i++ {
+	for i := range 16 {
 		if a[i] != b[i] {
 			return a[i] < b[i]
 		}

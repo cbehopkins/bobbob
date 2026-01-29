@@ -569,17 +569,6 @@ func (o *OmniAllocator) fireOnAllocate(objId types.ObjectId, offset types.FileOf
 	}
 }
 
-func binaryBigEndianPutUint32(buf []byte, v uint32) {
-	buf[0] = byte(v >> 24)
-	buf[1] = byte(v >> 16)
-	buf[2] = byte(v >> 8)
-	buf[3] = byte(v)
-}
-
-func binaryBigEndianUint32(buf []byte) uint32 {
-	return uint32(buf[0])<<24 | uint32(buf[1])<<16 | uint32(buf[2])<<8 | uint32(buf[3])
-}
-
 // Close closes the OmniAllocator and cleans up all associated resources.
 // This includes closing the internal PoolCache and any open pools.
 func (o *OmniAllocator) Close() error {

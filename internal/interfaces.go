@@ -21,7 +21,7 @@ func MarshalComplexWithRetry(obj MarshalComplex, allocFunc func([]int) ([]bobbob
 		return 0, nil, err
 	}
 
-	for i := 0; i < maxRetries; i++ {
+	for range maxRetries {
 		identityFunction, objectAndByteFuncs, err := obj.MarshalMultiple(objectIds)
 		if err == nil {
 			return identityFunction(), objectAndByteFuncs, nil

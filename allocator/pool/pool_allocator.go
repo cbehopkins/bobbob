@@ -80,8 +80,8 @@ func (p *PoolAllocator) Allocate(size int) (types.ObjectId, types.FileOffset, er
 			// Check if this allocator is now full
 			_, free, _ := blkAlloc.Stats()
 			if free == 0 {
-				// Move to full list
-				p.full = append(p.full, blkAlloc)
+				// Move to full list (maintaining sorted order)
+				p.insertIntoFullList(blkAlloc)
 				p.available = append(p.available[:i], p.available[i+1:]...)
 			}
 
@@ -95,7 +95,7 @@ func (p *PoolAllocator) Allocate(size int) (types.ObjectId, types.FileOffset, er
 		return 0, 0, err
 	}
 
-	p.available = append(p.available, newAlloc)
+	p.insertIntoAvailableList(newAlloc)
 
 	// Allocate from new allocator
 	objId, offset, err := newAlloc.Allocate(size)
@@ -145,7 +145,7 @@ func (p *PoolAllocator) AllocateRun(size int, count int) ([]types.ObjectId, []ty
 			// Check if allocator is now full
 			_, free, _ := blkAlloc.Stats()
 			if free == 0 {
-				p.full = append(p.full, blkAlloc)
+				p.insertIntoFullList(blkAlloc)
 				p.available = append(p.available[:i], p.available[i+1:]...)
 			}
 
@@ -159,7 +159,7 @@ func (p *PoolAllocator) AllocateRun(size int, count int) ([]types.ObjectId, []ty
 		return nil, nil, err
 	}
 
-	p.available = append(p.available, newAlloc)
+	p.insertIntoAvailableList(newAlloc)
 
 	objIds, offsets, err := newAlloc.AllocateRun(size, count)
 	if err != nil {
@@ -192,8 +192,8 @@ func (p *PoolAllocator) DeleteObj(objId types.ObjectId) error {
 				return err
 			}
 
-			// Move from full to available
-			p.available = append(p.available, blkAlloc)
+			// Move from full to available (maintaining sorted order)
+			p.insertIntoAvailableList(blkAlloc)
 			p.full = append(p.full[:i], p.full[i+1:]...)
 
 			return nil
@@ -205,18 +205,14 @@ func (p *PoolAllocator) DeleteObj(objId types.ObjectId) error {
 
 // GetObjectInfo returns the FileOffset and Size for an ObjectId.
 func (p *PoolAllocator) GetObjectInfo(objId types.ObjectId) (types.FileOffset, types.FileSize, error) {
-	// Check available allocators
-	for _, blkAlloc := range p.available {
-		if blkAlloc.ContainsObjectId(objId) {
-			return blkAlloc.GetObjectInfo(objId)
-		}
+	// Binary search in available allocators
+	if alloc := p.findAllocatorByObjectId(p.available, objId); alloc != nil {
+		return alloc.GetObjectInfo(objId)
 	}
 
-	// Check full allocators
-	for _, blkAlloc := range p.full {
-		if blkAlloc.ContainsObjectId(objId) {
-			return blkAlloc.GetObjectInfo(objId)
-		}
+	// Binary search in full allocators
+	if alloc := p.findAllocatorByObjectId(p.full, objId); alloc != nil {
+		return alloc.GetObjectInfo(objId)
 	}
 
 	return 0, 0, ErrAllocatorNotFound
@@ -229,20 +225,14 @@ func (p *PoolAllocator) GetFile() *os.File {
 
 // ContainsObjectId returns true if this pool owns the ObjectId.
 func (p *PoolAllocator) ContainsObjectId(objId types.ObjectId) bool {
-	// Check available allocators
-	// FIXME: we should be able to search the lists
-	// if the lists are in order by ObjectId ranges
-	for _, blkAlloc := range p.available {
-		if blkAlloc.ContainsObjectId(objId) {
-			return true
-		}
+	// Binary search in available allocators (kept in sorted order by ObjectId)
+	if alloc := p.findAllocatorByObjectId(p.available, objId); alloc != nil {
+		return true
 	}
 
-	// Check full allocators
-	for _, blkAlloc := range p.full {
-		if blkAlloc.ContainsObjectId(objId) {
-			return true
-		}
+	// Binary search in full allocators (kept in sorted order by ObjectId)
+	if alloc := p.findAllocatorByObjectId(p.full, objId); alloc != nil {
+		return true
 	}
 
 	return false
@@ -272,9 +262,9 @@ func (p *PoolAllocator) AttachAllocator(alloc *block.BlockAllocator, available b
 	}
 
 	if available {
-		p.available = append(p.available, alloc)
+		p.insertIntoAvailableList(alloc)
 	} else {
-		p.full = append(p.full, alloc)
+		p.insertIntoFullList(alloc)
 	}
 	return nil
 }
@@ -443,4 +433,66 @@ func (p *PoolAllocator) FullAllocators() []*block.BlockAllocator {
 func (p *PoolAllocator) RestoreAllocators(available []*block.BlockAllocator, full []*block.BlockAllocator) {
 	p.available = available
 	p.full = full
+}
+
+// objectIdRange returns the min and max ObjectId owned by a BlockAllocator.
+func objectIdRange(alloc *block.BlockAllocator) (types.ObjectId, types.ObjectId) {
+	min := alloc.BaseObjectId()
+	max := min + types.ObjectId(alloc.BlockCount()-1)
+	return min, max
+}
+
+// insertIntoAvailableList inserts an allocator into the available list in sorted order by ObjectId.
+func (p *PoolAllocator) insertIntoAvailableList(alloc *block.BlockAllocator) {
+	min, _ := objectIdRange(alloc)
+	// Find insertion point
+	idx := 0
+	for idx < len(p.available) {
+		existing_min, _ := objectIdRange(p.available[idx])
+		if min < existing_min {
+			break
+		}
+		idx++
+	}
+	// Insert at idx
+	p.available = append(p.available[:idx], append([]*block.BlockAllocator{alloc}, p.available[idx:]...)...)
+}
+
+// insertIntoFullList inserts an allocator into the full list in sorted order by ObjectId.
+func (p *PoolAllocator) insertIntoFullList(alloc *block.BlockAllocator) {
+	min, _ := objectIdRange(alloc)
+	// Find insertion point
+	idx := 0
+	for idx < len(p.full) {
+		existing_min, _ := objectIdRange(p.full[idx])
+		if min < existing_min {
+			break
+		}
+		idx++
+	}
+	// Insert at idx
+	p.full = append(p.full[:idx], append([]*block.BlockAllocator{alloc}, p.full[idx:]...)...)
+}
+
+// findAllocatorByObjectId finds the allocator containing objId using binary search.
+// Returns nil if not found.
+func (p *PoolAllocator) findAllocatorByObjectId(allocators []*block.BlockAllocator, objId types.ObjectId) *block.BlockAllocator {
+	// Binary search by ObjectId range
+	left, right := 0, len(allocators)
+	for left < right {
+		mid := (left + right) / 2
+		min, max := objectIdRange(allocators[mid])
+		if objId < min {
+			right = mid
+		} else if objId > max {
+			left = mid + 1
+		} else {
+			// Found it - verify the allocator actually contains it
+			if allocators[mid].ContainsObjectId(objId) {
+				return allocators[mid]
+			}
+			return nil
+		}
+	}
+	return nil
 }

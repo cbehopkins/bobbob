@@ -136,7 +136,10 @@ func NewTopFromFile(file *os.File, blockSizes []int, maxBlockCount int) (*Top, e
 	if err != nil {
 		return nil, fmt.Errorf("failed to create OmniAllocator for loading: %w", err)
 	}
-
+	err = omniAlloc.StartDrainWorker(0)
+	if err != nil {
+		return nil, err
+	}
 	omniInfo, err := primeTable.Load()
 	if err != nil {
 		return nil, fmt.Errorf("failed to read OmniAllocator info from PrimeTable: %w", err)
@@ -257,9 +260,9 @@ func (t *Top) Unmarshal(data []byte) error {
 // IMPORTANT: BasicAllocator is special - it does NOT allocate space for itself!
 // Instead, it appends its marshaled data directly at the current file length.
 // This works because:
-//  - BasicAllocator is the last allocator to persist
-//  - No more objects will be created after BasicAllocator's data is written
-//  - PrimeTable is always written last (at offset 0), so it can overwrite offset 0..primeSize
+//   - BasicAllocator is the last allocator to persist
+//   - No more objects will be created after BasicAllocator's data is written
+//   - PrimeTable is always written last (at offset 0), so it can overwrite offset 0..primeSize
 //
 // When loading in a new session, NewTopFromFile must call basicAlloc.ReservePrefix()
 // to prevent gaps from being reconstructed at offset 0..primeSize, which would allow
