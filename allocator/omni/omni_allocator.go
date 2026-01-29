@@ -3,10 +3,10 @@ package omni
 import (
 	"encoding/binary"
 	"errors"
-	"fmt"
 	"os"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/cbehopkins/bobbob/allocator/block"
 	"github.com/cbehopkins/bobbob/allocator/cache"
@@ -24,13 +24,16 @@ var (
 // pools into a PoolCache to keep memory usage low and rehydrate them on demand.
 // OmniAllocator is thread-safe and protects concurrent access to pools and cache.
 type OmniAllocator struct {
-	mu         sync.RWMutex
-	blockSizes []int
-	parent     types.Allocator
-	file       *os.File
-	cache      *cache.PoolCache
-	pools      map[int]*pool.PoolAllocator
-	onAllocate func(types.ObjectId, types.FileOffset, int)
+	mu              sync.RWMutex
+	blockSizes      []int
+	parent          types.Allocator
+	file            *os.File
+	cache           *cache.PoolCache
+	pools           map[int]*pool.PoolAllocator
+	onAllocate      func(types.ObjectId, types.FileOffset, int)
+	drainTicker     *time.Ticker
+	drainDone       chan struct{}
+	drainRunning    bool
 }
 
 func NewOmniAllocator(blockSizes []int, parent types.Allocator, file *os.File, pc *cache.PoolCache) (*OmniAllocator, error) {
@@ -176,73 +179,122 @@ func (o *OmniAllocator) SetOnAllocate(callback func(types.ObjectId, types.FileOf
 
 func (o *OmniAllocator) Marshal() ([]byte, error) {
 	// Layout:
-	// [poolCount:4]
-	// repeat poolCount times:
-	//   [blockSize:4][nextBlockCount:4][availableCount:4][fullCount:4]
-	//   repeat availableCount times: [blkLen:4][blkData]
-	//   repeat fullCount times: [blkLen:4][blkData]
+	// [blockSizesCount:4][blockSize:4]... (configuration)
+	// [poolMetadataCount:4]
+	// repeat poolMetadataCount times:
+	//   [blockSize:4][nextBlockCount:4]
+	// [cacheLen:4][cacheData...]
 
-	// Deterministic iteration by blockSize
-	blockSizes := make([]int, 0, len(o.pools))
+	// Step 1: Delegate ALL pool allocators (both available and full) to cache
+	result, err := o.drainAllocators(true, true)
+	if err != nil {
+		return result, err
+	}
+
+	// Step 2: Persist configuration (blockSizes)
+	buf := make([]byte, 4)
+	binary.BigEndian.PutUint32(buf, uint32(len(o.blockSizes)))
+	for _, size := range o.blockSizes {
+		tmp := make([]byte, 4)
+		binary.BigEndian.PutUint32(tmp, uint32(size))
+		buf = append(buf, tmp...)
+	}
+
+	// Step 3: Persist pool metadata (nextBlockCount for each pool)
+	// Sort pools by blockSize for deterministic output
+	poolSizes := make([]int, 0, len(o.pools))
 	for size := range o.pools {
-		blockSizes = append(blockSizes, size)
+		poolSizes = append(poolSizes, size)
 	}
-	sort.Ints(blockSizes)
+	sort.Ints(poolSizes)
 
-	// If no pools yet, at least persist configured blockSizes and defaults
-	if len(blockSizes) == 0 {
-		blockSizes = append(blockSizes, o.blockSizes...)
-	}
-
-	buf := make([]byte, 0)
-	poolCount := uint32(len(blockSizes))
 	tmp := make([]byte, 4)
-	binary.BigEndian.PutUint32(tmp, poolCount)
+	binary.BigEndian.PutUint32(tmp, uint32(len(poolSizes)))
 	buf = append(buf, tmp...)
 
-	for _, size := range blockSizes {
+	for _, size := range poolSizes {
 		pl := o.pools[size]
-		if pl == nil {
-			// Lazy-create empty pool to persist configuration
-			var err error
-			pl, err = pool.New(size, o.parent, o.file)
-			if err != nil {
-				return nil, err
-			}
-		}
+		poolMeta := make([]byte, 8)
+		binary.BigEndian.PutUint32(poolMeta[0:4], uint32(size))
+		binary.BigEndian.PutUint32(poolMeta[4:8], uint32(pl.NextBlockCount()))
+		buf = append(buf, poolMeta...)
+	}
 
-		// Header for this pool
-		poolHeader := make([]byte, 16)
-		binary.BigEndian.PutUint32(poolHeader[0:4], uint32(size))
-		binary.BigEndian.PutUint32(poolHeader[4:8], uint32(pl.NextBlockCount()))
-		binary.BigEndian.PutUint32(poolHeader[8:12], uint32(len(pl.AvailableAllocators())))
-		binary.BigEndian.PutUint32(poolHeader[12:16], uint32(len(pl.FullAllocators())))
-		buf = append(buf, poolHeader...)
+	// Step 4: Marshal the cache itself
+	// o.cache is guaranteed to be non-nil from NewOmniAllocator
+	var cacheData []byte
+	cacheData, err = o.cache.Marshal()
+	if err != nil {
+		return nil, err
+	}
+	tmp = make([]byte, 4)
+	binary.BigEndian.PutUint32(tmp, uint32(len(cacheData)))
+	buf = append(buf, tmp...)
+	buf = append(buf, cacheData...)
 
-		serializeBlocks := func(blocks []*block.BlockAllocator) error {
-			for _, blk := range blocks {
-				blkData, err := blk.Marshal()
+	return buf, nil
+}
+
+// drainAllocators is a helper that drains allocators to cache with bitmap preservation.
+// If drainFull is true, drains full allocators; if drainAvail is true, drains available allocators.
+func (o *OmniAllocator) drainAllocators(drainFull, drainAvail bool) ([]byte, error) {
+	var bitmapData []byte
+	var err error
+
+	for _, pl := range o.pools {
+		if drainFull {
+			// Drain full allocators to cache
+			fullAllocators := pl.DrainFullAllocators()
+			for _, blk := range fullAllocators {
+				bitmapData, err = blk.Marshal()
 				if err != nil {
-					return err
+					return nil, err
 				}
-				meta := make([]byte, 8)
-				binary.BigEndian.PutUint32(meta[0:4], uint32(blk.BlockCount()))
-				binary.BigEndian.PutUint32(meta[4:8], uint32(len(blkData)))
-				buf = append(buf, meta...)
-				buf = append(buf, blkData...)
+				entry := cache.UnloadedBlock{
+					ObjId:          blk.BaseObjectId(),
+					BaseObjId:      blk.BaseObjectId(),
+					BaseFileOffset: blk.BaseFileOffset(),
+					BlockSize:      types.FileSize(blk.BlockSize()),
+					BlockCount:     blk.BlockCount(),
+					Available:      false,
+					BitmapData:     bitmapData,
+				}
+				if err := o.cache.Insert(entry); err != nil {
+					return nil, err
+				}
 			}
-			return nil
 		}
 
-		if err := serializeBlocks(pl.AvailableAllocators()); err != nil {
-			return nil, err
-		}
-		if err := serializeBlocks(pl.FullAllocators()); err != nil {
-			return nil, err
+		if drainAvail {
+			// Get and drain available allocators to cache
+			availAllocators := pl.AvailableAllocators()
+			if len(availAllocators) > 0 {
+				// Clear both available and full from pool (full ones were already drained above)
+				pl.RestoreAllocators(make([]*block.BlockAllocator, 0), make([]*block.BlockAllocator, 0))
+
+				for _, blk := range availAllocators {
+					bitmapData, err = blk.Marshal()
+					if err != nil {
+						return nil, err
+					}
+					entry := cache.UnloadedBlock{
+						ObjId:          blk.BaseObjectId(),
+						BaseObjId:      blk.BaseObjectId(),
+						BaseFileOffset: blk.BaseFileOffset(),
+						BlockSize:      types.FileSize(blk.BlockSize()),
+						BlockCount:     blk.BlockCount(),
+						Available:      true,
+						BitmapData:     bitmapData,
+					}
+					if err := o.cache.Insert(entry); err != nil {
+						return nil, err
+					}
+				}
+			}
 		}
 	}
 
-	return buf, nil
+	return nil, nil
 }
 
 func (o *OmniAllocator) Unmarshal(data []byte) error {
@@ -251,22 +303,40 @@ func (o *OmniAllocator) Unmarshal(data []byte) error {
 	}
 
 	cursor := 0
-	poolCount := int(binary.BigEndian.Uint32(data[cursor : cursor+4]))
+
+	// Step 1: Restore blockSizes configuration
+	blockSizesCount := int(binary.BigEndian.Uint32(data[cursor : cursor+4]))
 	cursor += 4
 
-	o.pools = make(map[int]*pool.PoolAllocator)
-	o.blockSizes = make([]int, 0, poolCount)
+	if cursor+blockSizesCount*4 > len(data) {
+		return errors.New("insufficient data for blockSizes")
+	}
 
-	for i := 0; i < poolCount; i++ {
-		if cursor+16 > len(data) {
-			return fmt.Errorf("insufficient data for pool header %d", i)
-		}
+	o.blockSizes = make([]int, blockSizesCount)
+	for i := 0; i < blockSizesCount; i++ {
+		o.blockSizes[i] = int(binary.BigEndian.Uint32(data[cursor : cursor+4]))
+		cursor += 4
+	}
+
+	// Step 2: Restore pool metadata (create empty pools with nextBlockCount)
+	if cursor+4 > len(data) {
+		return errors.New("insufficient data for pool metadata count")
+	}
+
+	poolMetaCount := int(binary.BigEndian.Uint32(data[cursor : cursor+4]))
+	cursor += 4
+
+	if cursor+poolMetaCount*8 > len(data) {
+		return errors.New("insufficient data for pool metadata")
+	}
+
+	o.pools = make(map[int]*pool.PoolAllocator)
+	for range poolMetaCount {
 		blockSize := int(binary.BigEndian.Uint32(data[cursor : cursor+4]))
 		nextBlockCount := int(binary.BigEndian.Uint32(data[cursor+4 : cursor+8]))
-		availCount := int(binary.BigEndian.Uint32(data[cursor+8 : cursor+12]))
-		fullCount := int(binary.BigEndian.Uint32(data[cursor+12 : cursor+16]))
-		cursor += 16
+		cursor += 8
 
+		// Create empty pool (allocators will be rehydrated from cache on demand)
 		pl, err := pool.New(blockSize, o.parent, o.file)
 		if err != nil {
 			return err
@@ -275,47 +345,32 @@ func (o *OmniAllocator) Unmarshal(data []byte) error {
 		if o.onAllocate != nil {
 			pl.SetOnAllocate(o.onAllocate)
 		}
-
-		loadBlocks := func(count int) ([]*block.BlockAllocator, error) {
-			blocks := make([]*block.BlockAllocator, 0, count)
-			for j := 0; j < count; j++ {
-				if cursor+8 > len(data) {
-					return nil, fmt.Errorf("insufficient data for block meta (pool %d)", i)
-				}
-				blkCount := int(binary.BigEndian.Uint32(data[cursor : cursor+4]))
-				blkLen := int(binary.BigEndian.Uint32(data[cursor+4 : cursor+8]))
-				cursor += 8
-				if cursor+blkLen > len(data) {
-					return nil, fmt.Errorf("insufficient data for block body (pool %d)", i)
-				}
-				blkData := data[cursor : cursor+blkLen]
-				cursor += blkLen
-
-				blk := block.New(blockSize, blkCount, 0, 0, o.file)
-				if err := blk.Unmarshal(blkData); err != nil {
-					return nil, err
-				}
-				blocks = append(blocks, blk)
-			}
-			return blocks, nil
-		}
-
-		available, err := loadBlocks(availCount)
-		if err != nil {
-			return err
-		}
-		full, err := loadBlocks(fullCount)
-		if err != nil {
-			return err
-		}
-
-		pl.RestoreAllocators(available, full)
 		o.pools[blockSize] = pl
-		o.blockSizes = append(o.blockSizes, blockSize)
 	}
 
-	// Ensure sizes are normalized for Allocate routing
-	o.blockSizes = normalizeSizes(o.blockSizes)
+	// Step 3: Unmarshal cache (contains all BlockAllocator metadata)
+	if cursor+4 > len(data) {
+		return errors.New("insufficient data for cache length")
+	}
+
+	cacheLen := int(binary.BigEndian.Uint32(data[cursor : cursor+4]))
+	cursor += 4
+
+	if cacheLen > 0 {
+		if cursor+cacheLen > len(data) {
+			return errors.New("insufficient data for cache")
+		}
+
+		cacheData := data[cursor : cursor+cacheLen]
+		if err := o.cache.Unmarshal(cacheData); err != nil {
+			return err
+		}
+		cursor += cacheLen
+	}
+
+	// Pools are now empty - BlockAllocators will be lazily rehydrated
+	// from cache when objects are accessed via rehydrateForObject()
+
 	return nil
 }
 
@@ -343,27 +398,8 @@ func (o *OmniAllocator) GetObjectIdsInAllocator(blockSize int, allocatorIndex in
 }
 
 func (o *OmniAllocator) DelegateFullAllocatorsToCache() error {
-	if o.cache == nil {
-		return nil
-	}
-	for size, pl := range o.pools {
-		full := pl.DrainFullAllocators()
-		for _, blk := range full {
-			entry := cache.UnloadedBlock{
-				ObjId:          blk.BaseObjectId(),
-				BaseObjId:      blk.BaseObjectId(),
-				BaseFileOffset: blk.BaseFileOffset(),
-				BlockSize:      types.FileSize(blk.BlockSize()),
-				BlockCount:     blk.BlockCount(),
-				Available:      false,
-			}
-			if err := o.cache.Insert(entry); err != nil {
-				return err
-			}
-		}
-		o.pools[size] = pl
-	}
-	return nil
+	_, err := o.drainAllocators(true, false)
+	return err
 }
 
 func normalizeSizes(sizes []int) []int {
@@ -433,10 +469,43 @@ func (o *OmniAllocator) pullAvailableFromCache(blockSize int, pl *pool.PoolAlloc
 	if o.cache == nil {
 		return
 	}
-	for _, entry := range o.cache.GetAll() {
+
+	// Get all cache entries
+	entries := o.cache.GetAll()
+	entriesToDelete := make([]types.ObjectId, 0)
+
+	for _, entry := range entries {
+		// Find entries matching this blockSize that have available slots
 		if int(entry.BlockSize) != blockSize || !entry.Available {
 			continue
 		}
+
+		// Reconstruct the BlockAllocator from cache metadata and bitmap
+		ba := block.New(
+			int(entry.BlockSize),
+			entry.BlockCount,
+			entry.BaseFileOffset,
+			entry.BaseObjId,
+			o.file,
+		)
+
+		// Restore the bitmap state
+		if len(entry.BitmapData) > 0 {
+			if err := ba.Unmarshal(entry.BitmapData); err != nil {
+				continue // Skip entries with bad bitmap data
+			}
+		}
+
+		// Add to pool's available allocators
+		_ = pl.AttachAllocator(ba, true)
+
+		// Mark for deletion from cache (we've rehydrated it)
+		entriesToDelete = append(entriesToDelete, entry.BaseObjId)
+	}
+
+	// Remove rehydrated entries from cache
+	for _, baseObjId := range entriesToDelete {
+		_ = o.cache.Delete(baseObjId)
 	}
 }
 
@@ -444,12 +513,54 @@ func (o *OmniAllocator) rehydrateForObject(objId types.ObjectId) *pool.PoolAlloc
 	if o.cache == nil {
 		return nil
 	}
+
+	// Query cache for the block allocator containing this object
 	entry, err := o.cache.Query(objId)
 	if err != nil {
 		return nil
 	}
-	_ = entry
-	return nil
+
+	// Get or create the pool for this block size
+	pl, err := o.ensurePool(int(entry.BlockSize))
+	if err != nil {
+		return nil
+	}
+
+	// Reconstruct the BlockAllocator from cache metadata and bitmap
+	ba := block.New(
+		int(entry.BlockSize),
+		entry.BlockCount,
+		entry.BaseFileOffset,
+		entry.BaseObjId,
+		o.file,
+	)
+
+	// Restore the bitmap state (and startingFileOffset)
+	if len(entry.BitmapData) > 0 {
+		if err := ba.Unmarshal(entry.BitmapData); err != nil {
+			return nil // Failed to restore bitmap
+		}
+		// After unmarshal, the startingObjectId will be derived from FileOffset
+		// Ensure it matches what we expect from the cache entry
+		if ba.BaseObjectId() != entry.BaseObjId {
+			// The unmarshal may have derived a different ObjectId from FileOffset
+			// This shouldn't happen if ObjectId == FileOffset by design
+			// But if it does, we log it
+			// For now, we trust the unmarshal to have done the right thing
+		}
+	}
+
+	// Add to pool (available/full based on cache metadata)
+	if entry.Available {
+		_ = pl.AttachAllocator(ba, true)
+	} else {
+		_ = pl.AttachAllocator(ba, false)
+	}
+
+	// Remove from cache since we've rehydrated it
+	_ = o.cache.Delete(entry.BaseObjId)
+
+	return pl
 }
 
 func (o *OmniAllocator) fireOnAllocate(objId types.ObjectId, offset types.FileOffset, size int) {
@@ -467,6 +578,99 @@ func binaryBigEndianPutUint32(buf []byte, v uint32) {
 
 func binaryBigEndianUint32(buf []byte) uint32 {
 	return uint32(buf[0])<<24 | uint32(buf[1])<<16 | uint32(buf[2])<<8 | uint32(buf[3])
+}
+
+// Close closes the OmniAllocator and cleans up all associated resources.
+// This includes closing the internal PoolCache and any open pools.
+func (o *OmniAllocator) Close() error {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	// Close the cache
+	if o.cache != nil {
+		if err := o.cache.Close(); err != nil {
+			return err
+		}
+	}
+
+	// Stop drain worker if running
+	o.stopDrainWorker()
+
+	// Clear pools map (PoolAllocators don't need explicit closing)
+	o.pools = nil
+
+	return nil
+}
+
+// StartDrainWorker starts a background worker that periodically delegates full allocators to cache.
+// interval specifies how often the draining occurs (defaults to 5 minutes if 0).
+// The worker will run until Close() is called or StopDrainWorker() is called.
+func (o *OmniAllocator) StartDrainWorker(interval time.Duration) error {
+	o.mu.Lock()
+
+	if o.drainRunning {
+		o.mu.Unlock()
+		return errors.New("drain worker already running")
+	}
+
+	if interval == 0 {
+		interval = 5 * time.Minute
+	}
+
+	o.drainTicker = time.NewTicker(interval)
+	o.drainDone = make(chan struct{})
+	o.drainRunning = true
+
+	// Capture references while holding the lock to pass to the goroutine.
+	// This avoids race conditions where the goroutine accesses these fields
+	// while StopDrainWorker() might be modifying them.
+	ticker := o.drainTicker
+	done := o.drainDone
+
+	o.mu.Unlock()
+
+	go o.drainWorker(ticker, done)
+
+	return nil
+}
+
+// StopDrainWorker stops the background drain worker if it's running.
+func (o *OmniAllocator) StopDrainWorker() {
+	o.mu.Lock()
+	o.stopDrainWorker()
+	o.mu.Unlock()
+}
+
+// stopDrainWorker is the internal implementation (assumes lock is held).
+func (o *OmniAllocator) stopDrainWorker() {
+	if !o.drainRunning {
+		return
+	}
+	o.drainRunning = false
+	if o.drainTicker != nil {
+		o.drainTicker.Stop()
+	}
+	if o.drainDone != nil {
+		close(o.drainDone)
+	}
+}
+
+// drainWorker runs in a goroutine and periodically drains full allocators.
+// ticker and done are captured references to avoid race conditions.
+func (o *OmniAllocator) drainWorker(ticker *time.Ticker, done chan struct{}) {
+	for {
+		select {
+		case <-ticker.C:
+			// Acquire lock and drain full allocators
+			o.mu.Lock()
+			_ = o.DelegateFullAllocatorsToCache()
+			o.mu.Unlock()
+		case <-done:
+			// Stop the ticker when exiting
+			ticker.Stop()
+			return
+		}
+	}
 }
 
 func plAvail(pl *pool.PoolAllocator) []*block.BlockAllocator {

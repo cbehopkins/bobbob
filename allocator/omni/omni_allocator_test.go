@@ -21,6 +21,7 @@ func TestOmniAllocatorRouting(t *testing.T) {
     if err != nil {
         t.Fatalf("NewOmniAllocator failed: %v", err)
     }
+    defer omniAlloc.Close()
 
     smallId, smallOff, err := omniAlloc.Allocate(200)
     if err != nil {

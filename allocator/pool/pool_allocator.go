@@ -230,6 +230,8 @@ func (p *PoolAllocator) GetFile() *os.File {
 // ContainsObjectId returns true if this pool owns the ObjectId.
 func (p *PoolAllocator) ContainsObjectId(objId types.ObjectId) bool {
 	// Check available allocators
+	// FIXME: we should be able to search the lists
+	// if the lists are in order by ObjectId ranges
 	for _, blkAlloc := range p.available {
 		if blkAlloc.ContainsObjectId(objId) {
 			return true

@@ -431,6 +431,14 @@ func (t *Top) Close() error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
+	// Close OmniAllocator first (it manages PoolCache)
+	if t.omniAllocator != nil {
+		if err := t.omniAllocator.Close(); err != nil {
+			return err
+		}
+	}
+
+	// Close BasicAllocator
 	if t.basicAllocator != nil {
 		return t.basicAllocator.Close()
 	}

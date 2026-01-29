@@ -1,6 +1,7 @@
 package cache
 
 import (
+	"bytes"
 	"encoding/binary"
 	"errors"
 	"os"
@@ -16,12 +17,11 @@ var (
 )
 
 const (
-	entrySize = 41 // objId(8) + baseObjId(8) + baseFileOffset(8) + blockSize(8) + blockCount(8) + available(1)
 	headerSize = 8  // version(4) + count(4)
 )
 
 // UnloadedBlock represents metadata for a BlockAllocator stored on disk.
-// This is the lightweight in-memory representation used for quick lookups.
+// Includes both lightweight metadata and the bitmap state for proper rehydration.
 type UnloadedBlock struct {
 	ObjId           types.ObjectId   // ObjectId where this block allocator is stored
 	BaseObjId       types.ObjectId   // Starting ObjectId this allocator manages
@@ -29,6 +29,7 @@ type UnloadedBlock struct {
 	BlockSize       types.FileSize   // Size of each object in the allocator
 	BlockCount      int              // Number of blocks (slots) this allocator manages
 	Available       bool             // Does it have free slots?
+	BitmapData      []byte           // Allocation bitmap from BlockAllocator
 }
 
 // PoolCache manages unloaded BlockAllocators using a temporary file for persistence.
@@ -90,13 +91,8 @@ func (pc *PoolCache) Insert(entry UnloadedBlock) error {
 	copy(pc.entries[idx+1:], pc.entries[idx:])
 	pc.entries[idx] = entry
 
-	// Append to temp file
-	data := marshalUnloadedBlock(entry)
-	if _, err := pc.tempFile.Write(data); err != nil {
-		// Rollback insertion on write failure
-		pc.entries = append(pc.entries[:idx], pc.entries[idx+1:]...)
-		return err
-	}
+	// Note: Temp file persistence is handled by Marshal/Unmarshal
+	// The temp file is no longer used for incremental writes
 
 	return nil
 }
@@ -153,32 +149,53 @@ func (pc *PoolCache) GetAll() []UnloadedBlock {
 }
 
 // SizeInBytes returns the size of the marshaled cache data.
-// This is needed to request storage from parent allocator.
+// This accounts for variable-length bitmap data in each entry.
 func (pc *PoolCache) SizeInBytes() int {
-	return headerSize + (len(pc.entries) * entrySize)
+	size := headerSize // 8 bytes: version + count
+	for _, entry := range pc.entries {
+		size += 41 // Fixed part: ObjId(8) + BaseObjId(8) + BaseFileOffset(8) + BlockSize(8) + BlockCount(4) + Available(1) + BitmapLength(4)
+		size += len(entry.BitmapData)
+	}
+	return size
 }
 
 // Marshal serializes the cache to bytes for persistence.
 // Reads from temp file and wraps with header metadata.
 // Note: Only includes entries currently in the in-memory list (deleted entries excluded).
 func (pc *PoolCache) Marshal() ([]byte, error) {
-	// Create buffer with exact size
-	size := pc.SizeInBytes()
-	data := make([]byte, size)
-
+	var buf bytes.Buffer
+	
 	// Write header
-	binary.LittleEndian.PutUint32(data[0:4], 0) // version
-	binary.LittleEndian.PutUint32(data[4:8], uint32(len(pc.entries)))
-
-	// Write entries (serialized in current order)
-	offset := headerSize
+	header := make([]byte, headerSize)
+	binary.LittleEndian.PutUint32(header[0:4], 0) // version
+	binary.LittleEndian.PutUint32(header[4:8], uint32(len(pc.entries)))
+	buf.Write(header)
+	
+	// Write each entry with variable length (fixed metadata + bitmap data)
 	for _, entry := range pc.entries {
-		entryData := marshalUnloadedBlock(entry)
-		copy(data[offset:offset+entrySize], entryData)
-		offset += entrySize
+		// Fixed part (41 bytes)
+		entryData := make([]byte, 41)
+		binary.LittleEndian.PutUint64(entryData[0:8], uint64(entry.ObjId))
+		binary.LittleEndian.PutUint64(entryData[8:16], uint64(entry.BaseObjId))
+		binary.LittleEndian.PutUint64(entryData[16:24], uint64(entry.BaseFileOffset))
+		binary.LittleEndian.PutUint64(entryData[24:32], uint64(entry.BlockSize))
+		binary.LittleEndian.PutUint32(entryData[32:36], uint32(entry.BlockCount))
+		if entry.Available {
+			entryData[36] = 1
+		} else {
+			entryData[36] = 0
+		}
+		// Bitmap length (4 bytes)
+		binary.LittleEndian.PutUint32(entryData[37:41], uint32(len(entry.BitmapData)))
+		buf.Write(entryData)
+		
+		// Bitmap data (variable length)
+		if len(entry.BitmapData) > 0 {
+			buf.Write(entry.BitmapData)
+		}
 	}
-
-	return data, nil
+	
+	return buf.Bytes(), nil
 }
 
 // Unmarshal restores the cache from serialized bytes.
@@ -191,24 +208,41 @@ func (pc *PoolCache) Unmarshal(data []byte) error {
 	_ = binary.LittleEndian.Uint32(data[0:4]) // version (ignored for now)
 	count := binary.LittleEndian.Uint32(data[4:8])
 
-	expectedSize := headerSize + (int(count) * entrySize)
-	if len(data) != expectedSize {
-		return ErrInvalidEntry
-	}
-
 	// Clear existing entries
 	pc.entries = make([]UnloadedBlock, 0, count)
 
-	// Unmarshal entries
+	// Unmarshal entries (variable length format)
 	offset := headerSize
-	for i := uint32(0); i < count; i++ {
-		if offset+entrySize > len(data) {
+	for range count {
+		if offset+41 > len(data) {
 			return ErrInvalidEntry
 		}
 
-		entry := unmarshalUnloadedBlock(data[offset : offset+entrySize])
+		// Read fixed part (41 bytes)
+		entry := UnloadedBlock{
+			ObjId:          types.ObjectId(binary.LittleEndian.Uint64(data[offset : offset+8])),
+			BaseObjId:      types.ObjectId(binary.LittleEndian.Uint64(data[offset+8 : offset+16])),
+			BaseFileOffset: types.FileOffset(binary.LittleEndian.Uint64(data[offset+16 : offset+24])),
+			BlockSize:      types.FileSize(binary.LittleEndian.Uint64(data[offset+24 : offset+32])),
+			BlockCount:     int(binary.LittleEndian.Uint32(data[offset+32 : offset+36])),
+			Available:      data[offset+36] != 0,
+		}
+
+		// Bitmap length is at offset+37 in the fixed 41-byte block
+		bitmapLen := int(binary.LittleEndian.Uint32(data[offset+37 : offset+41]))
+		offset += 41
+
+		// Read bitmap data
+		if offset+bitmapLen > len(data) {
+			return ErrInvalidEntry
+		}
+		if bitmapLen > 0 {
+			entry.BitmapData = make([]byte, bitmapLen)
+			copy(entry.BitmapData, data[offset:offset+bitmapLen])
+			offset += bitmapLen
+		}
+
 		pc.entries = append(pc.entries, entry)
-		offset += entrySize
 	}
 
 	// Ensure sorted by BaseObjId
@@ -227,33 +261,4 @@ func (pc *PoolCache) Close() error {
 		pc.tempFile = nil
 	}
 	return nil
-}
-
-// Helper Functions
-// marshalUnloadedBlock serializes an UnloadedBlock to bytes.
-func marshalUnloadedBlock(entry UnloadedBlock) []byte {
-	data := make([]byte, entrySize)
-	binary.LittleEndian.PutUint64(data[0:8], uint64(entry.ObjId))
-	binary.LittleEndian.PutUint64(data[8:16], uint64(entry.BaseObjId))
-	binary.LittleEndian.PutUint64(data[16:24], uint64(entry.BaseFileOffset))
-	binary.LittleEndian.PutUint64(data[24:32], uint64(entry.BlockSize))
-	binary.LittleEndian.PutUint64(data[32:40], uint64(entry.BlockCount))
-	if entry.Available {
-		data[40] = 1
-	} else {
-		data[40] = 0
-	}
-	return data
-}
-
-// unmarshalUnloadedBlock deserializes bytes to UnloadedBlock.
-func unmarshalUnloadedBlock(data []byte) UnloadedBlock {
-	return UnloadedBlock{
-		ObjId:          types.ObjectId(binary.LittleEndian.Uint64(data[0:8])),
-		BaseObjId:      types.ObjectId(binary.LittleEndian.Uint64(data[8:16])),
-		BaseFileOffset: types.FileOffset(binary.LittleEndian.Uint64(data[16:24])),
-		BlockSize:      types.FileSize(binary.LittleEndian.Uint64(data[24:32])),
-		BlockCount:     int(binary.LittleEndian.Uint64(data[32:40])),
-		Available:      data[40] != 0,
-	}
 }
