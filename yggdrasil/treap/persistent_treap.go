@@ -11,30 +11,14 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/cbehopkins/bobbob"
 	"github.com/cbehopkins/bobbob/store"
-	"github.com/cbehopkins/bobbob/store/allocator"
 	"github.com/cbehopkins/bobbob/yggdrasil/types"
 )
 
 var errNotFullyPersisted = errors.New("node not fully persisted")
 
 // IterationMode defines how the tree iterator should traverse nodes.
-type IterationMode int
-
-const (
-	// IterateInMemoryOnly traverses only nodes currently loaded in memory.
-	// No disk access is performed.
-	IterateInMemoryOnly IterationMode = iota
-
-	// IterateOnDiskTransient loads nodes from disk transiently during traversal
-	// but does not cache them in the in-memory tree. Nodes are read, processed,
-	// and child object IDs are followed without modifying tree pointers.
-	IterateOnDiskTransient
-
-	// IterateOnDiskAndLoad loads nodes from disk and retains them in memory
-	// after visitation, populating the in-memory tree structure.
-	IterateOnDiskAndLoad
-)
 
 // IterationCallback is invoked for each node visited during tree iteration.
 // Return nil to continue; return an error to halt iteration immediately.
@@ -49,7 +33,7 @@ func currentUnixTime() int64 {
 type PersistentObjectId store.ObjectId
 
 func (id PersistentObjectId) New() types.PersistentKey[PersistentObjectId] {
-	v := PersistentObjectId(store.ObjectId(store.ObjNotAllocated))
+	v := PersistentObjectId(store.ObjectId(bobbob.ObjNotAllocated))
 	return &v
 }
 
@@ -97,9 +81,9 @@ func (n *PersistentTreapNode[T]) releaseToPool() {
 	n.TreapNode.right = nil
 	n.TreapNode.key = nil
 	n.TreapNode.priority = 0
-	n.objectId = store.ObjNotAllocated
-	n.leftObjectId = store.ObjNotAllocated
-	n.rightObjectId = store.ObjNotAllocated
+	n.objectId = bobbob.ObjNotAllocated
+	n.leftObjectId = bobbob.ObjNotAllocated
+	n.rightObjectId = bobbob.ObjNotAllocated
 	n.lastAccessTime = 0
 	n.Store = nil
 	n.parent.nodePool.Put(n)
@@ -135,14 +119,23 @@ func (n *PersistentTreapNode[T]) GetPriority() Priority {
 	return n.TreapNode.priority
 }
 
+// GetStore returns the backing store for this node.
+func (n *PersistentTreapNode[T]) GetStore() store.Storer {
+	return n.Store
+}
+
 // SetPriority sets the priority of the node.
 func (n *PersistentTreapNode[T]) SetPriority(p Priority) {
-	_ = n.Store.DeleteObj(n.objectId) // Invalidate the stored object ID (best effort)
-	n.objectId = store.ObjNotAllocated
+	// Mark objectId as invalid so node will be re-persisted
+	// CRITICAL: Do NOT call DeleteObj here! Parent nodes may still reference
+	// this objectId in their leftObjectId/rightObjectId fields or on disk.
+	// Deleting the object would orphan the node and cause data loss.
+	n.objectId = bobbob.ObjNotAllocated
 	n.TreapNode.priority = p
 }
 
 // GetLeft returns the left child of the node.
+// loading the child from disk if necessary.
 func (n *PersistentTreapNode[T]) GetLeft() TreapNodeInterface[T] {
 	if n.TreapNode.left == nil && store.IsValidObjectId(n.leftObjectId) {
 		tmp, err := n.newFromObjectId(n.leftObjectId)
@@ -155,6 +148,7 @@ func (n *PersistentTreapNode[T]) GetLeft() TreapNodeInterface[T] {
 }
 
 // GetRight returns the right child of the node.
+// loading the child from disk if necessary.
 func (n *PersistentTreapNode[T]) GetRight() TreapNodeInterface[T] {
 	if n.TreapNode.right == nil && store.IsValidObjectId(n.rightObjectId) {
 		tmp, err := n.newFromObjectId(n.rightObjectId)
@@ -169,16 +163,63 @@ func (n *PersistentTreapNode[T]) GetRight() TreapNodeInterface[T] {
 // SetLeft sets the left child of the node.
 func (n *PersistentTreapNode[T]) SetLeft(left TreapNodeInterface[T]) error {
 	n.TreapNode.left = left
-	_ = n.Store.DeleteObj(n.objectId) // Invalidate the stored object ID (best effort)
-	n.objectId = store.ObjNotAllocated
+
+	// Always sync leftObjectId to match what the pointer points to
+	// This keeps pointer and childObjectId in sync
+	// IMPORTANT: Don't call ObjectId() here as it allocates storage prematurely!
+	// Just read the existing objectId field without allocating.
+	if left != nil {
+		if pChild, ok := left.(*PersistentTreapNode[T]); ok {
+			// Read the objectId field directly without allocating
+			n.leftObjectId = pChild.objectId // May be -1 (invalid), persist() will allocate/write later
+		} else {
+			n.leftObjectId = bobbob.ObjNotAllocated
+		}
+	} else {
+		// Setting to nil - invalidate
+		n.leftObjectId = bobbob.ObjNotAllocated
+	}
+
+	// Mark as dirty so it gets re-persisted, but DON'T delete the old ObjectId
+	// Other nodes (particularly the parent) may still reference it in their persisted data.
+	// Deleting it would cause rehydration failures.
+	// _ = n.Store.DeleteObj(n.objectId)  // <-- THIS WAS CAUSING CORRUPTION
+	if store.IsValidObjectId(n.objectId) {
+		n.parent.queueDelete(n.objectId)
+	}
+	n.objectId = bobbob.ObjNotAllocated
 	return nil
 }
 
 // SetRight sets the right child of the node.
 func (n *PersistentTreapNode[T]) SetRight(right TreapNodeInterface[T]) error {
 	n.TreapNode.right = right
-	_ = n.Store.DeleteObj(n.objectId) // Invalidate the stored object ID (best effort)
-	n.objectId = store.ObjNotAllocated
+
+	// Always sync rightObjectId to match what the pointer points to
+	// This keeps pointer and childObjectId in sync
+	// IMPORTANT: Don't call ObjectId() here as it allocates storage prematurely!
+	// Just read the existing objectId field without allocating.
+	if right != nil {
+		if pChild, ok := right.(*PersistentTreapNode[T]); ok {
+			// Read the objectId field directly without allocating
+			n.rightObjectId = pChild.objectId // May be -1 (invalid), persist() will allocate/write later
+		} else {
+			// FIXME This shouldn't be possible - I think we should panic here
+			n.rightObjectId = bobbob.ObjNotAllocated
+		}
+	} else {
+		// Setting to nil - invalidate
+		n.rightObjectId = bobbob.ObjNotAllocated
+	}
+
+	// Mark as dirty so it gets re-persisted, but DON'T delete the old ObjectId
+	// Other nodes (particularly the parent) may still reference it in their persisted data.
+	// Deleting it would cause rehydration failures.
+	// _ = n.Store.DeleteObj(n.objectId)  // <-- THIS WAS CAUSING CORRUPTION
+	if store.IsValidObjectId(n.objectId) {
+		n.parent.queueDelete(n.objectId)
+	}
+	n.objectId = bobbob.ObjNotAllocated
 	return nil
 }
 
@@ -238,16 +279,69 @@ func PersistentTreapObjectSizes() []int {
 // If the node hasn't been persisted yet, it allocates a new object.
 func (n *PersistentTreapNode[T]) ObjectId() (store.ObjectId, error) {
 	if n == nil {
-		return store.ObjNotAllocated, nil
+		return bobbob.ObjNotAllocated, nil
 	}
 	if n.objectId < 0 {
 		objId, err := n.Store.NewObj(n.sizeInBytes())
 		if err != nil {
-			return store.ObjNotAllocated, err
+			return bobbob.ObjNotAllocated, err
 		}
 		n.objectId = objId
 	}
 	return n.objectId, nil
+}
+
+// GetObjectIdNoAlloc returns the objectId without allocating a new one if invalid.
+// This is useful for reading the objectId without side effects.
+func (n *PersistentTreapNode[T]) GetObjectIdNoAlloc() store.ObjectId {
+	if n == nil {
+		return bobbob.ObjNotAllocated
+	}
+	return n.objectId
+}
+
+// GetLeftChild returns the left child pointer (may be nil if flushed).
+// Does not load from disk; use GetTransientLeftChild for that.
+func (n *PersistentTreapNode[T]) GetLeftChild() TreapNodeInterface[T] {
+	if n == nil {
+		return nil
+	}
+	return n.TreapNode.left
+}
+
+// GetRightChild returns the right child pointer (may be nil if flushed).
+// Does not load from disk; use GetTransientRightChild for that.
+func (n *PersistentTreapNode[T]) GetRightChild() TreapNodeInterface[T] {
+	if n == nil {
+		return nil
+	}
+	return n.TreapNode.right
+}
+
+// GetTransientLeftChild loads the left child from disk if needed, without caching.
+// Returns the child node and error (may be nil if no child exists).
+func (n *PersistentTreapNode[T]) GetTransientLeftChild() (PersistentNodeWalker[T], error) {
+	return getChildNodeTransient(n, true)
+}
+
+// GetTransientRightChild loads the right child from disk if needed, without caching.
+// Returns the child node and error (may be nil if no child exists).
+func (n *PersistentTreapNode[T]) GetTransientRightChild() (PersistentNodeWalker[T], error) {
+	return getChildNodeTransient(n, false)
+}
+
+// DependentObjectIds returns all ObjectIds owned by this node's key (if the key implements DependentObjectIds).
+// These are objects that must be deleted when the node is removed.
+func (n *PersistentTreapNode[T]) DependentObjectIds() []store.ObjectId {
+	if n == nil || n.key == nil {
+		return nil
+	}
+	// Check if the key implements the DependentObjectIds interface
+	if depProvider, ok := n.key.(interface{ DependentObjectIds() []store.ObjectId }); ok {
+		return depProvider.DependentObjectIds()
+	}
+	// If key doesn't implement DependentObjectIds, it's responsible for its own cleanup
+	return nil
 }
 
 // SetObjectId sets the ObjectId for this node.
@@ -264,69 +358,105 @@ func (n *PersistentTreapNode[T]) IsObjectIdInvalid() bool {
 	return n.objectId < 0
 }
 
-// Persist saves this node and its children to the store.
-// It recursively persists child nodes that haven't been saved yet.
+// IsPersisted reports whether this node has been written to disk.
+func (n *PersistentTreapNode[T]) IsPersisted() bool {
+	if n == nil {
+		return false
+	}
+	return store.IsValidObjectId(n.objectId)
+}
+
+// Persist saves this node and its subtree to the store.
+// Traversal is handled by a dedicated post-order walker that loads nodes from disk as needed.
+// The walker automatically tracks which nodes become dirty during persistence.
+// Persist saves this node and its subtree to the store.
+// Uses the polymorphic post-order walker (rangeOverTreapPostOrder) which automatically:
+// - Tracks which nodes become dirty (valid→invalid objectId transition)
+// - Propagates dirty state to ancestor nodes on the traversal stack
+// - Loads nodes from disk transiently without mutating cached pointers
+// The callback syncs child objectIds and persists each node during traversal.
 func (n *PersistentTreapNode[T]) Persist() error {
 	if n == nil {
 		return nil
 	}
-
-	// Process left child
-	if n.TreapNode.left != nil {
-		leftNode, ok := n.TreapNode.left.(PersistentTreapNodeInterface[T])
-		if !ok {
-			return fmt.Errorf("left child is not a PersistentTreapNodeInterface")
+	_, err := rangeOverTreapPostOrder(n, func(node *PersistentTreapNode[T]) error {
+		// Sync left child ObjectId (if pointer exists)
+		if node.TreapNode.left != nil {
+			leftNode, ok := node.TreapNode.left.(*PersistentTreapNode[T])
+			if !ok {
+				return fmt.Errorf("left child is not a PersistentTreapNode")
+			}
+			// IMPORTANT: Access objectId field directly, don't call ObjectId() as it allocates storage prematurely!
+			leftObjId := leftNode.objectId
+			// Only sync if the child has a valid objectId (has been persisted)
+			if store.IsValidObjectId(leftObjId) && leftObjId != node.leftObjectId {
+				node.leftObjectId = leftObjId
+				node.objectId = bobbob.ObjNotAllocated
+			}
 		}
-
-		// Check if child needs persisting: either cached ID is invalid OR child node itself is invalid
-		needsPersist := !store.IsValidObjectId(n.leftObjectId) || leftNode.IsObjectIdInvalid()
-
-		if needsPersist {
-			err := leftNode.Persist()
-			if err != nil {
-				return fmt.Errorf("failed to persist left child: %w", err)
+		// Sync right child ObjectId (if pointer exists)
+		if node.TreapNode.right != nil {
+			rightNode, ok := node.TreapNode.right.(*PersistentTreapNode[T])
+			if !ok {
+				return fmt.Errorf("right child is not a PersistentTreapNode")
 			}
-			leftObjId, err := leftNode.ObjectId()
-			if err != nil {
-				return fmt.Errorf("failed to get left child object ID: %w", err)
+			// IMPORTANT: Access objectId field directly, don't call ObjectId() as it allocates storage prematurely!
+			rightObjId := rightNode.objectId
+			// Only sync if the child has a valid objectId (has been persisted)
+			if store.IsValidObjectId(rightObjId) && rightObjId != node.rightObjectId {
+				node.rightObjectId = rightObjId
+				node.objectId = bobbob.ObjNotAllocated
 			}
-			// If the ObjectId changed, invalidate ourselves
-			if leftObjId != n.leftObjectId && store.IsValidObjectId(n.leftObjectId) {
-				_ = n.Store.DeleteObj(n.objectId) // Invalidate (best effort)
-				n.objectId = store.ObjNotAllocated
-			}
-			n.leftObjectId = leftObjId
 		}
+		return node.persist()
+	})
+	return err
+}
+
+// rangeOverTreapPostOrder walks the subtree rooted at root in post-order (left, right, node).
+// It loads nodes from disk transiently as needed without mutating cached pointers.
+// It automatically tracks which nodes become dirty during callback execution:
+// - If a node's objectId goes from valid → invalid, the node was modified
+// - When a node becomes dirty, all its ancestors (on the stack) also become dirty
+// Returns the list of dirty nodes that need their objectIds invalidated.
+// This delegates to the generic rangeOverPostOrder implementation in persistent_walker.go.
+func rangeOverTreapPostOrder[T any](root *PersistentTreapNode[T], callback func(node *PersistentTreapNode[T]) error) ([]*PersistentTreapNode[T], error) {
+	if root == nil || root.IsNil() {
+		return nil, nil
+	}
+	return rangeOverPostOrder[T](root, callback)
+}
+
+func getChildNodeTransient[T any](node *PersistentTreapNode[T], isLeft bool) (*PersistentTreapNode[T], error) {
+	if node == nil || node.IsNil() {
+		return nil, nil
 	}
 
-	// Process right child
-	if n.TreapNode.right != nil {
-		rightNode, ok := n.TreapNode.right.(PersistentTreapNodeInterface[T])
-		if !ok {
-			return fmt.Errorf("right child is not a PersistentTreapNodeInterface")
+	if isLeft {
+		if node.TreapNode.left != nil && !node.TreapNode.left.IsNil() {
+			leftNode, ok := node.TreapNode.left.(*PersistentTreapNode[T])
+			if !ok {
+				return nil, fmt.Errorf("left child is not a PersistentTreapNode")
+			}
+			return leftNode, nil
 		}
-
-		// Check if child needs persisting: either cached ID is invalid OR child node itself is invalid
-		needsPersist := !store.IsValidObjectId(n.rightObjectId) || rightNode.IsObjectIdInvalid()
-
-		if needsPersist {
-			err := rightNode.Persist()
-			if err != nil {
-				return fmt.Errorf("failed to persist right child: %w", err)
-			}
-			rightObjId, err := rightNode.ObjectId()
-			if err != nil {
-				return fmt.Errorf("failed to get right child object ID: %w", err)
-			}
-			// If the ObjectId changed, invalidate ourselves
-			if rightObjId != n.rightObjectId && store.IsValidObjectId(n.rightObjectId) {
-				_ = n.Store.DeleteObj(n.objectId) // Invalidate (best effort)
-				n.objectId = store.ObjNotAllocated
-			}
-			n.rightObjectId = rightObjId
+		if store.IsValidObjectId(node.leftObjectId) {
+			return NewFromObjectId(node.leftObjectId, node.parent, node.Store)
 		}
+		return nil, nil
 	}
-	return n.persist()
+
+	if node.TreapNode.right != nil && !node.TreapNode.right.IsNil() {
+		rightNode, ok := node.TreapNode.right.(*PersistentTreapNode[T])
+		if !ok {
+			return nil, fmt.Errorf("right child is not a PersistentTreapNode")
+		}
+		return rightNode, nil
+	}
+	if store.IsValidObjectId(node.rightObjectId) {
+		return NewFromObjectId(node.rightObjectId, node.parent, node.Store)
+	}
+	return nil, nil
 }
 
 // flushChild flushes the given child node if it exists and is persisted, then clears its objectId and pointer.
@@ -334,13 +464,23 @@ func (n *PersistentTreapNode[T]) flushChild(child *TreapNodeInterface[T], childO
 	if *child == nil {
 		return nil
 	}
+	if (*child).IsNil() {
+		return nil
+	}
 	if !store.IsValidObjectId(*childObjectId) {
 		return errNotFullyPersisted
 	}
 	childNode, ok := (*child).(PersistentTreapNodeInterface[T])
 	if !ok {
-		return fmt.Errorf("child is not a PersistentTreapNodeInterface")
+		return errNotFullyPersisted
 	}
+	if childNode == nil || childNode.IsNil() {
+		return nil
+	}
+	if childNode.IsObjectIdInvalid() {
+		return errNotFullyPersisted
+	}
+
 	err := childNode.Flush()
 	if err != nil {
 		return err
@@ -384,16 +524,154 @@ func (n *PersistentTreapNode[T]) Flush() error {
 	return errNotFullyPersisted
 }
 
+// FlushAll recursively flushes this node's entire subtree from memory.
+// This clears child pointers throughout the subtree while keeping objectIds intact.
+// Note: The node itself remains in memory; its parent must clear its pointer to evict it.
+func (n *PersistentTreapNode[T]) FlushAll() error {
+	if n == nil {
+		return nil
+	}
+
+	allChildrenPersisted := true
+
+	if n.TreapNode.left != nil {
+		leftNode, ok := n.TreapNode.left.(*PersistentTreapNode[T])
+		if !ok {
+			return errNotFullyPersisted
+		}
+		if err := leftNode.FlushAll(); err != nil {
+			if errors.Is(err, errNotFullyPersisted) {
+				allChildrenPersisted = false
+			} else {
+				return err
+			}
+		}
+	}
+
+	if n.TreapNode.right != nil {
+		rightNode, ok := n.TreapNode.right.(*PersistentTreapNode[T])
+		if !ok {
+			return errNotFullyPersisted
+		}
+		if err := rightNode.FlushAll(); err != nil {
+			if errors.Is(err, errNotFullyPersisted) {
+				allChildrenPersisted = false
+			} else {
+				return err
+			}
+		}
+	}
+
+	if err := n.flushChild(&n.TreapNode.left, &n.leftObjectId); err != nil {
+		if errors.Is(err, errNotFullyPersisted) {
+			allChildrenPersisted = false
+		} else {
+			return err
+		}
+	}
+	if err := n.flushChild(&n.TreapNode.right, &n.rightObjectId); err != nil {
+		if errors.Is(err, errNotFullyPersisted) {
+			allChildrenPersisted = false
+		} else {
+			return err
+		}
+	}
+
+	if allChildrenPersisted {
+		return nil
+	}
+	return errNotFullyPersisted
+}
+
+// Persists this node.
 func (n *PersistentTreapNode[T]) persist() error {
 	buf, err := n.Marshal()
 	if err != nil {
-		return err
+		return fmt.Errorf("marshal failed: %w", err)
 	}
+
 	objId, err := n.ObjectId()
 	if err != nil {
-		return err
+		return fmt.Errorf("get objectId failed: %w", err)
 	}
-	return store.WriteBytesToObj(n.Store, buf, objId)
+
+	// ObjectId() allocates if needed; this branch is a defensive fallback
+	// in case an invalid ID is still returned.
+	if !store.IsValidObjectId(objId) {
+		// The allocator may round up our size request to a block boundary.
+		// We need to write exactly as many bytes as we request to allocate,
+		// padding with zeros if necessary to avoid uninitialized data.
+		// Request enough space for our data
+		requestedSize := len(buf)
+
+		// Use LateWriteNewObj to allocate and get a writer
+		newObjId, writer, finisher, err := n.Store.LateWriteNewObj(requestedSize)
+		if err != nil {
+			return fmt.Errorf("failed to allocate new object (size=%d): %w", requestedSize, err)
+		}
+		defer func() {
+			if finisher != nil {
+				finisher()
+			}
+		}()
+
+		// Write our data
+		written, err := writer.Write(buf)
+		if err != nil {
+			return fmt.Errorf("failed to write to new object %d: %w", newObjId, err)
+		}
+		if written != len(buf) {
+			return fmt.Errorf("incomplete write to object %d: wrote %d of %d bytes", newObjId, written, len(buf))
+		}
+
+		n.objectId = newObjId
+		return nil
+	}
+
+	// Check if the new data fits in the existing allocation
+	// If the allocator reports the object's allocated size, verify the new buffer fits
+	if objInfoProvider, ok := n.Store.(interface {
+		GetObjectInfo(store.ObjectId) (store.ObjectInfo, bool)
+	}); ok {
+		objInfo, found := objInfoProvider.GetObjectInfo(objId)
+		if found {
+			// If the new data exceeds the allocated size, we need to reallocate
+			if len(buf) > objInfo.Size {
+				// Allocate new object with enough space
+				newObjId, writer, finisher, err := n.Store.LateWriteNewObj(len(buf))
+				if err != nil {
+					return fmt.Errorf("failed to reallocate object (size=%d): %w", len(buf), err)
+				}
+				defer func() {
+					if finisher != nil {
+						finisher()
+					}
+				}()
+
+				// Write to new object
+				written, err := writer.Write(buf)
+				if err != nil {
+					return fmt.Errorf("failed to write to reallocated object %d: %w", newObjId, err)
+				}
+				if written != len(buf) {
+					return fmt.Errorf("incomplete write to reallocated object %d: wrote %d of %d bytes", newObjId, written, len(buf))
+				}
+
+				// Delete old object (best effort)
+				_ = n.Store.DeleteObj(objId)
+
+				// Update to new object ID
+				n.objectId = newObjId
+				return nil
+			}
+		}
+	}
+
+	// Otherwise, update the existing object (data fits in allocated space)
+	if err := store.WriteBytesToObj(n.Store, buf, objId); err != nil {
+		return fmt.Errorf("failed to write to existing object %d: %w", objId, err)
+	}
+	return nil
 }
 
 // syncChildObjectId ensures the cached object ID for a child matches the child's actual persisted ID.
@@ -403,6 +681,9 @@ func (n *PersistentTreapNode[T]) persist() error {
 // If the child doesn't exist, it does nothing.
 func (n *PersistentTreapNode[T]) syncChildObjectId(child TreapNodeInterface[T], cached *store.ObjectId, side string) error {
 	if child == nil {
+		// Child pointer is nil - might be flushed
+		// If cached objectId is valid, keep it (points to flushed child on disk)
+		// If invalid, that's fine (no child)
 		return nil
 	}
 	pChild, ok := child.(PersistentTreapNodeInterface[T])
@@ -410,25 +691,28 @@ func (n *PersistentTreapNode[T]) syncChildObjectId(child TreapNodeInterface[T], 
 		return fmt.Errorf("%s child is not a PersistentTreapNodeInterface", side)
 	}
 
-	childObjId, err := pChild.ObjectId()
-	if err != nil {
-		if store.IsValidObjectId(*cached) {
-			return fmt.Errorf("failed to get %s child object ID during marshal: %w", side, err)
-		}
-		return fmt.Errorf("failed to allocate %s child object ID during marshal: %w", side, err)
-	}
+	// Read objectId without allocation side effects
+	childObjId := pChild.GetObjectIdNoAlloc()
 
-	// If cached is valid and differs, or cached is invalid and child exists, update and invalidate self
-	if !store.IsValidObjectId(*cached) || childObjId != *cached {
+	// Always sync childObjectId to match what pointer points to.
+	// Only proceed if child has a valid objectId (has been persisted).
+	if !store.IsValidObjectId(childObjId) {
+		// Child not yet persisted, nothing to sync
+		return nil
+	}
+	if childObjId != *cached {
 		*cached = childObjId
-		_ = n.Store.DeleteObj(n.objectId) // Invalidate (best effort)
-		n.objectId = store.ObjNotAllocated
+		// Mark as dirty so it gets re-persisted, but DON'T delete the old ObjectId
+		// Other nodes (particularly the parent) may still reference it in their persisted data.
+		// Deleting it would cause rehydration failures.
+		n.objectId = bobbob.ObjNotAllocated
 	}
 	return nil
 }
 
 func (n *PersistentTreapNode[T]) Marshal() ([]byte, error) {
-	buf := make([]byte, n.sizeInBytes())
+	expectedSize := n.sizeInBytes()
+	buf := make([]byte, expectedSize)
 	offset := 0
 	persistentKey, ok := n.key.(types.PersistentKey[T])
 	if !ok {
@@ -450,6 +734,7 @@ func (n *PersistentTreapNode[T]) Marshal() ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to get self object ID during marshal: %w", err)
 	}
+
 	marshalables := []interface {
 		Marshal() ([]byte, error)
 	}{
@@ -488,6 +773,7 @@ func (n *PersistentTreapNode[T]) unmarshal(data []byte, key types.PersistentKey[
 		return fmt.Errorf("failed to unmarshal key object ID: %w", err)
 	}
 	offset += keyAsObjectId.SizeInBytes()
+
 	tmpKey := key.New()
 	err = tmpKey.UnmarshalFromObjectId(keyAsObjectId, n.Store)
 	if err != nil {
@@ -499,13 +785,13 @@ func (n *PersistentTreapNode[T]) unmarshal(data []byte, key types.PersistentKey[
 	}
 	n.key = convertedKey
 
-	err = n.priority.Unmarshal(data[offset:])
+	err = n.TreapNode.priority.Unmarshal(data[offset:])
 	if err != nil {
 		return fmt.Errorf("failed to unmarshal priority: %w", err)
 	}
-	offset += n.priority.SizeInBytes()
+	offset += n.TreapNode.priority.SizeInBytes()
 
-	leftObjectId := store.ObjectId(store.ObjNotAllocated)
+	leftObjectId := store.ObjectId(bobbob.ObjNotAllocated)
 	err = leftObjectId.Unmarshal(data[offset:])
 	if err != nil {
 		return fmt.Errorf("failed to unmarshal left object ID: %w", err)
@@ -513,7 +799,7 @@ func (n *PersistentTreapNode[T]) unmarshal(data []byte, key types.PersistentKey[
 	offset += leftObjectId.SizeInBytes()
 	n.leftObjectId = leftObjectId
 
-	rightObjectId := store.ObjectId(store.ObjNotAllocated)
+	rightObjectId := store.ObjectId(bobbob.ObjNotAllocated)
 	err = rightObjectId.Unmarshal(data[offset:])
 	if err != nil {
 		return fmt.Errorf("failed to unmarshal right object ID: %w", err)
@@ -521,7 +807,7 @@ func (n *PersistentTreapNode[T]) unmarshal(data []byte, key types.PersistentKey[
 	offset += rightObjectId.SizeInBytes()
 	n.rightObjectId = rightObjectId
 
-	selfObjectId := store.ObjectId(store.ObjNotAllocated)
+	selfObjectId := store.ObjectId(bobbob.ObjNotAllocated)
 	err = selfObjectId.Unmarshal(data[offset:])
 	if err != nil {
 		return fmt.Errorf("failed to unmarshal self object ID: %w", err)
@@ -546,6 +832,8 @@ type PersistentTreap[T any] struct {
 	Store       store.Storer
 	mu          sync.RWMutex // Protects concurrent access to the treap
 	nodePool    sync.Pool    // Pool for *PersistentTreapNode[T]
+	// pendingDeletes holds ObjectIds scheduled for deletion after a successful persist.
+	pendingDeletes []store.ObjectId
 }
 
 // Root returns the current root node (may be nil). Exposed for external tests.
@@ -564,9 +852,9 @@ func NewPersistentTreapNode[T any](key types.PersistentKey[T], priority Priority
 	n.TreapNode.priority = priority
 	n.TreapNode.left = nil
 	n.TreapNode.right = nil
-	n.objectId = store.ObjNotAllocated
-	n.leftObjectId = store.ObjNotAllocated
-	n.rightObjectId = store.ObjNotAllocated
+	n.objectId = bobbob.ObjNotAllocated
+	n.leftObjectId = bobbob.ObjNotAllocated
+	n.rightObjectId = bobbob.ObjNotAllocated
 	n.Store = stre
 	n.parent = parent
 	n.lastAccessTime = 0
@@ -574,7 +862,7 @@ func NewPersistentTreapNode[T any](key types.PersistentKey[T], priority Priority
 }
 
 // NewPersistentTreap creates a new PersistentTreap with the given comparison function and store reference.
-func NewPersistentTreap[T any](lessFunc func(a, b T) bool, keyTemplate types.PersistentKey[T], store store.Storer) *PersistentTreap[T] {
+func NewPersistentTreap[T any](lessFunc func(a, b T) bool, keyTemplate types.PersistentKey[T], stre store.Storer) *PersistentTreap[T] {
 	t := &PersistentTreap[T]{
 		Treap: Treap[T]{
 			root: nil,
@@ -582,90 +870,210 @@ func NewPersistentTreap[T any](lessFunc func(a, b T) bool, keyTemplate types.Per
 				return lessFunc(a, b)
 			},
 		},
-		keyTemplate: keyTemplate,
-		Store:       store,
+		keyTemplate:    keyTemplate,
+		Store:          stre,
+		pendingDeletes: make([]store.ObjectId, 0, 64),
 	}
 	t.nodePool = sync.Pool{New: func() any { return new(PersistentTreapNode[T]) }}
 	return t
 }
 
-// insert is a helper function that inserts a new node into the persistent treap.
-func (t *PersistentTreap[T]) insert(node TreapNodeInterface[T], newNode TreapNodeInterface[T]) TreapNodeInterface[T] {
-	// Call the insert method of the embedded Treap
-	result := t.Treap.insert(node, newNode)
-
-	nodeCast, ok := result.(PersistentTreapNodeInterface[T])
-	if !ok {
-		return result // If type assertion fails, just return the result as-is
+// queueDelete schedules an ObjectId for deletion after the next successful persist.
+func (t *PersistentTreap[T]) queueDelete(objId store.ObjectId) {
+	if store.IsValidObjectId(objId) {
+		t.pendingDeletes = append(t.pendingDeletes, objId)
 	}
-	objId, err := nodeCast.ObjectId()
-	if err == nil && objId > store.ObjNotAllocated {
-		// We are modifying an existing node, so delete the old object
-		_ = t.Store.DeleteObj(store.ObjectId(objId)) // Best effort cleanup
-	}
-	nodeCast.SetObjectId(store.ObjNotAllocated)
-
-	return result
 }
 
-// delete removes the node with the given key from the persistent treap.
-func (t *PersistentTreap[T]) delete(node TreapNodeInterface[T], key T) TreapNodeInterface[T] {
-	// Call the delete method of the embedded Treap
-	result := t.Treap.delete(node, key)
-
-	if result != nil && !result.IsNil() {
-		nodeCast, ok := result.(PersistentTreapNodeInterface[T])
-		if ok {
-			objId, err := nodeCast.ObjectId()
-			if err == nil && objId > store.ObjNotAllocated {
-				// Best-effort cleanup of associated objects (key/payload) before freeing node.
-				if depProvider, ok := nodeCast.(interface{ DependentObjectIds() []store.ObjectId }); ok {
-					for _, dep := range depProvider.DependentObjectIds() {
-						if store.IsValidObjectId(dep) {
-							_ = t.Store.DeleteObj(dep)
-						}
-					}
-				}
-				_ = t.Store.DeleteObj(objId) // Best effort cleanup of the node itself
-			}
-			nodeCast.SetObjectId(store.ObjNotAllocated)
+// flushPendingDeletes deletes all queued ObjectIds and clears the queue.
+// Call this only after a successful persist to avoid breaking on-disk references.
+func (t *PersistentTreap[T]) flushPendingDeletes() {
+	for _, objId := range t.pendingDeletes {
+		if store.IsValidObjectId(objId) {
+			_ = t.Store.DeleteObj(objId)
 		}
 	}
+	t.pendingDeletes = t.pendingDeletes[:0]
+}
 
-	return result
+// releaseNode returns a node to the pool if it's a persistent node.
+func (t *PersistentTreap[T]) releaseNode(node TreapNodeInterface[T]) {
+	if node == nil || node.IsNil() {
+		return
+	}
+	if pNode, ok := node.(*PersistentTreapNode[T]); ok {
+		pNode.releaseToPool()
+	}
+}
+
+// trackDirty records a node as dirty for later invalidation.
+func (t *PersistentTreap[T]) trackDirty(dirty *[]PersistentTreapNodeInterface[T], node TreapNodeInterface[T]) {
+	if dirty == nil || node == nil || node.IsNil() {
+		return
+	}
+	if pNode, ok := node.(PersistentTreapNodeInterface[T]); ok {
+		*dirty = append(*dirty, pNode)
+	}
+}
+
+// invalidateDirty marks all tracked nodes as needing re-persist.
+func (t *PersistentTreap[T]) invalidateDirty(dirty []PersistentTreapNodeInterface[T]) {
+	for _, node := range dirty {
+		if node == nil {
+			continue
+		}
+
+		// Queue old object ID for deletion
+		if !node.IsObjectIdInvalid() {
+			oldObjId := node.GetObjectIdNoAlloc()
+			if store.IsValidObjectId(oldObjId) {
+				t.queueDelete(oldObjId)
+			}
+			node.SetObjectId(bobbob.ObjNotAllocated)
+		}
+	}
+}
+
+// insertNodeTracked performs insertion using package-level logic with dirty tracking.
+// This eliminates duplication with the base Treap.insert while adding persistence.
+func (t *PersistentTreap[T]) insertNodeTracked(node TreapNodeInterface[T], newNode TreapNodeInterface[T], dirty *[]PersistentTreapNodeInterface[T]) (TreapNodeInterface[T], error) {
+	// Create a duplicate key handler for PersistentTreap's replace-on-duplicate behavior
+	duplicateHandler := func(existingNode, newNode TreapNodeInterface[T]) bool {
+		if pNode, ok := existingNode.(*PersistentTreapNode[T]); ok {
+			if newPNode, ok := newNode.(*PersistentTreapNode[T]); ok {
+				if store.IsValidObjectId(pNode.objectId) {
+					t.queueDelete(pNode.objectId)
+				}
+				pNode.key = newPNode.key
+				pNode.priority = newPNode.priority
+				pNode.objectId = bobbob.ObjNotAllocated
+				return true // Handled
+			}
+		}
+		return false // Not handled, use default
+	}
+
+	return InsertNodeTracked(
+		node,
+		newNode,
+		t.Less,
+		t.releaseNode,
+		func(n TreapNodeInterface[T]) { t.trackDirty(dirty, n) },
+		duplicateHandler,
+	)
+}
+
+// deleteNodeTracked performs deletion using package-level logic with dirty tracking.
+// This eliminates duplication with the base Treap.delete while adding persistence.
+func (t *PersistentTreap[T]) deleteNodeTracked(node TreapNodeInterface[T], key T, dirty *[]PersistentTreapNodeInterface[T]) (TreapNodeInterface[T], error) {
+	return DeleteNodeTracked(
+		node,
+		key,
+		t.Less,
+		t.releaseNode,
+		func(n TreapNodeInterface[T]) { t.trackDirty(dirty, n) },
+		func(n TreapNodeInterface[T], dt DirtyTracker[T]) { t.cleanupRemovedNode(n, dt) },
+	)
+}
+
+// insertTracked inserts a new node and tracks all modified nodes for persistence.
+// Now delegates to insertNodeTracked for the actual logic.
+func (t *PersistentTreap[T]) insertTracked(node TreapNodeInterface[T], newNode TreapNodeInterface[T], dirty *[]PersistentTreapNodeInterface[T]) (TreapNodeInterface[T], error) {
+	return t.insertNodeTracked(node, newNode, dirty)
+}
+
+// deleteTracked removes the node with the given key and tracks dirty nodes for invalidation.
+// Now delegates to deleteNodeTracked for the actual logic.
+func (t *PersistentTreap[T]) deleteTracked(node TreapNodeInterface[T], key T, dirty *[]PersistentTreapNodeInterface[T]) (TreapNodeInterface[T], error) {
+	return t.deleteNodeTracked(node, key, dirty)
+}
+
+// cleanupRemovedNode performs best-effort cleanup for a removed node's persisted objects.
+func (t *PersistentTreap[T]) cleanupRemovedNode(node TreapNodeInterface[T], trackDirty DirtyTracker[T]) {
+	nodeCast, ok := node.(PersistentTreapNodeInterface[T])
+	if !ok {
+		return
+	}
+	objId := nodeCast.GetObjectIdNoAlloc()
+
+	if objId > bobbob.ObjNotAllocated {
+		// Best-effort cleanup of associated objects (key/payload) before freeing node.
+		if depProvider, ok := nodeCast.(interface{ DependentObjectIds() []store.ObjectId }); ok {
+			for _, dep := range depProvider.DependentObjectIds() {
+				if store.IsValidObjectId(dep) {
+					t.queueDelete(dep)
+				}
+			}
+		}
+		// Defer deletion of the node object until after a successful persist.
+		t.queueDelete(objId)
+	}
+
+	nodeCast.SetObjectId(bobbob.ObjNotAllocated)
+	if trackDirty != nil {
+		trackDirty(node)
+	}
 }
 
 // InsertComplex inserts a new node with the given key and priority into the persistent treap.
 // Use this method when you need to specify a custom priority value.
-func (t *PersistentTreap[T]) InsertComplex(key types.PersistentKey[T], priority Priority) {
+func (t *PersistentTreap[T]) InsertComplex(key types.PersistentKey[T], priority Priority) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	newNode := NewPersistentTreapNode(key, priority, t.Store, t)
-	t.root = t.insert(t.root, newNode)
+	dirty := make([]PersistentTreapNodeInterface[T], 0, 32)
+	inserted, err := t.insertTracked(t.root, newNode, &dirty)
+	if err != nil {
+		return err
+	}
+	t.root = inserted
+	t.invalidateDirty(dirty)
+	t.flushPendingDeletes()
+	return nil
 }
 
 // Insert inserts a new node with the given key into the persistent treap.
 // If the key implements types.PriorityProvider, its Priority() method is used;
 // otherwise, a random priority is generated.
 // This is the preferred method for most use cases.
-func (t *PersistentTreap[T]) Insert(key types.PersistentKey[T]) {
+func (t *PersistentTreap[T]) Insert(key types.PersistentKey[T]) error {
 	var priority Priority
 	if pp, ok := any(key).(types.PriorityProvider); ok {
 		priority = Priority(pp.Priority())
 	} else {
 		priority = randomPriority()
 	}
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	newNode := NewPersistentTreapNode(key, priority, t.Store, t)
-	t.root = t.insert(t.root, newNode)
+	return t.InsertComplex(key, priority)
+	// t.mu.Lock()
+	// defer t.mu.Unlock()
+	// newNode := NewPersistentTreapNode(key, priority, t.Store, t)
+	// dirty := make([]PersistentTreapNodeInterface[T], 0, 32)
+	// inserted, err := t.insertTracked(t.root, newNode, &dirty)
+	// if err != nil {
+	// 	return err
+	// }
+	// t.root = inserted
+	// t.invalidateDirty(dirty)
+	// t.flushPendingDeletes()
+	// return nil
 }
 
 // Delete removes the node with the given key from the persistent treap.
-func (t *PersistentTreap[T]) Delete(key types.PersistentKey[T]) {
+func (t *PersistentTreap[T]) Delete(key types.PersistentKey[T]) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	t.root = t.delete(t.root, key.Value())
+
+	dirty := make([]PersistentTreapNodeInterface[T], 0, 32)
+	deleted, err := t.deleteTracked(t.root, key.Value(), &dirty)
+	if err != nil {
+		return err
+	}
+	t.root = deleted
+	t.invalidateDirty(dirty)
+
+	t.flushPendingDeletes()
+
+	return nil
 }
 
 // SearchComplex searches for the node with the given key in the persistent treap.
@@ -689,7 +1097,7 @@ func (t *PersistentTreap[T]) SearchComplex(key types.PersistentKey[T], callback 
 		}
 		return nil
 	}
-	return t.searchComplex(t.root, key.Value(), wrappedCallback)
+	return SearchNodeComplex(t.root, key.Value(), t.Less, wrappedCallback)
 }
 
 // Search searches for the node with the given key in the persistent treap.
@@ -705,22 +1113,31 @@ func (t *PersistentTreap[T]) Search(key types.PersistentKey[T]) TreapNodeInterfa
 		}
 		return nil
 	}
-	result, _ := t.searchComplex(t.root, key.Value(), wrappedCallback)
+	result, _ := SearchNodeComplex(t.root, key.Value(), t.Less, wrappedCallback)
 	return result
 }
 
 // UpdatePriority updates the priority of the node with the given key.
-func (t *PersistentTreap[T]) UpdatePriority(key types.PersistentKey[T], newPriority Priority) {
+func (t *PersistentTreap[T]) UpdatePriority(key types.PersistentKey[T], newPriority Priority) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	node := t.search(t.root, key.Value())
+	node := SearchNode(t.root, key.Value(), t.Less)
 	if node != nil && !node.IsNil() {
-		node.SetPriority(newPriority)
 		// Delete and re-add as the priority change may violate treap properties
-		t.root = t.delete(t.root, key.Value())
+		dirty := make([]PersistentTreapNodeInterface[T], 0, 32)
+		var err error
+		t.root, err = t.deleteTracked(t.root, key.Value(), &dirty)
+		if err != nil {
+			return err
+		}
 		newNode := NewPersistentTreapNode(key, newPriority, t.Store, t)
-		t.root = t.insert(t.root, newNode)
+		t.root, err = t.insertTracked(t.root, newNode, &dirty)
+		if err != nil {
+			return err
+		}
+		t.invalidateDirty(dirty)
 	}
+	return nil
 }
 
 // shouldLockFirst determines if this treap should be locked before the other treap
@@ -798,20 +1215,115 @@ func (t *PersistentTreap[T]) Compare(
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	nextA, cancelA := seq2Next(t.Iter(ctx))
-	nextB, cancelB := seq2Next(other.Iter(ctx))
+	nextA, cancelA := seq2Next(t.iterInOrder(ctx))
+	nextB, cancelB := seq2Next(other.iterInOrder(ctx))
 	defer cancelA()
 	defer cancelB()
 
 	return mergeOrdered(nextA, nextB, t.Less, onlyInA, inBoth, onlyInB)
 }
 
-// Iter returns an in-order iterator over the persistent treap using the Go iterator protocol.
-// It respects context cancellation and surfaces iteration errors via Seq2.
-func (t *PersistentTreap[T]) Iter(ctx context.Context) iter.Seq2[TreapNodeInterface[T], error] {
-	return func(yield func(TreapNodeInterface[T], error) bool) {
-		mode := t.getIterationMode()
+// ValidateAgainstDisk walks the in-memory tree and validates each node's data against
+// what's stored on disk. This is a diagnostic tool to detect corruption.
+// Returns a slice of error messages for any inconsistencies found.
+func (t *PersistentTreap[T]) ValidateAgainstDisk() []string {
+	var errors []string
 
+	if t.root == nil {
+		return errors
+	}
+
+	// Walk all in-memory nodes
+	nodes := t.GetInMemoryNodes()
+
+	for _, info := range nodes {
+		node := info.Node
+		if node == nil {
+			errors = append(errors, "node is nil")
+			continue
+		}
+
+		// Read objectId without allocation side effects
+		objId := node.GetObjectIdNoAlloc()
+
+		if !store.IsValidObjectId(objId) {
+			// Not persisted yet, skip validation
+			continue
+		}
+
+		// Read the node from disk
+		diskNode, err := NewFromObjectId(objId, t, t.Store)
+		if err != nil {
+			errors = append(errors, fmt.Sprintf("Failed to read objectId %d from disk: %v", objId, err))
+			continue
+		}
+
+		// Validate key matches (compare the actual key values)
+		if !node.key.Equals(diskNode.key.Value()) {
+			errors = append(errors, fmt.Sprintf("ObjectId %d: in-memory key != disk key", objId))
+		}
+
+		// Validate priority matches
+		if node.priority != diskNode.priority {
+			errors = append(errors, fmt.Sprintf("ObjectId %d: in-memory priority %d != disk priority %d",
+				objId, node.priority, diskNode.priority))
+		}
+
+		// Validate left child objectId
+		memLeftObjId := node.leftObjectId
+		diskLeftObjId := diskNode.leftObjectId
+		if memLeftObjId != diskLeftObjId {
+			errors = append(errors, fmt.Sprintf("ObjectId %d: in-memory leftObjectId %d != disk leftObjectId %d",
+				objId, memLeftObjId, diskLeftObjId))
+		}
+
+		// Validate right child objectId
+		memRightObjId := node.rightObjectId
+		diskRightObjId := diskNode.rightObjectId
+		if memRightObjId != diskRightObjId {
+			errors = append(errors, fmt.Sprintf("ObjectId %d: in-memory rightObjectId %d != disk rightObjectId %d",
+				objId, memRightObjId, diskRightObjId))
+		}
+
+		// If in-memory node has a left child pointer, validate it matches leftObjectId
+		if node.TreapNode.left != nil {
+			leftNode, ok := node.TreapNode.left.(PersistentTreapNodeInterface[T])
+			if ok {
+				// Read objectId without allocation side effects
+				leftObjId := leftNode.GetObjectIdNoAlloc()
+				if store.IsValidObjectId(leftObjId) {
+					if leftObjId != memLeftObjId {
+						errors = append(errors, fmt.Sprintf("ObjectId %d: left pointer's objectId %d != cached leftObjectId %d",
+							objId, leftObjId, memLeftObjId))
+					}
+				}
+			}
+		}
+
+		// If in-memory node has a right child pointer, validate it matches rightObjectId
+		if node.TreapNode.right != nil {
+			rightNode, ok := node.TreapNode.right.(PersistentTreapNodeInterface[T])
+			if ok {
+				// Read objectId without allocation side effects
+				rightObjId := rightNode.GetObjectIdNoAlloc()
+				if store.IsValidObjectId(rightObjId) {
+					if rightObjId != memRightObjId {
+						errors = append(errors, fmt.Sprintf("ObjectId %d: right pointer's objectId %d != cached rightObjectId %d",
+							objId, rightObjId, memRightObjId))
+					}
+				}
+			}
+		}
+	}
+
+	return errors
+}
+
+// iterInOrder builds a Seq2 iterator for in-order traversal.
+// It loads nodes from disk via GetLeft/GetRight when needed, ensuring full-tree traversal.
+// This is called from Compare() which already holds R locks, so this must NOT acquire any locks.
+func (t *PersistentTreap[T]) iterInOrder(ctx context.Context) iter.Seq2[TreapNodeInterface[T], error] {
+	return func(yield func(TreapNodeInterface[T], error) bool) {
 		callback := func(node TreapNodeInterface[T]) error {
 			select {
 			case <-ctx.Done():
@@ -825,95 +1337,111 @@ func (t *PersistentTreap[T]) Iter(ctx context.Context) iter.Seq2[TreapNodeInterf
 			return nil
 		}
 
-		var err error
-		switch mode {
-		case IterateInMemoryOnly:
-			err = t.iterateInMemory(t.root, callback)
-		case IterateOnDiskTransient:
-			rootNode, ok := t.root.(PersistentTreapNodeInterface[T])
-			if !ok {
-				err = fmt.Errorf("root is not a PersistentTreapNode")
-				break
-			}
-			objId, objErr := rootNode.ObjectId()
-			if objErr != nil {
-				err = fmt.Errorf("failed to get root object ID: %w", objErr)
-				break
-			}
-			if !store.IsValidObjectId(objId) {
-				err = t.iterateInMemory(t.root, callback)
-				break
-			}
-			err = t.iterateOnDiskTransient(objId, callback)
-		case IterateOnDiskAndLoad:
-			rootNode, ok := t.root.(PersistentTreapNodeInterface[T])
-			if !ok {
-				err = fmt.Errorf("root is not a PersistentTreapNode")
-				break
-			}
-			objId, objErr := rootNode.ObjectId()
-			if objErr != nil {
-				err = fmt.Errorf("failed to get root object ID: %w", objErr)
-				break
-			}
-			if !store.IsValidObjectId(objId) {
-				err = t.iterateInMemory(t.root, callback)
-				break
-			}
-			err = t.iterateOnDiskAndLoad(objId, callback)
-		default:
-			err = fmt.Errorf("unknown iteration mode: %d", mode)
-		}
-
+		// Since Compare() already holds R locks, we call hybridWalkInOrder directly
+		// without acquiring any locks. This avoids deadlock.
+		// We don't track mutations here (read-only traversal).
+		_, err := hybridWalkInOrder(t.root, t.Store, callback, false)
 		if err == errWalkCanceled {
 			err = nil
 		}
-
 		if err != nil {
 			_ = yield(nil, err)
 		}
 	}
 }
 
-// getIterationMode determines which iteration mode to use for this tree.
-// If nodes are cached in memory, use in-memory iteration.
-// If the tree has been persisted, use transient disk iteration.
-// Otherwise fall back to in-memory iteration for unpersisted trees.
-func (t *PersistentTreap[T]) getIterationMode() IterationMode {
+// persistLockedTree persists the entire treap to the store.
+// Assumes the caller already holds the write lock (t.mu.Lock()).
+// This is the internal implementation that does not acquire locks itself,
+// allowing multiple persist calls within a single locked operation.
+func (t *PersistentTreap[T]) persistLockedTree() error {
+	_, err := t.rangeOverTreapPostOrderLocked(func(node *PersistentTreapNode[T]) error {
+		// Sync left child ObjectId (if pointer exists)
+		if node.TreapNode.left != nil {
+			leftNode, ok := node.TreapNode.left.(*PersistentTreapNode[T])
+			if !ok {
+				return fmt.Errorf("left child is not a PersistentTreapNode")
+			}
+			leftObjId := leftNode.objectId
+			if store.IsValidObjectId(leftObjId) && leftObjId != node.leftObjectId {
+				node.leftObjectId = leftObjId
+				node.objectId = bobbob.ObjNotAllocated
+			}
+		}
+		// Sync right child ObjectId (if pointer exists)
+		if node.TreapNode.right != nil {
+			rightNode, ok := node.TreapNode.right.(*PersistentTreapNode[T])
+			if !ok {
+				return fmt.Errorf("right child is not a PersistentTreapNode")
+			}
+			rightObjId := rightNode.objectId
+			if store.IsValidObjectId(rightObjId) && rightObjId != node.rightObjectId {
+				node.rightObjectId = rightObjId
+				node.objectId = bobbob.ObjNotAllocated
+			}
+		}
+		return node.persist()
+	})
+	if err != nil {
+		return err
+	}
+	// Safe to delete queued objects now that the tree is fully persisted.
+	t.flushPendingDeletes()
+	return err
+}
+
+// RangeOverTreapPostOrder walks the treap in post-order (left, right, node),
+// loading nodes from disk as needed. The callback receives each node.
+// Returns the list of nodes that became dirty during traversal.
+// NOTE: This method acquires the write lock because GetLeft()/GetRight()
+// may load nodes from disk and mutate pointers.
+func (t *PersistentTreap[T]) RangeOverTreapPostOrder(callback func(node *PersistentTreapNode[T]) error) ([]*PersistentTreapNode[T], error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.rangeOverTreapPostOrderLocked(callback)
+}
+
+// rangeOverTreapPostOrderLocked is the internal implementation that assumes
+// the caller already holds the write lock.
+// Returns the list of dirty nodes that were modified during traversal.
+func (t *PersistentTreap[T]) rangeOverTreapPostOrderLocked(callback func(node *PersistentTreapNode[T]) error) ([]*PersistentTreapNode[T], error) {
 	if t.root == nil {
-		return IterateInMemoryOnly
+		return nil, nil
 	}
-
-	// Check if we have in-memory nodes
-	inMemoryCount := t.countInMemoryNodes(t.root)
-	if inMemoryCount > 0 {
-		return IterateInMemoryOnly
-	}
-
-	// No in-memory nodes, but check if the root has been persisted
 	rootNode, ok := t.root.(*PersistentTreapNode[T])
 	if !ok {
-		return IterateInMemoryOnly
+		return nil, fmt.Errorf("root is not a PersistentTreapNode")
 	}
-	objId, err := rootNode.ObjectId()
-	if err != nil || !store.IsValidObjectId(objId) {
-		return IterateInMemoryOnly
-	}
-
-	// Use transient disk iteration for persisted trees without in-memory nodes
-	return IterateOnDiskTransient
+	return rangeOverTreapPostOrder(rootNode, callback)
 }
 
 // Persist persists the entire treap to the store.
+// Acquires the write lock to ensure atomic persistence.
 func (t *PersistentTreap[T]) Persist() error {
-	if t.root != nil {
-		rootNode, ok := t.root.(PersistentTreapNodeInterface[T])
-		if !ok {
-			return fmt.Errorf("root is not a PersistentTreapNodeInterface")
-		}
-		return rootNode.Persist()
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.persistLockedTree()
+}
+
+// FlushAll persists the tree and then flushes the entire subtree from memory.
+// The root node remains in memory; all descendants are cleared from pointers.
+func (t *PersistentTreap[T]) FlushAll() error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	if t.root == nil {
+		return nil
 	}
-	return nil
+
+	if err := t.persistLockedTree(); err != nil {
+		return err
+	}
+
+	rootNode, ok := t.root.(*PersistentTreapNode[T])
+	if !ok {
+		return fmt.Errorf("root is not a PersistentTreapNode")
+	}
+	return rootNode.FlushAll()
 }
 
 // CompactSuboptimalAllocations deletes nodes that reside in sub-optimal block
@@ -924,180 +1452,66 @@ func (t *PersistentTreap[T]) CompactSuboptimalAllocations() (int, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	provider, ok := t.Store.(store.AllocatorProvider)
-	if !ok {
-		return 0, nil
-	}
-	compactor, ok := provider.Allocator().(allocator.BlockAllocatorCompactor)
-	if !ok {
-		return 0, nil
-	}
+	// TODO: BlockAllocatorCompactor interface not yet ported to new allocator package
+	// This feature requires the new allocator to support detailed BlockAllocator inspection
+	// For now, compaction is disabled until the interface is re-implemented
+	return 0, nil
 
-	var zero PersistentTreapNode[T]
-	nodeSize := zero.sizeInBytes()
-	blockSize, allocatorIndex, _, found := compactor.FindSmallestBlockAllocatorForSize(nodeSize)
-	if !found {
-		return 0, nil
-	}
-
-	objectIds := compactor.GetObjectIdsInAllocator(blockSize, allocatorIndex)
-	if len(objectIds) == 0 {
-		return 0, nil
-	}
-
-	idSet := make(map[store.ObjectId]struct{}, len(objectIds))
-	for _, id := range objectIds {
-		if store.IsValidObjectId(id) {
-			idSet[id] = struct{}{}
-		}
-	}
-
-	deleted := 0
-	var walk func(TreapNodeInterface[T])
-	walk = func(node TreapNodeInterface[T]) {
-		if node == nil || node.IsNil() {
-			return
-		}
-		pnode, ok := node.(*PersistentTreapNode[T])
-		if !ok {
-			return
-		}
-
-		walk(pnode.GetLeft())
-		if store.IsValidObjectId(pnode.objectId) {
-			if _, hit := idSet[pnode.objectId]; hit {
-				_ = t.Store.DeleteObj(pnode.objectId) // best effort cleanup
-				pnode.SetObjectId(store.ObjNotAllocated)
-				deleted++
+	// CODE BELOW TEMPORARILY DISABLED - BlockAllocatorCompactor not yet ported
+	/*
+			provider, ok := t.Store.(store.AllocatorProvider)
+			if !ok {
+				return 0, nil
 			}
-		}
-		walk(pnode.GetRight())
-	}
+			compactor, ok := provider.Allocator().(allocator.BlockAllocatorCompactor)
+			if !ok {
+				return 0, nil
+			}
 
-	walk(t.root)
-	return deleted, nil
-}
+			var zero PersistentTreapNode[T]
+			nodeSize := zero.sizeInBytes()
+			blockSize, allocatorIndex, _, found := compactor.FindSmallestBlockAllocatorForSize(nodeSize)
+			if !found {
+				return 0, nil
+			}
 
-// collectPersistentNodesPostOrder collects persistent nodes in post-order to ensure
-// children appear before parents. This is used by BatchPersist for contiguous runs.
-func collectPersistentNodesPostOrder[T any](node TreapNodeInterface[T], out *[]*PersistentTreapNode[T]) error {
-	if node == nil || node.IsNil() {
-		return nil
-	}
-	if err := collectPersistentNodesPostOrder(node.GetLeft(), out); err != nil {
-		return err
-	}
-	if err := collectPersistentNodesPostOrder(node.GetRight(), out); err != nil {
-		return err
-	}
-	pNode, ok := node.(*PersistentTreapNode[T])
-	if !ok {
-		return fmt.Errorf("node is not *PersistentTreapNode")
-	}
-	*out = append(*out, pNode)
-	return nil
-}
+			objectIds := compactor.GetObjectIdsInAllocator(blockSize, allocatorIndex)
+			if len(objectIds) == 0 {
+				return 0, nil
+			}
 
-// BatchPersist attempts to persist all nodes using a single contiguous run when the
-// underlying store supports run allocation. It falls back to the standard Persist
-// when run allocation is unsupported or unavailable.
-func (t *PersistentTreap[T]) BatchPersist() error {
-	if t.root == nil {
-		return nil
-	}
-
-	nodes := make([]*PersistentTreapNode[T], 0)
-	if err := collectPersistentNodesPostOrder(t.root, &nodes); err != nil {
-		return err
-	}
-	if len(nodes) == 0 {
-		return nil
-	}
-
-	size := nodes[0].sizeInBytes()
-
-	ra, ok := t.Store.(store.RunAllocator)
-	if !ok {
-		return t.Persist()
-	}
-
-	objIds, offsets, err := ra.AllocateRun(size, len(nodes))
-	if err != nil {
-		return t.Persist()
-	}
-
-	// Verify offsets are actually contiguous before attempting batched write
-	contiguous := true
-	for i := 1; i < len(offsets); i++ {
-		expectedOffset := offsets[i-1] + store.FileOffset(size)
-		if offsets[i] != expectedOffset {
-			contiguous = false
-			break
-		}
-	}
-
-	for i, n := range nodes {
-		n.SetObjectId(objIds[i])
-	}
-
-	// If not contiguous, fall back to regular persist
-	if !contiguous {
-		return t.Persist()
-	}
-
-	objIdsForWrite := make([]store.ObjectId, len(nodes))
-	sizes := make([]int, len(nodes))
-	allData := make([]byte, 0, size*len(nodes))
-
-	for i, n := range nodes {
-		// Ensure child object IDs are synchronized before marshal
-		if n.TreapNode.left != nil {
-			if leftNode, ok := n.TreapNode.left.(PersistentTreapNodeInterface[T]); ok {
-				childId, childErr := leftNode.ObjectId()
-				if childErr != nil {
-					return childErr
+			idSet := make(map[store.ObjectId]struct{}, len(objectIds))
+			for _, id := range objectIds {
+				if store.IsValidObjectId(id) {
+					idSet[id] = struct{}{}
 				}
-				n.leftObjectId = childId
 			}
-		}
-		if n.TreapNode.right != nil {
-			if rightNode, ok := n.TreapNode.right.(PersistentTreapNodeInterface[T]); ok {
-				childId, childErr := rightNode.ObjectId()
-				if childErr != nil {
-					return childErr
+
+			deleted := 0
+			var walk func(TreapNodeInterface[T])
+			walk = func(node TreapNodeInterface[T]) {
+				if node == nil || node.IsNil() {
+					return
 				}
-				n.rightObjectId = childId
+				pnode, ok := node.(*PersistentTreapNode[T])
+				if !ok {
+					return
+				}
+
+				walk(pnode.GetLeft())
+				if store.IsValidObjectId(pnode.objectId) {
+					if _, hit := idSet[pnode.objectId]; hit {
+					_ = t.Store.DeleteObj(pnode.objectId) // best effort cleanup
+					pnode.SetObjectId(internal.ObjNotAllocated)
+					deleted++
+				}
 			}
+			walk(pnode.GetRight())
 		}
 
-		data, marshalErr := n.Marshal()
-		if marshalErr != nil {
-			return marshalErr
-		}
-		objId, idErr := n.ObjectId()
-		if idErr != nil {
-			return idErr
-		}
-		objIdsForWrite[i] = objId
-		sizes[i] = len(data)
-		allData = append(allData, data...)
-	}
-
-	if err := t.Store.WriteBatchedObjs(objIdsForWrite, allData, sizes); err != nil {
-		// Fallback to per-node writes for robustness
-		for i, objId := range objIdsForWrite {
-			start := i * size
-			end := start + sizes[i]
-			if end > len(allData) {
-				return fmt.Errorf("batched buffer bounds error")
-			}
-			if writeErr := store.WriteBytesToObj(t.Store, allData[start:end], objId); writeErr != nil {
-				return writeErr
-			}
-		}
-	}
-
-	return nil
+		walk(t.root)
+		return deleted, nil
+	*/
 }
 
 // Load loads the treap from the store using the given root ObjectId.
@@ -1118,186 +1532,6 @@ func (t *PersistentTreap[T]) Load(objId store.ObjectId) error {
 //     If the tree hasn't been persisted (no root object ID), falls back to in-memory iteration
 //
 // The iteration is in-order (left, node, right).
-func (t *PersistentTreap[T]) Iterate(mode IterationMode, callback IterationCallback[T]) error {
-	if t.root == nil {
-		return nil
-	}
-
-	switch mode {
-	case IterateInMemoryOnly:
-		return t.iterateInMemory(t.root, callback)
-	case IterateOnDiskTransient:
-		rootNode, ok := t.root.(PersistentTreapNodeInterface[T])
-		if !ok {
-			return fmt.Errorf("root is not a PersistentTreapNode")
-		}
-		objId, err := rootNode.ObjectId()
-		if err != nil {
-			return fmt.Errorf("failed to get root object ID: %w", err)
-		}
-		// If root hasn't been persisted, fall back to in-memory iteration
-		if !store.IsValidObjectId(objId) {
-			return t.iterateInMemory(t.root, callback)
-		}
-		return t.iterateOnDiskTransient(objId, callback)
-	case IterateOnDiskAndLoad:
-		rootNode, ok := t.root.(PersistentTreapNodeInterface[T])
-		if !ok {
-			return fmt.Errorf("root is not a PersistentTreapNode")
-		}
-		objId, err := rootNode.ObjectId()
-		if err != nil {
-			return fmt.Errorf("failed to get root object ID: %w", err)
-		}
-		// If root hasn't been persisted, fall back to in-memory iteration
-		if !store.IsValidObjectId(objId) {
-			return t.iterateInMemory(t.root, callback)
-		}
-		return t.iterateOnDiskAndLoad(objId, callback)
-	default:
-		return fmt.Errorf("unknown iteration mode: %d", mode)
-	}
-}
-
-// iterateInMemory traverses only cached nodes without disk access.
-// Unlike the shared inOrderWalk, this directly accesses the cached pointers
-// to avoid triggering lazy loading of nodes from disk.
-func (t *PersistentTreap[T]) iterateInMemory(node TreapNodeInterface[T], callback IterationCallback[T]) error {
-	if node == nil || node.IsNil() {
-		return nil
-	}
-
-	pNode, ok := node.(PersistentTreapNodeInterface[T])
-	if !ok {
-		return nil // Skip non-persistent nodes
-	}
-
-	// In-order: left, node, right
-	// Note: We need to access the underlying TreapNode pointers directly to avoid
-	// triggering GetLeft()/GetRight() which would trigger lazy loading of children from disk.
-	// For nodes that are PersistentTreapNode[T] directly, we access TreapNode.left/right.
-	// For nodes that embed PersistentTreapNode (like PersistentPayloadTreapNode), we get the
-	// embedded TreapNode from the interface.
-
-	// Get left child from the underlying TreapNode
-	var left TreapNodeInterface[T]
-	if pNodeConcrete, ok := pNode.(*PersistentTreapNode[T]); ok {
-		left = pNodeConcrete.TreapNode.left
-	} else {
-		// For other types that embed TreapNode, we can't directly access the embedded field
-		// through the interface, so we use GetLeft() which may trigger disk loads in some cases
-		left = pNode.GetLeft()
-	}
-
-	if left != nil && !left.IsNil() {
-		if err := t.iterateInMemory(left, callback); err != nil {
-			return err
-		}
-	}
-
-	if err := callback(pNode); err != nil {
-		return err
-	}
-
-	// Get right child from the underlying TreapNode
-	var right TreapNodeInterface[T]
-	if pNodeConcrete, ok := pNode.(*PersistentTreapNode[T]); ok {
-		right = pNodeConcrete.TreapNode.right
-	} else {
-		// For other types that embed TreapNode, we can't directly access the embedded field
-		// through the interface, so we use GetRight() which may trigger disk loads in some cases
-		right = pNode.GetRight()
-	}
-
-	if right != nil && !right.IsNil() {
-		if err := t.iterateInMemory(right, callback); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-// iterateOnDiskTransient loads nodes transiently via object IDs without caching.
-// Uses an explicit stack to avoid excessive recursion depth for large trees.
-func (t *PersistentTreap[T]) iterateOnDiskTransient(rootObjId store.ObjectId, callback IterationCallback[T]) error {
-	if !store.IsValidObjectId(rootObjId) {
-		return nil
-	}
-
-	// Stack for in-order traversal: (objId, state)
-	// state: 0=enter, 1=visiting node, 2=exit right
-	type stackFrame struct {
-		objId store.ObjectId
-		state int
-	}
-
-	stack := []stackFrame{{objId: rootObjId, state: 0}}
-
-	for len(stack) > 0 {
-		frame := stack[len(stack)-1]
-		stack = stack[:len(stack)-1]
-
-		if !store.IsValidObjectId(frame.objId) {
-			continue
-		}
-
-		// Load node transiently
-		node, err := NewFromObjectId(frame.objId, t, t.Store)
-		if err != nil {
-			return fmt.Errorf("failed to load node from disk (objId=%d): %w", frame.objId, err)
-		}
-
-		switch frame.state {
-		case 0: // Enter: push right, visit node, push left
-			if store.IsValidObjectId(node.rightObjectId) {
-				stack = append(stack, stackFrame{objId: node.rightObjectId, state: 0})
-			}
-			stack = append(stack, stackFrame{objId: frame.objId, state: 1})
-			if store.IsValidObjectId(node.leftObjectId) {
-				stack = append(stack, stackFrame{objId: node.leftObjectId, state: 0})
-			}
-
-		case 1: // Visit node
-			if err := callback(node); err != nil {
-				return err
-			}
-		}
-	}
-
-	return nil
-}
-
-// iterateOnDiskAndLoad loads nodes and retains them in the in-memory tree.
-func (t *PersistentTreap[T]) iterateOnDiskAndLoad(objId store.ObjectId, callback IterationCallback[T]) error {
-	if !store.IsValidObjectId(objId) {
-		return nil
-	}
-
-	node, err := NewFromObjectId(objId, t, t.Store)
-	if err != nil {
-		return fmt.Errorf("failed to load node from disk (objId=%d): %w", objId, err)
-	}
-
-	// In-order: left, node, right
-	if store.IsValidObjectId(node.leftObjectId) {
-		if err := t.iterateOnDiskAndLoad(node.leftObjectId, callback); err != nil {
-			return err
-		}
-	}
-
-	if err := callback(node); err != nil {
-		return err
-	}
-
-	if store.IsValidObjectId(node.rightObjectId) {
-		if err := t.iterateOnDiskAndLoad(node.rightObjectId, callback); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
 
 // NodeInfo contains information about a node in memory, including its access timestamp.
 type NodeInfo[T any] struct {
@@ -1310,12 +1544,55 @@ type NodeInfo[T any] struct {
 // This method does NOT load nodes from disk and does NOT update access timestamps.
 // It only includes nodes that are already loaded in memory.
 // Returns a slice of NodeInfo containing each node and its last access time.
+// NOTE: This method acquires a read lock. If called from within InOrderMutate callback,
+// use GetInMemoryNodesLocked instead to avoid deadlock.
 func (t *PersistentTreap[T]) GetInMemoryNodes() []NodeInfo[T] {
 	var nodes []NodeInfo[T]
 	t.mu.RLock()
 	defer t.mu.RUnlock()
-	t.collectInMemoryNodes(t.root, &nodes)
+	t.collectInMemoryNodesLocked(t.root, &nodes)
 	return nodes
+}
+
+// GetInMemoryNodesLocked traverses the treap and collects all nodes currently in memory.
+// This variant assumes the caller already holds the write lock (e.g., from InOrderMutate).
+// It performs the same operation as GetInMemoryNodes but without acquiring locks.
+// Use this when calling from within InOrderMutate callbacks to avoid deadlock.
+func (t *PersistentTreap[T]) GetInMemoryNodesLocked() []NodeInfo[T] {
+	var nodes []NodeInfo[T]
+	t.collectInMemoryNodesLocked(t.root, &nodes)
+	return nodes
+}
+
+// collectInMemoryNodesLocked is the internal helper that assumes the caller holds the lock.
+func (t *PersistentTreap[T]) collectInMemoryNodesLocked(node TreapNodeInterface[T], nodes *[]NodeInfo[T]) {
+	if node == nil || node.IsNil() {
+		return
+	}
+
+	// Convert to PersistentTreapNode to access in-memory state
+	pNode, ok := node.(*PersistentTreapNode[T])
+	if !ok {
+		return
+	}
+
+	// Add this node to the list
+	*nodes = append(*nodes, NodeInfo[T]{
+		Node:           pNode,
+		LastAccessTime: pNode.GetLastAccessTime(),
+		Key:            pNode.GetKey().(types.PersistentKey[T]),
+	})
+
+	// Only traverse children that are already in memory
+	// Check the left child without triggering a load
+	if pNode.TreapNode.left != nil {
+		t.collectInMemoryNodesLocked(pNode.TreapNode.left, nodes)
+	}
+
+	// Check the right child without triggering a load
+	if pNode.TreapNode.right != nil {
+		t.collectInMemoryNodesLocked(pNode.TreapNode.right, nodes)
+	}
 }
 
 // CountInMemoryNodes returns the count of nodes currently loaded in memory.
@@ -1340,48 +1617,18 @@ func (t *PersistentTreap[T]) countInMemoryNodes(node TreapNodeInterface[T]) int 
 	count := 1 // Count this node
 
 	// Only traverse children that are already in memory
-	left := pNode.GetLeft()
-	if left != nil && !left.IsNil() {
-		count += t.countInMemoryNodes(left)
-	}
-	right := pNode.GetRight()
-	if right != nil && !right.IsNil() {
-		count += t.countInMemoryNodes(right)
+	// IMPORTANT: Check the pointer directly, don't call GetLeft()/GetRight()
+	// as those will reload flushed nodes from disk!
+	if pNode, ok := pNode.(*PersistentTreapNode[T]); ok {
+		if pNode.TreapNode.left != nil {
+			count += t.countInMemoryNodes(pNode.TreapNode.left)
+		}
+		if pNode.TreapNode.right != nil {
+			count += t.countInMemoryNodes(pNode.TreapNode.right)
+		}
 	}
 
 	return count
-}
-
-// collectInMemoryNodes is a helper that recursively collects in-memory nodes.
-// It only traverses nodes that are already loaded (does not trigger disk reads).
-func (t *PersistentTreap[T]) collectInMemoryNodes(node TreapNodeInterface[T], nodes *[]NodeInfo[T]) {
-	if node == nil || node.IsNil() {
-		return
-	}
-
-	// Convert to PersistentTreapNode to access in-memory state
-	pNode, ok := node.(*PersistentTreapNode[T])
-	if !ok {
-		return
-	}
-
-	// Add this node to the list
-	*nodes = append(*nodes, NodeInfo[T]{
-		Node:           pNode,
-		LastAccessTime: pNode.GetLastAccessTime(),
-		Key:            pNode.GetKey().(types.PersistentKey[T]),
-	})
-
-	// Only traverse children that are already in memory
-	// Check the left child without triggering a load
-	if pNode.TreapNode.left != nil {
-		t.collectInMemoryNodes(pNode.TreapNode.left, nodes)
-	}
-
-	// Check the right child without triggering a load
-	if pNode.TreapNode.right != nil {
-		t.collectInMemoryNodes(pNode.TreapNode.right, nodes)
-	}
 }
 
 // FlushOlderThan flushes all nodes that haven't been accessed since the given timestamp.
@@ -1390,19 +1637,18 @@ func (t *PersistentTreap[T]) collectInMemoryNodes(node TreapNodeInterface[T], no
 // Nodes can be reloaded later from disk when needed.
 // Returns the number of nodes flushed and any error encountered.
 func (t *PersistentTreap[T]) FlushOlderThan(cutoffTimestamp int64) (int, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
 	// First, persist the entire tree to ensure all nodes are saved
-	if err := t.Persist(); err != nil {
+	if err := t.persistLockedTree(); err != nil {
 		return 0, err
 	}
 
 	flushedCount := 0
-	err := t.Iterate(IterateInMemoryOnly, func(node TreapNodeInterface[T]) error {
-		pNode, ok := node.(*PersistentTreapNode[T])
-		if !ok {
-			return nil
-		}
-		if pNode.GetLastAccessTime() < cutoffTimestamp {
-			flushErr := pNode.Flush()
+	_, err := t.rangeOverTreapPostOrderLocked(func(node *PersistentTreapNode[T]) error {
+		if node.GetLastAccessTime() < cutoffTimestamp {
+			flushErr := node.Flush()
 			if flushErr != nil {
 				// If errNotFullyPersisted, continue flushing others
 				if !errors.Is(flushErr, errNotFullyPersisted) {
@@ -1431,19 +1677,18 @@ func (t *PersistentTreap[T]) FlushOldestPercentile(percentage int) (int, error) 
 		return 0, fmt.Errorf("percentage must be between 1 and 100, got %d", percentage)
 	}
 
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
 	// First, persist the entire tree to ensure all nodes are saved
-	if err := t.Persist(); err != nil {
+	if err := t.persistLockedTree(); err != nil {
 		return 0, err
 	}
 
 	// Collect all in-memory nodes with their access times
 	var nodes []*PersistentTreapNode[T]
-	if err := t.Iterate(IterateInMemoryOnly, func(node TreapNodeInterface[T]) error {
-		pNode, ok := node.(*PersistentTreapNode[T])
-		if !ok {
-			return nil
-		}
-		nodes = append(nodes, pNode)
+	if _, err := t.rangeOverTreapPostOrderLocked(func(node *PersistentTreapNode[T]) error {
+		nodes = append(nodes, node)
 		return nil
 	}); err != nil {
 		return 0, err
@@ -1490,11 +1735,11 @@ func (t *PersistentTreap[T]) FlushOldestPercentile(percentage int) (int, error) 
 // Returns ObjNotAllocated if the tree is empty or hasn't been persisted yet.
 func (t *PersistentTreap[T]) GetRootObjectId() (store.ObjectId, error) {
 	if t.root == nil {
-		return store.ObjNotAllocated, nil
+		return bobbob.ObjNotAllocated, nil
 	}
 	rootNode, ok := t.root.(PersistentTreapNodeInterface[T])
 	if !ok {
-		return store.ObjNotAllocated, fmt.Errorf("root is not a PersistentTreapNodeInterface")
+		return bobbob.ObjNotAllocated, fmt.Errorf("root is not a PersistentTreapNodeInterface")
 	}
 	return rootNode.ObjectId()
 }

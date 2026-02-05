@@ -65,6 +65,73 @@ func TestTreapCompareBasic(t *testing.T) {
 	}
 }
 
+// TestPayloadTreapCompareBasic tests comparison of two payload treaps.
+func TestPayloadTreapCompareBasic(t *testing.T) {
+	treapA := NewPayloadTreap[types.IntKey, string](types.IntLess)
+	treapB := NewPayloadTreap[types.IntKey, string](types.IntLess)
+
+	// Populate treapA with keys 1, 2, 3, 4, 5
+	for i := 1; i <= 5; i++ {
+		key := types.IntKey(i)
+		treapA.Insert(key, "A")
+	}
+
+	// Populate treapB with keys 3, 4, 5, 6, 7
+	for i := 3; i <= 7; i++ {
+		key := types.IntKey(i)
+		treapB.Insert(key, "B")
+	}
+
+	var onlyInA []int
+	var inBoth []int
+	var onlyInB []int
+
+	err := treapA.Compare(&treapB.Treap,
+		func(node TreapNodeInterface[types.IntKey]) error {
+			key := node.GetKey().Value()
+			onlyInA = append(onlyInA, int(key))
+			return nil
+		},
+		func(nodeA, nodeB TreapNodeInterface[types.IntKey]) error {
+			key := nodeA.GetKey().Value()
+			inBoth = append(inBoth, int(key))
+
+			payloadA := nodeA.(*PayloadTreapNode[types.IntKey, string]).GetPayload()
+			payloadB := nodeB.(*PayloadTreapNode[types.IntKey, string]).GetPayload()
+			if payloadA != "A" {
+				return fmt.Errorf("expected payload A, got %q", payloadA)
+			}
+			if payloadB != "B" {
+				return fmt.Errorf("expected payload B, got %q", payloadB)
+			}
+			return nil
+		},
+		func(node TreapNodeInterface[types.IntKey]) error {
+			key := node.GetKey().Value()
+			onlyInB = append(onlyInB, int(key))
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("Compare failed: %v", err)
+	}
+
+	// Verify results
+	expectedOnlyInA := []int{1, 2}
+	expectedInBoth := []int{3, 4, 5}
+	expectedOnlyInB := []int{6, 7}
+
+	if !intSliceEqual(onlyInA, expectedOnlyInA) {
+		t.Errorf("onlyInA: expected %v, got %v", expectedOnlyInA, onlyInA)
+	}
+	if !intSliceEqual(inBoth, expectedInBoth) {
+		t.Errorf("inBoth: expected %v, got %v", expectedInBoth, inBoth)
+	}
+	if !intSliceEqual(onlyInB, expectedOnlyInB) {
+		t.Errorf("onlyInB: expected %v, got %v", expectedOnlyInB, onlyInB)
+	}
+}
+
 // TestTreapCompareEmpty tests comparison when one or both treaps are empty
 func TestTreapCompareEmpty(t *testing.T) {
 	treapA := NewTreap(types.IntLess)
@@ -337,6 +404,96 @@ func TestPersistentPayloadTreapCompare(t *testing.T) {
 	// Verify we could access payloads in the callbacks
 	if len(payloadsInBoth) != 2 {
 		t.Errorf("Expected 2 payload comparisons, got %d", len(payloadsInBoth))
+	}
+}
+
+// TestPersistentPayloadTreapCompareAfterFlush verifies Compare traverses full trees
+// even when most nodes have been flushed from memory.
+func TestPersistentPayloadTreapCompareAfterFlush(t *testing.T) {
+	tempDir := t.TempDir()
+	storeA, err := store.NewBasicStore(tempDir + "/storeA.db")
+	if err != nil {
+		t.Fatalf("Failed to create store A: %v", err)
+	}
+	defer storeA.Close()
+
+	storeB, err := store.NewBasicStore(tempDir + "/storeB.db")
+	if err != nil {
+		t.Fatalf("Failed to create store B: %v", err)
+	}
+	defer storeB.Close()
+
+	treapA := NewPersistentPayloadTreap[types.IntKey, MockPayload](types.IntLess, (*types.IntKey)(new(int32)), storeA)
+	treapB := NewPersistentPayloadTreap[types.IntKey, MockPayload](types.IntLess, (*types.IntKey)(new(int32)), storeB)
+
+	for i := 1; i <= 5; i++ {
+		key := types.IntKey(i)
+		payload := MockPayload{Data: fmt.Sprintf("valueA-%d", i)}
+		treapA.Insert(&key, payload)
+	}
+
+	for i := 3; i <= 7; i++ {
+		key := types.IntKey(i)
+		payload := MockPayload{Data: fmt.Sprintf("valueB-%d", i)}
+		treapB.Insert(&key, payload)
+	}
+
+	if err := treapA.Persist(); err != nil {
+		t.Fatalf("Persist treapA failed: %v", err)
+	}
+	if err := treapB.Persist(); err != nil {
+		t.Fatalf("Persist treapB failed: %v", err)
+	}
+
+	// Flush nodes from memory while keeping the tree persisted on disk.
+	if _, err := treapA.FlushOldestPercentile(75); err != nil {
+		t.Fatalf("Flush treapA failed: %v", err)
+	}
+	if _, err := treapB.FlushOldestPercentile(75); err != nil {
+		t.Fatalf("Flush treapB failed: %v", err)
+	}
+
+	if treapA.CountInMemoryNodes() > 3 {
+		t.Fatalf("Expected treapA to be mostly flushed; in-memory nodes=%d", treapA.CountInMemoryNodes())
+	}
+	if treapB.CountInMemoryNodes() > 3 {
+		t.Fatalf("Expected treapB to be mostly flushed; in-memory nodes=%d", treapB.CountInMemoryNodes())
+	}
+
+	var onlyInA []int
+	var inBoth []int
+	var onlyInB []int
+
+	err = treapA.Compare(treapB,
+		func(node TreapNodeInterface[types.IntKey]) error {
+			onlyInA = append(onlyInA, int(node.GetKey().Value()))
+			return nil
+		},
+		func(nodeA, nodeB TreapNodeInterface[types.IntKey]) error {
+			inBoth = append(inBoth, int(nodeA.GetKey().Value()))
+			return nil
+		},
+		func(node TreapNodeInterface[types.IntKey]) error {
+			onlyInB = append(onlyInB, int(node.GetKey().Value()))
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("Compare failed: %v", err)
+	}
+
+	expectedOnlyInA := []int{1, 2}
+	expectedInBoth := []int{3, 4, 5}
+	expectedOnlyInB := []int{6, 7}
+
+	if !intSliceEqual(onlyInA, expectedOnlyInA) {
+		t.Errorf("onlyInA: expected %v, got %v", expectedOnlyInA, onlyInA)
+	}
+	if !intSliceEqual(inBoth, expectedInBoth) {
+		t.Errorf("inBoth: expected %v, got %v", expectedInBoth, inBoth)
+	}
+	if !intSliceEqual(onlyInB, expectedOnlyInB) {
+		t.Errorf("onlyInB: expected %v, got %v", expectedOnlyInB, onlyInB)
 	}
 }
 

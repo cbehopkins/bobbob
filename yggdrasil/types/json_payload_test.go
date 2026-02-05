@@ -3,6 +3,8 @@ package types
 import (
 	"bytes"
 	"testing"
+
+	"github.com/cbehopkins/bobbob/store"
 )
 
 type SimpleStruct struct {
@@ -19,7 +21,7 @@ type ComplexStruct struct {
 	ID       int
 	Name     string
 	Tags     []string
-	Metadata map[string]interface{}
+	Metadata map[string]any
 }
 
 // TestJsonPayloadMarshal verifies that JsonPayload can serialize a struct to JSON bytes
@@ -84,7 +86,7 @@ func TestJsonPayloadUnmarshal(t *testing.T) {
 func TestJsonPayloadRoundTrip(t *testing.T) {
 	tests := []struct {
 		name  string
-		value interface{}
+		value any
 	}{
 		{"simple struct", SimpleStruct{Name: "Alice", Count: 100}},
 		{"nested struct", NestedStruct{
@@ -100,20 +102,20 @@ func TestJsonPayloadRoundTrip(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Marshal
-			payload := JsonPayload[interface{}]{Value: tt.value}
+			payload := JsonPayload[any]{Value: tt.value}
 			data, err := payload.Marshal()
 			if err != nil {
 				t.Fatalf("marshal failed: %v", err)
 			}
 
 			// Unmarshal
-			empty := JsonPayload[interface{}]{}
+			empty := JsonPayload[any]{}
 			result, err := empty.Unmarshal(data)
 			if err != nil {
 				t.Fatalf("unmarshal failed: %v", err)
 			}
 
-			restored := result.(JsonPayload[interface{}])
+			restored := result.(JsonPayload[any])
 			if restored.Value == nil {
 				t.Error("expected non-nil value after unmarshal")
 			}
@@ -159,7 +161,7 @@ func TestJsonPayloadComplexStruct(t *testing.T) {
 			ID:   12345,
 			Name: "complex",
 			Tags: []string{"tag1", "tag2", "tag3"},
-			Metadata: map[string]interface{}{
+			Metadata: map[string]any{
 				"version": 1.0,
 				"enabled": true,
 				"count":   100,
@@ -410,5 +412,87 @@ func TestJsonPayloadMultipleUnmarshalCalls(t *testing.T) {
 		if restored.Value.Count != 42 {
 			t.Errorf("iteration %d: expected Count 42, got %d", i, restored.Value.Count)
 		}
+	}
+}
+
+// TestJsonPayloadLateMarshalUnmarshalSimple verifies LateMarshal/LateUnmarshal
+// round-trips a simple struct using MockStore.
+func TestJsonPayloadLateMarshalUnmarshalSimple(t *testing.T) {
+	mockStore := store.NewMockStore()
+
+	original := JsonPayload[SimpleStruct]{
+		Value: SimpleStruct{Name: "late", Count: 7},
+	}
+
+	objId, finisher := original.LateMarshal(mockStore)
+	if finisher == nil {
+		t.Fatal("LateMarshal returned nil finisher")
+	}
+	if err := finisher(); err != nil {
+		t.Fatalf("LateMarshal finisher failed: %v", err)
+	}
+
+	var restored JsonPayload[SimpleStruct]
+	unmarshalFinisher := restored.LateUnmarshal(objId, mockStore)
+	if unmarshalFinisher == nil {
+		t.Fatal("LateUnmarshal returned nil finisher")
+	}
+	if err := unmarshalFinisher(); err != nil {
+		t.Fatalf("LateUnmarshal finisher failed: %v", err)
+	}
+
+	if restored.Value.Name != original.Value.Name {
+		t.Errorf("expected Name %q, got %q", original.Value.Name, restored.Value.Name)
+	}
+	if restored.Value.Count != original.Value.Count {
+		t.Errorf("expected Count %d, got %d", original.Value.Count, restored.Value.Count)
+	}
+}
+
+// TestJsonPayloadLateMarshalUnmarshalComplex verifies LateMarshal/LateUnmarshal
+// round-trips a more complex structure using MockStore.
+func TestJsonPayloadLateMarshalUnmarshalComplex(t *testing.T) {
+	mockStore := store.NewMockStore()
+
+	original := JsonPayload[ComplexStruct]{
+		Value: ComplexStruct{
+			ID:   99,
+			Name: "late-complex",
+			Tags: []string{"alpha", "beta"},
+			Metadata: map[string]any{
+				"enabled": true,
+				"count":   123,
+			},
+		},
+	}
+
+	objId, finisher := original.LateMarshal(mockStore)
+	if finisher == nil {
+		t.Fatal("LateMarshal returned nil finisher")
+	}
+	if err := finisher(); err != nil {
+		t.Fatalf("LateMarshal finisher failed: %v", err)
+	}
+
+	var restored JsonPayload[ComplexStruct]
+	unmarshalFinisher := restored.LateUnmarshal(objId, mockStore)
+	if unmarshalFinisher == nil {
+		t.Fatal("LateUnmarshal returned nil finisher")
+	}
+	if err := unmarshalFinisher(); err != nil {
+		t.Fatalf("LateUnmarshal finisher failed: %v", err)
+	}
+
+	if restored.Value.ID != original.Value.ID {
+		t.Errorf("expected ID %d, got %d", original.Value.ID, restored.Value.ID)
+	}
+	if restored.Value.Name != original.Value.Name {
+		t.Errorf("expected Name %q, got %q", original.Value.Name, restored.Value.Name)
+	}
+	if len(restored.Value.Tags) != len(original.Value.Tags) {
+		t.Errorf("expected %d tags, got %d", len(original.Value.Tags), len(restored.Value.Tags))
+	}
+	if len(restored.Value.Metadata) != len(original.Value.Metadata) {
+		t.Errorf("expected %d metadata entries, got %d", len(original.Value.Metadata), len(restored.Value.Metadata))
 	}
 }

@@ -9,7 +9,7 @@ import (
 )
 
 // TestSimpleWalkInOrder tests basic in-order iteration
-// TestSimpleWalkInOrder verifies that WalkInOrder visits all nodes in ascending order
+// TestSimpleWalkInOrder verifies that InOrderVisit visits all nodes in ascending order
 // and that the callback receives each node's key and payload correctly.
 func TestSimpleWalkInOrder(t *testing.T) {
 	stre := testutil.NewMockStore()
@@ -33,10 +33,8 @@ func TestSimpleWalkInOrder(t *testing.T) {
 
 	// Walk in order and collect keys
 	var collected []types.IntKey
-	opts := DefaultIteratorOptions()
-	opts.KeepInMemory = true
 
-	err = treap.WalkInOrder(opts, func(node PersistentTreapNodeInterface[types.IntKey]) error {
+	err = treap.InOrderVisit(func(node TreapNodeInterface[types.IntKey]) error {
 		key, ok := node.GetKey().(*types.IntKey)
 		if !ok {
 			return fmt.Errorf("key is not *types.IntKey")
@@ -45,7 +43,7 @@ func TestSimpleWalkInOrder(t *testing.T) {
 		return nil
 	})
 	if err != nil {
-		t.Fatalf("WalkInOrder failed: %v", err)
+		t.Fatalf("InOrderVisit failed: %v", err)
 	}
 
 	// Verify sorted order
@@ -84,9 +82,9 @@ func TestSimpleWalkKeys(t *testing.T) {
 
 	// Walk and collect keys
 	var collected []types.IntKey
-	opts := DefaultIteratorOptions()
 
-	err = treap.WalkInOrderKeys(opts, func(key types.PersistentKey[types.IntKey]) error {
+	err = treap.InOrderVisit(func(node TreapNodeInterface[types.IntKey]) error {
+		key := node.GetKey().(types.PersistentKey[types.IntKey])
 		intKey, ok := key.(*types.IntKey)
 		if !ok {
 			return fmt.Errorf("key is not *types.IntKey")
@@ -95,7 +93,7 @@ func TestSimpleWalkKeys(t *testing.T) {
 		return nil
 	})
 	if err != nil {
-		t.Fatalf("WalkInOrderKeys failed: %v", err)
+		t.Fatalf("InOrderVisit failed: %v", err)
 	}
 
 	// Verify ascending order

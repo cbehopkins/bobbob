@@ -1,6 +1,7 @@
 package collections
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"sync"
@@ -9,9 +10,11 @@ import (
 	"github.com/cbehopkins/bobbob/yggdrasil/types"
 )
 
+type ShortCodeType = types.ShortUIntKey
+
 // CollectionId is a unique identifier for a collection within a vault.
 // It's a short code (uint16) to save space during serialization.
-type CollectionId = types.ShortCodeType
+type CollectionId = types.ShortUIntKey
 
 // CollectionInfo holds metadata about a single collection (treap).
 type CollectionInfo struct {
@@ -25,11 +28,11 @@ type CollectionInfo struct {
 	RootObjectId store.ObjectId `json:"root_object_id"`
 
 	// KeyTypeShortCode identifies the key type used by this collection
-	KeyTypeShortCode types.ShortCodeType `json:"key_type_short_code"`
+	KeyTypeShortCode ShortCodeType `json:"key_type_short_code"`
 
 	// PayloadTypeShortCode identifies the payload type used by this collection
 	// Set to 0 if this is a key-only collection (no payloads)
-	PayloadTypeShortCode types.ShortCodeType `json:"payload_type_short_code"`
+	PayloadTypeShortCode ShortCodeType `json:"payload_type_short_code"`
 }
 
 // CollectionRegistry maintains a mapping of all collections in a vault.
@@ -63,8 +66,8 @@ func NewCollectionRegistry() *CollectionRegistry {
 func (cr *CollectionRegistry) RegisterCollection(
 	name string,
 	rootObjectId store.ObjectId,
-	keyTypeShortCode types.ShortCodeType,
-	payloadTypeShortCode types.ShortCodeType,
+	keyTypeShortCode ShortCodeType,
+	payloadTypeShortCode ShortCodeType,
 ) (CollectionId, error) {
 	cr.mu.Lock()
 	defer cr.mu.Unlock()
@@ -162,5 +165,7 @@ func (cr *CollectionRegistry) Marshal() ([]byte, error) {
 func (cr *CollectionRegistry) Unmarshal(data []byte) error {
 	cr.mu.Lock()
 	defer cr.mu.Unlock()
+	// Allocated size may be larger than written size; trim trailing zeros for JSON
+	data = bytes.TrimRight(data, "\x00")
 	return json.Unmarshal(data, cr)
 }

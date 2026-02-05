@@ -3,6 +3,8 @@ package store
 import (
 	"io"
 	"os"
+
+	"github.com/cbehopkins/bobbob"
 )
 
 // DiskTokenManager handles acquisition and release of disk tokens for rate-limiting I/O.
@@ -57,7 +59,7 @@ func CreateSectionWriter(file *os.File, offset FileOffset, size int) io.Writer {
 // If tokenManager is nil, returns a no-op finisher that does nothing.
 // Always returns a non-nil finisher for API convenience.
 // Exported for use by multistore package.
-func CreateFinisherWithToken(tokenManager *DiskTokenManager) Finisher {
+func CreateFinisherWithToken(tokenManager *DiskTokenManager) bobbob.Finisher {
 	if tokenManager == nil {
 		return func() error { return nil }
 	}
@@ -96,7 +98,7 @@ func WriteBatchedSections(file *os.File, firstOffset FileOffset, sections [][]by
 }
 
 // ObjectInfoProvider is an interface for retrieving object location information.
-// Both baseStore (via ObjectMap) and multiStore (via allocators) implement this.
+// Both baseStore and multiStore delegate to their allocators to implement this.
 type ObjectInfoProvider interface {
 	GetObjectInfo(objId ObjectId) (ObjectInfo, bool)
 }
@@ -109,7 +111,7 @@ type ObjectInfoProvider interface {
 // 4. Returning a finisher that releases the token
 //
 // This eliminates duplication between baseStore and multiStore implementations.
-func LateReadWithTokens(file *os.File, objId ObjectId, infoProvider ObjectInfoProvider, tokenManager *DiskTokenManager) (io.Reader, Finisher, error) {
+func LateReadWithTokens(file *os.File, objId ObjectId, infoProvider ObjectInfoProvider, tokenManager *DiskTokenManager) (io.Reader, bobbob.Finisher, error) {
 	tokenManager.Acquire()
 
 	obj, found := infoProvider.GetObjectInfo(objId)
@@ -130,13 +132,13 @@ func LateReadWithTokens(file *os.File, objId ObjectId, infoProvider ObjectInfoPr
 // 4. Returning a finisher that releases the token
 //
 // The allocateFn parameter allows baseStore and multiStore to use their own allocation strategies.
-func LateWriteNewWithTokens(file *os.File, size int, allocateFn func(int) (ObjectId, FileOffset, error), tokenManager *DiskTokenManager) (ObjectId, io.Writer, Finisher, error) {
+func LateWriteNewWithTokens(file *os.File, size int, allocateFn func(int) (bobbob.ObjectId, bobbob.FileOffset, error), tokenManager *DiskTokenManager) (bobbob.ObjectId, io.Writer, bobbob.Finisher, error) {
 	tokenManager.Acquire()
 
 	objId, fileOffset, err := allocateFn(size)
 	if err != nil {
 		tokenManager.Release()
-		return ObjNotAllocated, nil, nil, err
+		return bobbob.ObjNotAllocated, nil, nil, err
 	}
 
 	writer := CreateSectionWriter(file, fileOffset, size)
@@ -151,7 +153,7 @@ func LateWriteNewWithTokens(file *os.File, size int, allocateFn func(int) (Objec
 // 4. Returning a finisher that releases the token
 //
 // This eliminates duplication between baseStore and multiStore implementations.
-func WriteToObjWithTokens(file *os.File, objId ObjectId, infoProvider ObjectInfoProvider, tokenManager *DiskTokenManager) (io.Writer, Finisher, error) {
+func WriteToObjWithTokens(file *os.File, objId ObjectId, infoProvider ObjectInfoProvider, tokenManager *DiskTokenManager) (io.Writer, bobbob.Finisher, error) {
 	tokenManager.Acquire()
 
 	obj, found := infoProvider.GetObjectInfo(objId)

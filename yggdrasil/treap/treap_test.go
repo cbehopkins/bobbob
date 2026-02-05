@@ -183,6 +183,68 @@ func TestPayloadTreap(t *testing.T) {
 	}
 }
 
+// TestPayloadTreapUpdateOnDuplicate verifies that inserting an existing key updates its payload.
+func TestPayloadTreapUpdateOnDuplicate(t *testing.T) {
+	treap := NewPayloadTreap[types.IntKey, string](types.IntLess)
+	key := types.IntKey(42)
+
+	treap.Insert(key, "first")
+	treap.Insert(key, "second")
+
+	node := treap.Search(key)
+	if node == nil || node.IsNil() {
+		t.Fatalf("Expected to find key %d in the treap", key)
+	}
+	if payloadNode, ok := node.(*PayloadTreapNode[types.IntKey, string]); ok {
+		if payloadNode.GetPayload() != "second" {
+			t.Fatalf("Expected payload to be updated to 'second', got '%s'", payloadNode.GetPayload())
+		}
+	} else {
+		t.Fatalf("Expected PayloadTreapNode, got %T", node)
+	}
+}
+
+// TestPayloadTreapDelete verifies that deleting keys removes nodes from the treap.
+func TestPayloadTreapDelete(t *testing.T) {
+	treap := NewPayloadTreap[types.IntKey, string](types.IntLess)
+	keys := []types.IntKey{1, 2, 3, 4, 5}
+	for _, key := range keys {
+		treap.Insert(key, "payload")
+	}
+
+	treap.Delete(types.IntKey(3))
+	if node := treap.Search(types.IntKey(3)); node != nil && !node.IsNil() {
+		t.Fatalf("Expected key 3 to be deleted, but it was found")
+	}
+
+	if node := treap.Search(types.IntKey(2)); node == nil || node.IsNil() {
+		t.Fatalf("Expected key 2 to remain after delete")
+	}
+}
+
+// TestPayloadTreapUpdatePayload verifies that UpdatePayload changes the stored payload.
+func TestPayloadTreapUpdatePayload(t *testing.T) {
+	treap := NewPayloadTreap[types.IntKey, string](types.IntLess)
+	key := types.IntKey(7)
+
+	treap.Insert(key, "before")
+	if err := treap.UpdatePayload(key, "after"); err != nil {
+		t.Fatalf("Expected UpdatePayload to succeed, got error: %v", err)
+	}
+
+	node := treap.Search(key)
+	if node == nil || node.IsNil() {
+		t.Fatalf("Expected to find key %d in the treap", key)
+	}
+	if payloadNode, ok := node.(*PayloadTreapNode[types.IntKey, string]); ok {
+		if payloadNode.GetPayload() != "after" {
+			t.Fatalf("Expected payload to be updated to 'after', got '%s'", payloadNode.GetPayload())
+		}
+	} else {
+		t.Fatalf("Expected PayloadTreapNode, got %T", node)
+	}
+}
+
 // TestStringKeyTreap verifies that treaps work correctly with string keys,
 // properly maintaining order and allowing search operations.
 func TestStringKeyTreap(t *testing.T) {

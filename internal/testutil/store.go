@@ -81,3 +81,9 @@ func CreateTempFile(tb testing.TB, pattern string) (filePath string, cleanup fun
 
 	return filePath, cleanup
 }
+
+// NewMockStore creates a new in-memory mock store.
+// Useful for fast unit tests that don't require disk persistence.
+func NewMockStore() store.Storer {
+	return store.NewMockStore()
+}

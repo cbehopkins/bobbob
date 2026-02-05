@@ -35,7 +35,7 @@ func TestBaseStoreConcurrentWriteRace(t *testing.T) {
 			for j := 0; j < objectsPerGoroutine; j++ {
 				data := []byte(fmt.Sprintf("worker-%d-object-%d", workerID, j))
 
-				// This can race with other goroutines accessing objectMap and allocator
+				// This can race with other goroutines accessing allocator state
 				objId, writer, finisher, err := store.LateWriteNewObj(len(data))
 				if err != nil {
 					errChan <- fmt.Errorf("worker %d: LateWriteNewObj failed: %w", workerID, err)
@@ -301,8 +301,8 @@ func TestBaseStoreDeleteWhileReading(t *testing.T) {
 	}
 }
 
-// TestBaseStoreMapCorruption tests for objectMap corruption under concurrent access
-func TestBaseStoreMapCorruption(t *testing.T) {
+// TestBaseStoreAllocatorCorruption tests for allocator state corruption under concurrent access
+func TestBaseStoreAllocatorCorruption(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping race condition test in short mode")
 	}

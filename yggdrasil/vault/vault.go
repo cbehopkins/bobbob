@@ -6,12 +6,13 @@ import (
 	"sync"
 	"time"
 
-	multistore "github.com/cbehopkins/bobbob/multistore"
+	"github.com/cbehopkins/bobbob"
+	atypes "github.com/cbehopkins/bobbob/allocator/types"
+	"github.com/cbehopkins/bobbob/multistore"
 	"github.com/cbehopkins/bobbob/store"
-	"github.com/cbehopkins/bobbob/store/allocator"
-	ycollections "github.com/cbehopkins/bobbob/yggdrasil/collections"
+	"github.com/cbehopkins/bobbob/yggdrasil/collections"
 	"github.com/cbehopkins/bobbob/yggdrasil/treap"
-	"github.com/cbehopkins/bobbob/yggdrasil/types"
+	yttypes "github.com/cbehopkins/bobbob/yggdrasil/types"
 )
 
 const identityMapCollectionName = "__vault_identity_map__reserved"
@@ -22,17 +23,7 @@ type identityMapping struct {
 	CollectionName string `json:"collectionName"`
 }
 
-// Reserved ObjectIds for vault metadata
-// VaultMetadataObjectId is typically the first object allocated (ObjectId 1)
-// since ObjectId 0 is used by the store's internal objectMap
-const (
-	// VaultMetadataObjectId stores references to types.TypeMap and CollectionRegistry
-	VaultMetadataObjectId store.ObjectId = 1
-)
-
 // VaultMetadata contains the ObjectIds of the types.TypeMap and CollectionRegistry.
-// This is stored at a known location (VaultMetadataObjectId) so we can
-// find the other metadata when loading.
 type VaultMetadata struct {
 	TypeMapObjectId            store.ObjectId
 	CollectionRegistryObjectId store.ObjectId
@@ -88,12 +79,12 @@ type MemoryBreakdown struct {
 	// NumCollections is the number of active collections
 	NumCollections int
 
-	// NumObjectsInStore is the total number of objects tracked by the store's ObjectMap
+	// NumObjectsInStore is the total number of objects tracked by the allocator
 	NumObjectsInStore int
 
-	// EstimatedObjectMapMemory is the memory used by the store's ObjectMap
-	// (map overhead + entries)
-	EstimatedObjectMapMemory int64
+	// EstimatedAllocatorMemory is the memory used by the allocator's tracking structures
+	// (varies by allocator type: BasicAllocator ~48B/obj, BlockAllocator ~1B/obj)
+	EstimatedAllocatorMemory int64
 
 	// VaultOverhead estimates the Vault struct and maps overhead
 	VaultOverhead int64
@@ -140,10 +131,10 @@ type Vault struct {
 	Store store.Storer
 
 	// TypeMap manages type-to-short-code mappings
-	TypeMap *types.TypeMap
+	TypeMap *TypeMap
 
 	// CollectionRegistry tracks all collections in this vault
-	CollectionRegistry *ycollections.CollectionRegistry
+	CollectionRegistry *collections.CollectionRegistry
 
 	// ActiveCollections caches loaded collections
 	// Maps collection name to the actual treap instance
@@ -169,8 +160,8 @@ type Vault struct {
 // Allocator exposes the underlying allocator when the Store implements
 // store.AllocatorProvider. External callers can use this to set allocation
 // callbacks on the OmniBlockAllocator and its parent BasicAllocator.
-func (v *Vault) Allocator() allocator.Allocator {
-	if provider, ok := v.Store.(interface{ Allocator() allocator.Allocator }); ok {
+func (v *Vault) Allocator() atypes.Allocator {
+	if provider, ok := v.Store.(interface{ Allocator() atypes.Allocator }); ok {
 		return provider.Allocator()
 	}
 	return nil
@@ -185,13 +176,13 @@ func (v *Vault) Allocator() allocator.Allocator {
 func LoadVault(stre store.Storer) (*Vault, error) {
 	vault := &Vault{
 		Store:                       stre,
-		TypeMap:                     types.NewTypeMap(),
-		CollectionRegistry:          ycollections.NewCollectionRegistry(),
+		TypeMap:                     NewTypeMap(),
+		CollectionRegistry:          collections.NewCollectionRegistry(),
 		activeCollections:           make(map[string]CollectionInterface),
 		backgroundMonitoringEnabled: true,
 	}
 
-	// Get the prime object (ObjectId 1) where vault metadata is stored
+	// Get the prime object where vault metadata is stored
 	primeObjectId, err := stre.PrimeObject(16)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get prime object: %w", err)
@@ -213,7 +204,7 @@ func LoadVault(stre store.Storer) (*Vault, error) {
 	if store.IsValidObjectId(metadata.TypeMapObjectId) {
 		typeMapData, err := store.ReadBytesFromObj(stre, metadata.TypeMapObjectId)
 		if err == nil {
-			loadedTypeMap := types.NewTypeMap()
+			loadedTypeMap := NewTypeMap()
 			if err := loadedTypeMap.Unmarshal(typeMapData); err == nil {
 				// Use the loaded types.TypeMap
 				vault.TypeMap = loadedTypeMap
@@ -225,7 +216,7 @@ func LoadVault(stre store.Storer) (*Vault, error) {
 	if store.IsValidObjectId(metadata.CollectionRegistryObjectId) {
 		registryData, err := store.ReadBytesFromObj(stre, metadata.CollectionRegistryObjectId)
 		if err == nil {
-			loadedRegistry := ycollections.NewCollectionRegistry()
+			loadedRegistry := collections.NewCollectionRegistry()
 			if err := loadedRegistry.Unmarshal(registryData); err == nil {
 				vault.CollectionRegistry = loadedRegistry
 			}
@@ -254,11 +245,11 @@ func (v *Vault) RegisterType(t any) {
 //	v.RegisterType(StringKey(""))
 //	v.RegisterType(UserData{})
 //	users := GetOrCreateCollection[string, JsonPayload[UserData]](v, "users", StringLess, (*StringKey)(new(string)))
-func GetOrCreateCollection[K any, P types.PersistentPayload[P]](
+func GetOrCreateCollection[K any, P yttypes.PersistentPayload[P]](
 	v *Vault,
 	collectionName string,
 	lessFunc func(a, b K) bool,
-	keyTemplate types.PersistentKey[K],
+	keyTemplate yttypes.PersistentKey[K],
 ) (*treap.PersistentPayloadTreap[K, P], error) {
 	// Check if we already have this collection loaded (with read lock)
 	v.mu.RLock()
@@ -337,7 +328,7 @@ func GetOrCreateCollection[K any, P types.PersistentPayload[P]](
 	// Register in the collection registry
 	_, err = v.CollectionRegistry.RegisterCollection(
 		collectionName,
-		store.ObjNotAllocated, // No root yet
+		bobbob.ObjNotAllocated, // No root yet
 		keyShortCode,
 		payloadShortCode,
 	)
@@ -356,7 +347,7 @@ func GetOrCreateKeyOnlyCollection[K any](
 	v *Vault,
 	collectionName string,
 	lessFunc func(a, b K) bool,
-	keyTemplate types.PersistentKey[K],
+	keyTemplate yttypes.PersistentKey[K],
 ) (*treap.PersistentTreap[K], error) {
 	// Check if we already have this collection loaded (with read lock)
 	v.mu.RLock()
@@ -422,7 +413,7 @@ func GetOrCreateKeyOnlyCollection[K any](
 	// Register in the collection registry (payload short code is 0 for key-only)
 	_, err = v.CollectionRegistry.RegisterCollection(
 		collectionName,
-		store.ObjNotAllocated, // No root yet
+		bobbob.ObjNotAllocated, // No root yet
 		keyShortCode,
 		0, // No payload type
 	)
@@ -768,13 +759,15 @@ func (v *Vault) calculateMemoryBreakdown(totalNodes int, numCollections int) Mem
 
 	breakdown.EstimatedNodeMemory = int64(totalNodes) * int64(breakdown.NodeStructSize)
 
-	// Get store ObjectMap size
+	// Get store allocator size
 	if bs, ok := v.Store.(interface{ GetObjectCount() int }); ok {
 		breakdown.NumObjectsInStore = bs.GetObjectCount()
-		// ObjectMap overhead:
-		// - map header: ~48 bytes
-		// - per entry: ObjectId (8 bytes) + ObjectInfo (16 bytes) + overhead (~24 bytes) = ~48 bytes
-		breakdown.EstimatedObjectMapMemory = 48 + int64(breakdown.NumObjectsInStore)*48
+		// Allocator overhead depends on type:
+		// - BasicAllocator: map header (~48 bytes) + per entry (~48 bytes)
+		// - BlockAllocator: ~1 byte per object (bitmap-based)
+		// - OmniBlockAllocator: mixed (small objects ~1B, large objects ~48B)
+		// For multiStore (default), conservatively estimate 2 bytes/object:
+		breakdown.EstimatedAllocatorMemory = 48 + int64(breakdown.NumObjectsInStore)*2
 	}
 
 	// Vault overhead:
@@ -784,7 +777,7 @@ func (v *Vault) calculateMemoryBreakdown(totalNodes int, numCollections int) Mem
 	// - PersistentTreap structs: numCollections * ~200 bytes
 	breakdown.VaultOverhead = 128 + 48 + int64(numCollections)*(80+200)
 
-	breakdown.TotalEstimated = breakdown.EstimatedNodeMemory + breakdown.EstimatedObjectMapMemory + breakdown.VaultOverhead
+	breakdown.TotalEstimated = breakdown.EstimatedNodeMemory + breakdown.EstimatedAllocatorMemory + breakdown.VaultOverhead
 
 	return breakdown
 }
@@ -1020,7 +1013,7 @@ func (vs *VaultSession) Close() error {
 // Allocator returns the allocator backing this session (if exposed by the store).
 // This enables external users of OpenVault/OpenVaultWithIdentity to attach
 // allocation callbacks without direct access to the store implementation.
-func (vs *VaultSession) Allocator() allocator.Allocator {
+func (vs *VaultSession) Allocator() atypes.Allocator {
 	if vs == nil || vs.Vault == nil {
 		return nil
 	}
@@ -1031,8 +1024,8 @@ func (vs *VaultSession) Allocator() allocator.Allocator {
 // its parent (e.g., BasicAllocator behind OmniBlockAllocator). Returns true if at least one
 // callback was attached.
 func (vs *VaultSession) ConfigureAllocatorCallbacks(
-	childCb func(allocator.ObjectId, allocator.FileOffset, int),
-	parentCb func(allocator.ObjectId, allocator.FileOffset, int),
+	childCb func(bobbob.ObjectId, bobbob.FileOffset, int),
+	parentCb func(bobbob.ObjectId, bobbob.FileOffset, int),
 ) bool {
 	alloc := vs.Allocator()
 	if alloc == nil {
@@ -1040,7 +1033,7 @@ func (vs *VaultSession) ConfigureAllocatorCallbacks(
 	}
 
 	type callbackSetter interface {
-		SetOnAllocate(func(allocator.ObjectId, allocator.FileOffset, int))
+		SetOnAllocate(func(bobbob.ObjectId, bobbob.FileOffset, int))
 	}
 
 	succeeded := false
@@ -1052,7 +1045,7 @@ func (vs *VaultSession) ConfigureAllocatorCallbacks(
 	}
 
 	if parentCb != nil {
-		if provider, ok := alloc.(interface{ Parent() allocator.Allocator }); ok {
+		if provider, ok := alloc.(interface{ Parent() atypes.Allocator }); ok {
 			if parent := provider.Parent(); parent != nil {
 				if setter, ok := parent.(callbackSetter); ok {
 					setter.SetOnAllocate(parentCb)
@@ -1087,10 +1080,10 @@ type IdentitySpec[I comparable] interface {
 // PayloadIdentitySpec wraps a payload collection spec with an identity value.
 // The identity string representation is used as the collection name; the identity itself
 // is returned to the caller so indexing does not rely on position.
-type PayloadIdentitySpec[I comparable, K any, P types.PersistentPayload[P]] struct {
+type PayloadIdentitySpec[I comparable, K any, P yttypes.PersistentPayload[P]] struct {
 	Identity        I
 	LessFunc        func(a, b K) bool
-	KeyTemplate     types.PersistentKey[K]
+	KeyTemplate     yttypes.PersistentKey[K]
 	PayloadTemplate P
 }
 
@@ -1108,10 +1101,10 @@ func (s PayloadIdentitySpec[I, K, P]) openCollection(v *Vault) (any, error) {
 }
 
 // PayloadCollectionSpec specifies a collection with both keys and payloads.
-type PayloadCollectionSpec[K any, P types.PersistentPayload[P]] struct {
+type PayloadCollectionSpec[K any, P yttypes.PersistentPayload[P]] struct {
 	Name        string
 	LessFunc    func(a, b K) bool
-	KeyTemplate types.PersistentKey[K]
+	KeyTemplate yttypes.PersistentKey[K]
 	// PayloadTemplate is used only for type extraction, not stored
 	PayloadTemplate P
 }
@@ -1242,11 +1235,11 @@ func OpenVaultWithIdentity[I comparable](filename string, specs ...IdentitySpec[
 // GetOrCreateCollectionWithIdentity dynamically creates or loads a collection tied to an identity.
 // It registers key/payload types as needed, ensures the identity map exists, and records the mapping.
 // This enables treating the vault as a collection-of-collections that can grow at runtime.
-func GetOrCreateCollectionWithIdentity[I comparable, K any, P types.PersistentPayload[P]](
+func GetOrCreateCollectionWithIdentity[I comparable, K any, P yttypes.PersistentPayload[P]](
 	v *Vault,
 	identity I,
 	lessFunc func(a, b K) bool,
-	keyTemplate types.PersistentKey[K],
+	keyTemplate yttypes.PersistentKey[K],
 	payloadTemplate P,
 ) (*treap.PersistentPayloadTreap[K, P], error) {
 	// Ensure types are registered so the collection registry can validate them.
@@ -1272,24 +1265,24 @@ func GetOrCreateCollectionWithIdentity[I comparable, K any, P types.PersistentPa
 }
 
 // ensureIdentityMap lazily creates/loads the reserved identity-map collection.
-func (v *Vault) ensureIdentityMap() (*treap.PersistentPayloadTreap[types.StringKey, types.JsonPayload[identityMapping]], error) {
+func (v *Vault) ensureIdentityMap() (*treap.PersistentPayloadTreap[yttypes.StringKey, yttypes.JsonPayload[identityMapping]], error) {
 	// Register key/payload types to keep TypeMap consistent.
-	v.RegisterType((*types.StringKey)(new(string)))
-	v.RegisterType(types.JsonPayload[identityMapping]{})
+	v.RegisterType((*yttypes.StringKey)(new(string)))
+	v.RegisterType(yttypes.JsonPayload[identityMapping]{})
 
 	// Cached?
 	if cached, ok := v.activeCollections[identityMapCollectionName]; ok {
-		if treap, ok := cached.(*treap.PersistentPayloadTreap[types.StringKey, types.JsonPayload[identityMapping]]); ok {
+		if treap, ok := cached.(*treap.PersistentPayloadTreap[yttypes.StringKey, yttypes.JsonPayload[identityMapping]]); ok {
 			return treap, nil
 		}
 		return nil, fmt.Errorf("identity map cached with unexpected type")
 	}
 
-	coll, err := GetOrCreateCollection[types.StringKey, types.JsonPayload[identityMapping]](
+	coll, err := GetOrCreateCollection[yttypes.StringKey, yttypes.JsonPayload[identityMapping]](
 		v,
 		identityMapCollectionName,
-		types.StringLess,
-		(*types.StringKey)(new(string)),
+		yttypes.StringLess,
+		(*yttypes.StringKey)(new(string)),
 	)
 	if err != nil {
 		return nil, err
@@ -1305,8 +1298,8 @@ func (v *Vault) setIdentityMapping(identityStr, collectionName string) error {
 	if err != nil {
 		return err
 	}
-	key := types.StringKey(identityStr)
-	payload := types.JsonPayload[identityMapping]{Value: identityMapping{CollectionName: collectionName}}
+	key := yttypes.StringKey(identityStr)
+	payload := yttypes.JsonPayload[identityMapping]{Value: identityMapping{CollectionName: collectionName}}
 	imap.Insert(&key, payload)
 	return nil
 }

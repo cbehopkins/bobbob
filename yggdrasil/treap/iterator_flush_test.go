@@ -7,9 +7,8 @@ import (
 	"github.com/cbehopkins/bobbob/yggdrasil/types"
 )
 
-// TestAggressiveFlushing verifies that nodes are flushed after processing their right subtree
-// TestAggressiveFlushing verifies that WalkKeys with KeepInMemory=false aggressively
-// flushes nodes during iteration, reducing memory usage during traversal.
+// TestAggressiveFlushing verifies that explicit flushing reduces memory usage
+// after iteration, without relying on iterator options.
 func TestAggressiveFlushing(t *testing.T) {
 	stre := testutil.NewMockStore()
 	defer stre.Close()
@@ -39,14 +38,9 @@ func TestAggressiveFlushing(t *testing.T) {
 	initialNodes := treap.GetInMemoryNodes()
 	t.Logf("Initial in-memory nodes: %d", len(initialNodes))
 
-	// Iterate with aggressive flushing
-	opts := IteratorOptions{
-		KeepInMemory: false,
-		LoadPayloads: false,
-	}
-
+	// Iterate
 	visitedCount := 0
-	err = treap.WalkInOrderKeys(opts, func(key types.PersistentKey[types.IntKey]) error {
+	err = treap.InOrderVisit(func(node TreapNodeInterface[types.IntKey]) error {
 		visitedCount++
 
 		// Check memory after each visit
@@ -56,35 +50,35 @@ func TestAggressiveFlushing(t *testing.T) {
 		return nil
 	})
 	if err != nil {
-		t.Fatalf("WalkInOrderKeys failed: %v", err)
+		t.Fatalf("InOrderVisit failed: %v", err)
 	}
 
 	if visitedCount != 7 {
 		t.Errorf("Expected to visit 7 nodes, visited %d", visitedCount)
 	}
 
-	// After iteration, very few nodes should remain
+	// Explicitly flush after iteration to reduce memory
+	if _, err := treap.FlushOldestPercentile(75); err != nil {
+		t.Fatalf("FlushOldestPercentile failed: %v", err)
+	}
+
 	finalNodes := treap.GetInMemoryNodes()
 	t.Logf("Final in-memory nodes: %d", len(finalNodes))
 
-	// With aggressive flushing, we should have significantly fewer nodes
-	// The exact number depends on tree structure, but it should be much less than the initial count
 	if len(finalNodes) >= len(initialNodes) {
-		t.Errorf("Expected aggressive flushing to reduce memory, but initial=%d, final=%d",
+		t.Errorf("Expected explicit flush to reduce memory, but initial=%d, final=%d",
 			len(initialNodes), len(finalNodes))
 	}
 }
 
-// TestFlushingComparison compares memory usage with and without aggressive flushing
-// TestFlushingComparison compares memory usage between KeepInMemory=true and
-// KeepInMemory=false, demonstrating the memory reduction from aggressive flushing.
+// TestFlushingComparison compares memory usage with and without explicit flushing.
 func TestFlushingComparison(t *testing.T) {
 	stre := testutil.NewMockStore()
 	defer stre.Close()
 
 	templateKey := types.IntKey(0).New()
 
-	// Test 1: Keep in memory
+	// Test 1: No explicit flush
 	treap1 := NewPersistentTreap(types.IntLess, templateKey, stre)
 	for i := types.IntKey(1); i <= 20; i++ {
 		key := i
@@ -92,13 +86,12 @@ func TestFlushingComparison(t *testing.T) {
 	}
 	treap1.Persist()
 
-	opts := IteratorOptions{KeepInMemory: true, LoadPayloads: false}
-	treap1.WalkInOrderKeys(opts, func(key types.PersistentKey[types.IntKey]) error { return nil })
+	treap1.InOrderVisit(func(node TreapNodeInterface[types.IntKey]) error { return nil })
 
 	keepInMemoryCount := len(treap1.GetInMemoryNodes())
 	t.Logf("With KeepInMemory=true: %d nodes in memory", keepInMemoryCount)
 
-	// Test 2: Aggressive flushing
+	// Test 2: Explicit flush after iteration
 	treap2 := NewPersistentTreap(types.IntLess, templateKey, stre)
 	for i := types.IntKey(1); i <= 20; i++ {
 		key := i
@@ -106,15 +99,17 @@ func TestFlushingComparison(t *testing.T) {
 	}
 	treap2.Persist()
 
-	opts = IteratorOptions{KeepInMemory: false, LoadPayloads: false}
-	treap2.WalkInOrderKeys(opts, func(key types.PersistentKey[types.IntKey]) error { return nil })
+	treap2.InOrderVisit(func(node TreapNodeInterface[types.IntKey]) error { return nil })
+	if _, err := treap2.FlushOldestPercentile(75); err != nil {
+		t.Fatalf("FlushOldestPercentile failed: %v", err)
+	}
 
 	aggressiveFlushCount := len(treap2.GetInMemoryNodes())
-	t.Logf("With KeepInMemory=false (aggressive flush): %d nodes in memory", aggressiveFlushCount)
+	t.Logf("With explicit flush: %d nodes in memory", aggressiveFlushCount)
 
-	// Aggressive flushing should use significantly less memory
+	// Explicit flushing should use significantly less memory
 	if aggressiveFlushCount >= keepInMemoryCount {
-		t.Errorf("Aggressive flushing should reduce memory: keepInMemory=%d, aggressive=%d",
+		t.Errorf("Explicit flushing should reduce memory: keepInMemory=%d, aggressive=%d",
 			keepInMemoryCount, aggressiveFlushCount)
 	}
 

@@ -11,9 +11,9 @@ import (
 	"github.com/cbehopkins/bobbob/yggdrasil/types"
 )
 
-// TestMemorySavingsWithoutObjectMap verifies that eliminating ObjectMap
+// TestMemorySavingsBlockAllocator verifies that the BlockAllocator
 // actually reduces memory usage in real-world scenarios
-func TestMemorySavingsWithoutObjectMap(t *testing.T) {
+func TestMemorySavingsBlockAllocator(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping memory savings test in short mode")
 	}
@@ -85,7 +85,7 @@ func TestMemorySavingsWithoutObjectMap(t *testing.T) {
 	t.Logf("Analysis:")
 	t.Logf("  Total includes: treap nodes (~80-100 bytes) + keys + payloads + Go overhead")
 	t.Logf("  BlockAllocator tracking overhead: ~1 byte per item (bool in allocatedList)")
-	t.Logf("  Compared to old ObjectMap: 48 bytes per item (98%% reduction in tracking overhead)")
+	t.Logf("  Compared to BasicAllocator: 48 bytes per item (98%% reduction in tracking overhead)")
 
 	// Verify collection is searchable
 	key := types.IntKey(itemCount / 2)
@@ -169,34 +169,34 @@ func TestMemorySavingsScalingAnalysis(t *testing.T) {
 	}
 }
 
-// TestMemoryComparisonAnalysis demonstrates the memory savings from ObjectMap elimination
+// TestMemoryComparisonAnalysis demonstrates the memory savings from BlockAllocator vs BasicAllocator
 func TestMemoryComparisonAnalysis(t *testing.T) {
-	t.Logf("=== Memory Comparison: ObjectMap vs Allocator Tracking ===\n")
+	t.Logf("=== Memory Comparison: BasicAllocator vs BlockAllocator ===\n")
 
 	itemCounts := []int{1_000, 10_000, 100_000, 1_000_000}
 
 	t.Logf("Estimated memory usage (in MB):\n")
-	t.Logf("%-10s | %-20s | %-20s | %-10s", "Items", "ObjectMap (old)", "Allocator (new)", "Savings")
+	t.Logf("%-10s | %-20s | %-20s | %-10s", "Items", "BasicAllocator", "BlockAllocator", "Savings")
 	t.Logf("%-10s | %-20s | %-20s | %-10s", "---", "---", "---", "---")
 
 	for _, count := range itemCounts {
-		// ObjectMap: ~48 bytes per entry
-		objectMapBytes := int64(count) * 48
-		objectMapMB := float64(objectMapBytes) / (1024 * 1024)
+		// BasicAllocator: ~48 bytes per entry (map-based)
+		basicAllocatorBytes := int64(count) * 48
+		basicAllocatorMB := float64(basicAllocatorBytes) / (1024 * 1024)
 
 		// BlockAllocator tracking: ~1 byte per entry (bool in allocatedList)
-		allocatorBytes := int64(count) * 1
-		allocatorMB := float64(allocatorBytes) / (1024 * 1024)
+		blockAllocatorBytes := int64(count) * 1
+		blockAllocatorMB := float64(blockAllocatorBytes) / (1024 * 1024)
 
-		savings := float64(objectMapBytes-allocatorBytes) / float64(objectMapBytes) * 100
+		savings := float64(basicAllocatorBytes-blockAllocatorBytes) / float64(basicAllocatorBytes) * 100
 
 		t.Logf("%-10d | %-20.2f | %-20.2f | %-10.1f%%",
-			count, objectMapMB, allocatorMB, savings)
+			count, basicAllocatorMB, blockAllocatorMB, savings)
 	}
 
 	t.Logf("\nConclusion:")
-	t.Logf("  ObjectMap tracking overhead: ~48 bytes/item")
+	t.Logf("  BasicAllocator tracking overhead: ~48 bytes/item (map-based)")
 	t.Logf("  BlockAllocator tracking overhead: ~1 byte/item (bool array)")
 	t.Logf("  Result: ~98%% reduction in allocator tracking overhead")
-	t.Logf("  Note: BasicAllocator (for irregular sizes) still uses ~40 bytes/item")
+	t.Logf("  Note: MultiStore uses BlockAllocator for fixed-size objects, BasicAllocator for irregular sizes")
 }

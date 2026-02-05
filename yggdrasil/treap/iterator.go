@@ -4,243 +4,222 @@ import (
 	"fmt"
 
 	"github.com/cbehopkins/bobbob/store"
-	"github.com/cbehopkins/bobbob/yggdrasil/types"
 )
 
-// IteratorOptions controls the behavior of treap iteration.
-type IteratorOptions struct {
-	// KeepInMemory determines whether visited nodes should remain in memory
-	// after being yielded. If false, nodes are flushed after their subtree
-	// has been fully visited (memory-efficient mode).
-	KeepInMemory bool
-
-	// LoadPayloads determines whether to load payloads for payload treaps.
-	// If false, only keys and structure are loaded (faster, less memory).
-	LoadPayloads bool
-}
-
-// DefaultIteratorOptions returns options that minimize memory usage.
-func DefaultIteratorOptions() IteratorOptions {
-	return IteratorOptions{
-		KeepInMemory: false,
-		LoadPayloads: true,
+func isNilNode[K any](node TreapNodeInterface[K]) bool {
+	if node == nil {
+		return true
 	}
+	return node.IsNil()
 }
 
-// IteratorState tracks the traversal state for in-order iteration.
-// It maintains a stack of nodes representing the current path from root to current position.
-type IteratorState[K any] struct {
-	stack       []TreapNodeInterface[K]
-	current     TreapNodeInterface[K]
-	lastVisited TreapNodeInterface[K] // Track last visited node for flushing
-	done        bool
-	opts        IteratorOptions
-}
+// VisitCallback is a read-only iterator callback for treap nodes.
+type VisitCallback[T any] func(node TreapNodeInterface[T]) error
 
-// WalkInOrder iterates through all nodes in the treap in sorted key order.
-// It yields each node to the callback function.
+// MutatingCallback is an iterator callback that can mutate nodes.
+// The iterator detects mutations via ObjectId transitions (valid→invalid)
+// and automatically adds old ObjectIds to the trash list.
+type MutatingCallback[T any] func(node TreapNodeInterface[T]) error
+
+// InOrderVisit performs a read-only in-order traversal of the treap.
+// Multiple concurrent readers can call this method simultaneously (uses RLock).
 //
-// Memory efficiency:
-// - With KeepInMemory=false: Only maintains nodes on the current path (O(log n) memory)
-// - With KeepInMemory=true: Nodes remain in memory after visiting (O(n) memory worst case)
-//
-// The callback receives the node and should return:
-// - nil to continue iteration
-// - an error to stop iteration early
-func (t *PersistentTreap[K]) WalkInOrder(opts IteratorOptions, callback func(node PersistentTreapNodeInterface[K]) error) error {
-	if t.root == nil {
+// The callback is invoked for each node in sorted order.
+// Return an error to halt iteration early.
+func (t *PersistentTreap[K]) InOrderVisit(callback VisitCallback[K]) error {
+	if t == nil || t.root == nil || callback == nil {
 		return nil
 	}
 
-	state := &IteratorState[K]{
-		stack: make([]TreapNodeInterface[K], 0, 32), // Pre-allocate for typical tree depth
-		opts:  opts,
-	}
+	t.mu.RLock()
+	defer t.mu.RUnlock()
 
-	// Start with the root
-	state.current = t.root
-
-	// Enhanced iterative in-order traversal with aggressive flushing
-	for state.current != nil || len(state.stack) > 0 {
-		// Go to the leftmost node
-		for state.current != nil && !state.current.IsNil() {
-			state.stack = append(state.stack, state.current)
-			state.current = state.current.GetLeft()
-		}
-
-		if len(state.stack) == 0 {
-			break
-		}
-
-		// Pop and visit this node
-		state.current = state.stack[len(state.stack)-1]
-		state.stack = state.stack[:len(state.stack)-1]
-
-		// Convert to persistent node
-		pNode, ok := state.current.(*PersistentTreapNode[K])
-		if !ok {
-			return fmt.Errorf("node is not a PersistentTreapNode")
-		}
-
-		// Yield this node to the callback
-		err := callback(pNode)
-		if err != nil {
-			return err
-		}
-
-		// After visiting this node, flush its left child if we're not keeping in memory
-		// We've finished with the entire left subtree at this point
-		if !state.opts.KeepInMemory && pNode.TreapNode.left != nil {
-			if store.IsValidObjectId(pNode.objectId) {
-				_ = pNode.flushChild(&pNode.TreapNode.left, &pNode.leftObjectId)
-			}
-		}
-
-		// Mark this as the last visited node
-		state.lastVisited = state.current
-
-		// Move to right subtree
-		state.current = state.current.GetRight()
-
-		// If we're not moving to a right child (it's nil), and we just visited a node,
-		// flush the right child of that node since we're done with the right subtree too
-		if state.current == nil && state.lastVisited != nil && !state.opts.KeepInMemory {
-			if pNode, ok := state.lastVisited.(*PersistentTreapNode[K]); ok {
-				if pNode.TreapNode.right != nil && store.IsValidObjectId(pNode.objectId) {
-					_ = pNode.flushChild(&pNode.TreapNode.right, &pNode.rightObjectId)
-				}
-			}
-		}
-	}
-
-	return nil
+	_, err := hybridWalkInOrder(t.root, t.Store, func(node TreapNodeInterface[K]) error {
+		return callback(node)
+	}, false)
+	return err
 }
 
-// WalkInOrderKeys is a convenience method that yields only the keys.
-// This is more memory efficient as it doesn't require loading payloads.
-func (t *PersistentTreap[K]) WalkInOrderKeys(opts IteratorOptions, callback func(key types.PersistentKey[K]) error) error {
-	return t.WalkInOrder(opts, func(node PersistentTreapNodeInterface[K]) error {
-		key, ok := node.GetKey().(types.PersistentKey[K])
-		if !ok {
-			return fmt.Errorf("node key is not a types.PersistentKey")
-		}
-		return callback(key)
-	})
-}
-
-// PayloadIteratorCallback is called for each node during payload treap iteration.
-// If loadPayload is false, the payload parameter will be the zero value.
-type PayloadIteratorCallback[K any, P types.PersistentPayload[P]] func(key types.PersistentKey[K], payload P, loadPayload bool) error
-
-// WalkInOrder iterates through all nodes in the payload treap in sorted key order.
+// InOrderMutate performs an in-order traversal allowing mutations.
+// This method acquires an exclusive write lock.
 //
-// Memory efficiency:
-// - With KeepInMemory=false: Only maintains nodes on the current path (O(log n) memory)
-// - With LoadPayloads=false: Payloads are not loaded, only keys (saves memory & I/O)
+// The iterator automatically detects when nodes are mutated (valid→invalid ObjectId transitions)
+// and accumulates their old ObjectIds for deletion. All trash is deleted at the end of iteration.
 //
-// The callback receives:
-// - key: The node's key
-// - payload: The node's payload (zero value if LoadPayloads=false)
-// - loadPayload: Whether the payload was actually loaded
-func (t *PersistentPayloadTreap[K, P]) WalkInOrder(opts IteratorOptions, callback PayloadIteratorCallback[K, P]) error {
-	if t.root == nil {
+// When a mutation is detected, ancestor childObjectIds are automatically invalidated
+// to prevent stale disk references.
+func (t *PersistentTreap[K]) InOrderMutate(callback MutatingCallback[K]) error {
+	if t == nil || t.root == nil || callback == nil {
 		return nil
 	}
 
-	state := &IteratorState[K]{
-		stack: make([]TreapNodeInterface[K], 0, 32),
-		opts:  opts,
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	trashList, err := hybridWalkInOrder(t.root, t.Store, func(node TreapNodeInterface[K]) error {
+		return callback(node)
+	}, true)
+	if err != nil {
+		return err
 	}
 
-	state.current = t.root
-
-	// Enhanced iterative in-order traversal with aggressive flushing
-	for state.current != nil || len(state.stack) > 0 {
-		// Go to the leftmost node
-		for state.current != nil && !state.current.IsNil() {
-			state.stack = append(state.stack, state.current)
-			state.current = state.current.GetLeft()
-		}
-
-		if len(state.stack) == 0 {
-			break
-		}
-
-		// Pop and visit this node
-		state.current = state.stack[len(state.stack)-1]
-		state.stack = state.stack[:len(state.stack)-1]
-
-		// Convert to persistent payload node
-		pNode, ok := state.current.(*PersistentPayloadTreapNode[K, P])
-		if !ok {
-			return fmt.Errorf("node is not a PersistentPayloadTreapNode")
-		}
-
-		// Get key
-		key, ok := pNode.GetKey().(types.PersistentKey[K])
-		if !ok {
-			return fmt.Errorf("node key is not a types.PersistentKey")
-		}
-
-		// Get payload if requested
-		var payload P
-		if opts.LoadPayloads {
-			payload = pNode.GetPayload()
-		}
-
-		// Yield to callback
-		err := callback(key, payload, opts.LoadPayloads)
-		if err != nil {
-			return err
-		}
-
-		// After visiting this node, flush its left child if we're not keeping in memory
-		// We've finished with the entire left subtree at this point
-		if !state.opts.KeepInMemory && pNode.TreapNode.left != nil {
-			if store.IsValidObjectId(pNode.objectId) {
-				_ = pNode.flushChild(&pNode.TreapNode.left, &pNode.leftObjectId)
-			}
-		}
-
-		// Mark as last visited
-		state.lastVisited = state.current
-
-		// Move to right subtree
-		state.current = state.current.GetRight()
-
-		// If we're not moving to a right child (it's nil), and we just visited a node,
-		// flush the right child of that node since we're done with the right subtree too
-		if state.current == nil && state.lastVisited != nil && !state.opts.KeepInMemory {
-			if pNode, ok := state.lastVisited.(*PersistentPayloadTreapNode[K, P]); ok {
-				if pNode.TreapNode.right != nil && store.IsValidObjectId(pNode.objectId) {
-					_ = pNode.flushChild(&pNode.TreapNode.right, &pNode.rightObjectId)
-				}
-			}
+	// Delete all accumulated trash
+	for _, objId := range trashList {
+		if err := t.Store.DeleteObj(objId); err != nil {
+			return fmt.Errorf("failed to delete trash ObjectId %d: %w", objId, err)
 		}
 	}
 
+	t.flushPendingDeletes()
 	return nil
 }
 
-// WalkInOrderKeys is a convenience method that yields only the keys from a payload treap.
-// This is more memory efficient as it doesn't require loading payloads.
-func (t *PersistentPayloadTreap[K, P]) WalkInOrderKeys(opts IteratorOptions, callback func(key types.PersistentKey[K]) error) error {
-	// Override LoadPayloads to false for efficiency
-	opts.LoadPayloads = false
-	return t.WalkInOrder(opts, func(key types.PersistentKey[K], _ P, _ bool) error {
-		return callback(key)
-	})
+// hybridWalkInOrder performs a stack-based in-order traversal of the treap.
+// It follows in-memory pointers as the primary mechanism, falling back to
+// loading from disk when a pointer is nil but the ObjectId is valid.
+//
+// If trackMutations is true:
+// - Records ObjectId before callback
+// - Detects valid→invalid transitions after callback
+// - Invalidates ancestor childObjectIds when mutations detected
+// - Accumulates trash ObjectIds for deletion
+//
+// Returns the list of ObjectIds to delete (empty if trackMutations=false).
+func hybridWalkInOrder[T any](
+	root TreapNodeInterface[T],
+	st store.Storer,
+	callback func(TreapNodeInterface[T]) error,
+	trackMutations bool,
+) ([]store.ObjectId, error) {
+	if root == nil {
+		return nil, nil
+	}
+
+	type stackFrame struct {
+		node TreapNodeInterface[T]
+		// Track which child pointer to process next:
+		// 0=left not yet visited, 1=visiting, 2=right not yet visited, 3=done
+		phase int
+	}
+
+	stack := make([]stackFrame, 0, 32)
+	trashList := make([]store.ObjectId, 0)
+	current := root
+	phase := 0
+
+	for current != nil || len(stack) > 0 {
+		if current != nil && isNilNode(current) {
+			current = nil
+			phase = 0
+			continue
+		}
+		if current != nil && phase == 0 {
+			// Visit left subtree
+			stack = append(stack, stackFrame{node: current, phase: 1})
+			current = current.GetLeft()
+			phase = 0
+		} else if len(stack) > 0 {
+			frame := stack[len(stack)-1]
+			stack = stack[:len(stack)-1]
+
+			if frame.node == nil || isNilNode(frame.node) {
+				current = nil
+				phase = 0
+				continue
+			}
+
+			if frame.phase == 1 {
+				// Visit node
+				var oldObjectId store.ObjectId = -1
+
+				// Record ObjectId before callback for mutation detection
+				if trackMutations {
+					if pNode, ok := frame.node.(*PersistentTreapNode[T]); ok {
+						oldObjectId = pNode.objectId
+					}
+				}
+
+				// Invoke callback
+				if err := callback(frame.node); err != nil {
+					return trashList, err
+				}
+
+				// Detect mutations (valid→invalid transition)
+				if trackMutations {
+					if pNode, ok := frame.node.(*PersistentTreapNode[T]); ok {
+						if oldObjectId >= 0 && pNode.objectId < 0 {
+							// Mutation detected: node was persisted but now in-memory only
+							trashList = append(trashList, oldObjectId)
+
+							// Invalidate ancestor childObjectIds
+							// Convert stack to generic helper type for the helper function
+							helperStack := make([]*stackFrameHelper[T], len(stack))
+							for j, s := range stack {
+								helperStack[j] = &stackFrameHelper[T]{node: s.node, phase: s.phase}
+							}
+							invalidateAncestorsHelper(helperStack, frame.node)
+						}
+					}
+				}
+
+				// Continue with right subtree
+				stack = append(stack, stackFrame{node: frame.node, phase: 2})
+				current = frame.node.GetRight()
+				phase = 0
+			} else if frame.phase == 2 {
+				// Right subtree already visited, node is done
+				current = nil
+			}
+		} else {
+			break
+		}
+	}
+
+	return trashList, nil
+}
+
+// invalidateAncestorsHelper walks the ancestor stack and invalidates the childObjectId
+// that corresponds to the mutated node.
+func invalidateAncestorsHelper[T any](stack []*stackFrameHelper[T], mutatedNode TreapNodeInterface[T]) {
+	if len(stack) == 0 {
+		return
+	}
+
+	// Walk stack from top (most recent ancestor) backwards
+	for i := len(stack) - 1; i >= 0; i-- {
+		ancestor := stack[i].node
+		if ancestor == nil {
+			continue
+		}
+
+		// Determine if mutatedNode is a left or right child of ancestor
+		if ancestor.GetLeft() == mutatedNode {
+			// mutatedNode is the left child
+			if pAncestor, ok := ancestor.(*PersistentTreapNode[T]); ok {
+				pAncestor.leftObjectId = -1
+			}
+		} else if ancestor.GetRight() == mutatedNode {
+			// mutatedNode is the right child
+			if pAncestor, ok := ancestor.(*PersistentTreapNode[T]); ok {
+				pAncestor.rightObjectId = -1
+			}
+		}
+
+		// Update mutatedNode reference for next ancestor
+		mutatedNode = ancestor
+	}
+}
+
+// stackFrameHelper is used internally for stack-based traversal.
+type stackFrameHelper[T any] struct {
+	node  TreapNodeInterface[T]
+	phase int
 }
 
 // Count returns the total number of nodes in the treap.
-// This uses WalkInOrder with minimal memory usage (keys only, no retention).
 func (t *PersistentTreap[K]) Count() (int, error) {
 	count := 0
-	opts := IteratorOptions{
-		KeepInMemory: false,
-		LoadPayloads: false,
-	}
-	err := t.WalkInOrder(opts, func(node PersistentTreapNodeInterface[K]) error {
+	err := t.InOrderVisit(func(node TreapNodeInterface[K]) error {
 		count++
 		return nil
 	})
@@ -250,11 +229,7 @@ func (t *PersistentTreap[K]) Count() (int, error) {
 // Count returns the total number of nodes in the payload treap.
 func (t *PersistentPayloadTreap[K, P]) Count() (int, error) {
 	count := 0
-	opts := IteratorOptions{
-		KeepInMemory: false,
-		LoadPayloads: false,
-	}
-	err := t.WalkInOrder(opts, func(_ types.PersistentKey[K], _ P, _ bool) error {
+	err := t.InOrderVisit(func(node TreapNodeInterface[K]) error {
 		count++
 		return nil
 	})

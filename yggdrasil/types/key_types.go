@@ -54,6 +54,12 @@ func (k *IntKey) UnmarshalFromObjectId(id store.ObjectId, stre store.Storer) err
 	return nil
 }
 
+// DependentObjectIds returns the list of ObjectIds that this key depends on.
+// IntKey stores its value directly in the ObjectId, so it has no dependent allocations.
+func (k IntKey) DependentObjectIds() []store.ObjectId {
+	return nil
+}
+
 // Marshal encodes the IntKey to a 4-byte little-endian representation.
 func (k IntKey) Marshal() ([]byte, error) {
 	buf := make([]byte, 4)
@@ -137,19 +143,31 @@ func StringLess(a, b StringKey) bool {
 	return a < b
 }
 
-// SizeInBytes returns the byte length of the string.
+// SizeInBytes returns the byte length of the string plus 4 bytes for length prefix.
 func (k StringKey) SizeInBytes() int {
-	return len([]byte(k))
+	return 4 + len([]byte(k))
 }
 
-// Marshal encodes the StringKey to bytes.
+// Marshal encodes the StringKey to bytes with a length prefix.
 func (k StringKey) Marshal() ([]byte, error) {
-	return []byte(k), nil
+	s := string(k)
+	length := uint32(len(s))
+	buf := make([]byte, 4+len(s))
+	binary.LittleEndian.PutUint32(buf[0:4], length)
+	copy(buf[4:], s)
+	return buf, nil
 }
 
-// Unmarshal decodes the StringKey from bytes.
+// Unmarshal decodes the StringKey from bytes with a length prefix.
 func (k *StringKey) Unmarshal(data []byte) error {
-	*k = StringKey(data)
+	if len(data) < 4 {
+		return fmt.Errorf("StringKey data too short: %d bytes", len(data))
+	}
+	length := binary.LittleEndian.Uint32(data[0:4])
+	if int(length) > len(data)-4 {
+		return fmt.Errorf("StringKey length %d exceeds data size %d", length, len(data)-4)
+	}
+	*k = StringKey(data[4 : 4+length])
 	return nil
 }
 
@@ -172,8 +190,20 @@ func (k StringKey) MarshalToObjectId(stre store.Storer) (store.ObjectId, error) 
 	}
 	return store.WriteNewObjFromBytes(stre, marshalled)
 }
+// LateMarshal stores the StringKey as a new object in the store.
+func (k StringKey) LateMarshal(stre store.Storer) (store.ObjectId, func() error) {
+	marshalled, err := k.Marshal()
+	if err != nil {
+		return 0, func () error { return err }
+	}
+	return store.LateWriteNewObjFromBytes(stre, marshalled)
+}
 
 // UnmarshalFromObjectId loads the StringKey from an object in the store.
+// Note: StringKey does NOT implement DependentObjectIds, so it is responsible
+// for cleaning up its own backing ObjectId. This cleanup must happen BEFORE
+// any new allocation during a subsequent update, but the backing object itself
+// is owned by this key and should be managed by higher layers if needed.
 func (k *StringKey) UnmarshalFromObjectId(id store.ObjectId, stre store.Storer) error {
 	return store.ReadGeneric(stre, k, id)
 }
@@ -206,7 +236,7 @@ func (k MD5Key) Priority() uint32 {
 
 // MD5Less is a comparison function for MD5Key values.
 func MD5Less(a, b MD5Key) bool {
-	for i := 0; i < 16; i++ {
+	for i := range 16 {
 		if a[i] != b[i] {
 			return a[i] < b[i]
 		}
