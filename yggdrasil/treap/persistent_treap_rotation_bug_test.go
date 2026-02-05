@@ -19,19 +19,19 @@ func TestPersistentTreapRotationCorruption(t *testing.T) {
 
 	// Phase 1: Build initial tree with specific priorities to control structure
 	// We'll insert nodes that will definitely cause a rotation later
-	
+
 	// Insert root with high priority (stays at root)
 	key1 := types.IntKey(50)
 	treap.InsertComplex(&key1, Priority(1000))
-	
+
 	// Insert left child with medium priority
 	key2 := types.IntKey(25)
 	treap.InsertComplex(&key2, Priority(500))
-	
+
 	// Insert right child with medium priority
 	key3 := types.IntKey(75)
 	treap.InsertComplex(&key3, Priority(500))
-	
+
 	t.Logf("Initial tree structure created")
 
 	// Phase 2: Persist the tree - all nodes get valid objectIds
@@ -55,7 +55,7 @@ func TestPersistentTreapRotationCorruption(t *testing.T) {
 	// This will be inserted under node 25 but its high priority will cause it to rotate up
 	key4 := types.IntKey(20)
 	treap.InsertComplex(&key4, Priority(2000)) // Higher priority than root!
-	
+
 	t.Logf("Inserted node 20 with priority 2000 (should cause rotations)")
 
 	// Phase 4: Validate against disk WITHOUT persisting first
@@ -84,24 +84,24 @@ func TestPersistentTreapMinimalRotationBug(t *testing.T) {
 	// Insert root
 	key1 := types.IntKey(10)
 	treap.InsertComplex(&key1, Priority(100))
-	
+
 	// Check objectId before persist
 	root1 := treap.Root().(*PersistentTreapNode[types.IntKey])
 	t.Logf("Before persist: node 10 has objectId=%d", root1.objectId)
-	
+
 	// Persist
 	if err := treap.Persist(); err != nil {
 		t.Fatalf("Failed to persist: %v", err)
 	}
-	
+
 	// Check objectId after persist
 	root1 = treap.Root().(*PersistentTreapNode[types.IntKey])
 	t.Logf("After persist: node 10 has objectId=%d", root1.objectId)
-	
+
 	// Insert child with higher priority (forces rotation)
 	key2 := types.IntKey(5)
 	treap.InsertComplex(&key2, Priority(200))
-	
+
 	t.Logf("After insert before validation:")
 	root2 := treap.Root().(*PersistentTreapNode[types.IntKey])
 	t.Logf("  Root: key=%d, objectId=%d, leftObjId=%d, rightObjId=%d",
@@ -111,10 +111,10 @@ func TestPersistentTreapMinimalRotationBug(t *testing.T) {
 		t.Logf("  Right: key=%d, objectId=%d, leftObjId=%d, rightObjId=%d",
 			rightNode.GetKey().Value(), rightNode.objectId, rightNode.leftObjectId, rightNode.rightObjectId)
 	}
-	
+
 	t.Logf("Tree structure after rotation:")
 	t.Logf("  Expected: node 5 (pri 200) is root, node 10 (pri 100) is right child")
-	
+
 	// Validate - should fail if bug exists
 	errors := treap.ValidateAgainstDisk()
 	if len(errors) > 0 {
@@ -122,7 +122,7 @@ func TestPersistentTreapMinimalRotationBug(t *testing.T) {
 		for _, e := range errors {
 			t.Logf("  - %s", e)
 		}
-		
+
 		// Let's also check what objectIds are involved
 		root := treap.Root()
 		if root != nil {
@@ -130,7 +130,7 @@ func TestPersistentTreapMinimalRotationBug(t *testing.T) {
 			if ok {
 				t.Logf("Root node key=%d, objectId=%d, leftObjectId=%d, rightObjectId=%d",
 					rootNode.GetKey().Value(), rootNode.objectId, rootNode.leftObjectId, rootNode.rightObjectId)
-				
+
 				if rootNode.TreapNode.right != nil {
 					rightNode, ok := rootNode.TreapNode.right.(*PersistentTreapNode[types.IntKey])
 					if ok {
@@ -140,7 +140,7 @@ func TestPersistentTreapMinimalRotationBug(t *testing.T) {
 				}
 			}
 		}
-		
+
 		t.Fatalf("BUG: Rotation invalidated objectIds without updating references")
 	} else {
 		t.Logf("No corruption detected (bug not reproduced)")

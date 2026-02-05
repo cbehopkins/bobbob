@@ -575,7 +575,7 @@ func stressTestRandomOperations(t *testing.T, config StressTestConfig, treap *Pe
 			for j := 0; j < batchSize; j++ {
 				key := types.IntKey(i)
 				payload := MockPayload{Data: fmt.Sprintf("item_%d_%d", i, time.Now().UnixNano()%10000)}
-				
+
 				// Hold lock during both expectedPayloads update AND treap insert
 				// to ensure integrity checker sees consistent state
 				payloadMu.Lock()
@@ -752,7 +752,6 @@ func verifyDataIntegrity(treap *PersistentPayloadTreap[types.IntKey, MockPayload
 
 	return 1, 0
 }
-
 
 func logIntegrityMismatch(t *testing.T, treap *PersistentPayloadTreap[types.IntKey, MockPayload], expectedPayloads map[int32]string) {
 	foundItems := 0

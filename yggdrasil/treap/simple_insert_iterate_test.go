@@ -21,7 +21,7 @@ func TestSimpleInsertDeleteIterate(t *testing.T) {
 	)
 
 	const (
-		cycles       = 100 // Increase to original
+		cycles       = 100  // Increase to original
 		batchSize    = 1000 // Increase to original
 		maxNodes     = 10000
 		deleteEveryN = 4 // Delete every 4th key to reduce tree size
@@ -29,7 +29,7 @@ func TestSimpleInsertDeleteIterate(t *testing.T) {
 
 	expected := make(map[int]MockPayload)
 	keys := make([]int, 0, maxNodes)
-	
+
 	insertLog := make([]int, 0, 1000) // Track last 1000 inserts
 	deleteLog := make([]int, 0, 1000) // Track last 1000 deletes
 
@@ -60,7 +60,7 @@ func TestSimpleInsertDeleteIterate(t *testing.T) {
 					unexpected = append(unexpected, k)
 				}
 			}
-			t.Logf("%s cycle %d op %d: Tree has %d nodes but expected has %d", 
+			t.Logf("%s cycle %d op %d: Tree has %d nodes but expected has %d",
 				operation, cycleNum, operationNum, len(seenKeys), len(expected))
 			if len(missing) > 0 {
 				t.Logf("  Missing: %v", missing)
@@ -87,32 +87,31 @@ func TestSimpleInsertDeleteIterate(t *testing.T) {
 	// Inserter/Checker worker
 	for cycle := 0; cycle < cycles; cycle++ {
 		keysBeforeInsert := len(expected)
-		
+
 		// Insert a batch
 		startKey := cycle * batchSize
 		for i := 0; i < batchSize; i++ {
 			keyVal := startKey + i
 			key := types.IntKey(keyVal)
 			payload := MockPayload{Data: fmt.Sprintf("item_%d", keyVal)}
-			
+
 			treap.Insert(&key, payload)
 			expected[keyVal] = payload
 			keys = append(keys, keyVal)
 			insertLog = append(insertLog, keyVal)
-			
+
 			// Verify immediately after insert
 			afterSearch := treap.Search(&key)
 			if afterSearch == nil {
 				t.Fatalf("cycle %d insert %d: Key %d not found immediately after Insert!", cycle, i, keyVal)
 			}
-			
-			
+
 			// Verify tree structure after EVERY insert (granular)
 			verifyTreeStructure("INSERT", cycle, i)
 		}
-		
+
 		keysAfterInsert := len(expected)
-		t.Logf("cycle %d: inserted %d keys (expected before=%d, after=%d)", 
+		t.Logf("cycle %d: inserted %d keys (expected before=%d, after=%d)",
 			cycle, keysAfterInsert-keysBeforeInsert, keysBeforeInsert, keysAfterInsert)
 
 		// Verify tree structure after all inserts
@@ -126,12 +125,12 @@ func TestSimpleInsertDeleteIterate(t *testing.T) {
 			if i < 5 {
 				deletedThisCycle = append(deletedThisCycle, keys[0])
 			}
-			
+
 			deleteFirst()
 			keysDeletedThisCycle++
-			
+
 			// Verify tree structure after each delete
-			if i % 25 == 0 {  // Check every 25 deletes to avoid slowness
+			if i%25 == 0 { // Check every 25 deletes to avoid slowness
 				verifyTreeStructure("DELETE", cycle, i)
 			}
 		}
@@ -142,14 +141,14 @@ func TestSimpleInsertDeleteIterate(t *testing.T) {
 			deleteFirst()
 			keysDeletedThisCycle++
 			deleteCapIteration++
-			
-			if deleteCapIteration % 25 == 0 {
+
+			if deleteCapIteration%25 == 0 {
 				verifyTreeStructure("DELETE-CAP", cycle, deleteCapIteration)
 			}
 		}
-		
+
 		if keysDeletedThisCycle > 0 {
-			t.Logf("cycle %d: deleted %d keys (expected now=%d). First 5 deleted: %v", 
+			t.Logf("cycle %d: deleted %d keys (expected now=%d). First 5 deleted: %v",
 				cycle, keysDeletedThisCycle, len(expected), deletedThisCycle)
 		}
 
@@ -237,7 +236,7 @@ func TestSimpleInsertDeleteIterate_Treap(t *testing.T) {
 					}
 				}
 			}
-			t.Fatalf("cycle %d: Expected %d keys, iteration saw %d. Missing: %v", 
+			t.Fatalf("cycle %d: Expected %d keys, iteration saw %d. Missing: %v",
 				cycle, len(expected), len(seen), missing)
 		}
 
@@ -332,7 +331,7 @@ func TestSimpleInsertDeleteIterate_PersistentTreap(t *testing.T) {
 					}
 				}
 			}
-			t.Fatalf("cycle %d: Expected %d keys, iteration saw %d. Missing: %v", 
+			t.Fatalf("cycle %d: Expected %d keys, iteration saw %d. Missing: %v",
 				cycle, len(expected), len(seen), missing)
 		}
 

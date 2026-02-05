@@ -684,7 +684,7 @@ func Example() {
 
 	// Read the data back - allocated size may be larger than written size
 	readData, _ := ReadBytesFromObj(s, objId)
-	
+
 	// Only print the amount we originally wrote
 	fmt.Printf("%s\n", string(readData[:len(data)]))
 	// Output: Hello, Store!

@@ -62,6 +62,7 @@ import (
 	"github.com/cbehopkins/bobbob"
 	"github.com/cbehopkins/bobbob/allocator/types"
 )
+
 type Storer bobbob.Storer
 type FileSize bobbob.FileSize
 

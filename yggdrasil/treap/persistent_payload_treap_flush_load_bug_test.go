@@ -111,14 +111,14 @@ func TestMinimalPayloadFlushLoadBug(t *testing.T) {
 		pNode := node.(*PersistentPayloadTreapNode[types.IntKey, MockPayload])
 		keyPtr := pNode.GetKey().(*types.IntKey)
 		yieldedKeys = append(yieldedKeys, *keyPtr)
-		
+
 		// Verify payload
 		expectedPayloadData := expectedPayloads[*keyPtr]
 		payload := pNode.GetPayload()
 		if payload.Data != expectedPayloadData {
 			t.Errorf("Payload mismatch for key %d: got %q, expected %q", *keyPtr, payload.Data, expectedPayloadData)
 		}
-		
+
 		yieldedCount++
 		return nil
 	})
@@ -209,7 +209,7 @@ func TestManualPayloadGetLeftGetRightAfterFlush(t *testing.T) {
 		t.Logf("SUCCESS: GetLeft() loaded node from disk")
 		leftKey := leftNode.GetKey().(*types.IntKey)
 		t.Logf("Loaded left key: %v", *leftKey)
-		
+
 		// Verify payload was loaded correctly
 		if payloadNode, ok := leftNode.(PersistentPayloadNodeInterface[types.IntKey, MockPayload]); ok {
 			payload := payloadNode.GetPayload()
@@ -229,7 +229,7 @@ func TestManualPayloadGetLeftGetRightAfterFlush(t *testing.T) {
 		t.Logf("SUCCESS: GetRight() loaded node from disk")
 		rightKey := rightNode.GetKey().(*types.IntKey)
 		t.Logf("Loaded right key: %v", *rightKey)
-		
+
 		// Verify payload was loaded correctly
 		if payloadNode, ok := rightNode.(PersistentPayloadNodeInterface[types.IntKey, MockPayload]); ok {
 			payload := payloadNode.GetPayload()

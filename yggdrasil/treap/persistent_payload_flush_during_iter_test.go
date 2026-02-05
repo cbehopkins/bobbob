@@ -86,7 +86,7 @@ func TestMemoryFlushDuringLargeIteration(t *testing.T) {
 
 		return nil
 	}); err != nil {
-			t.Fatalf("InOrderVisit error at item %d: %v", count, err)
+		t.Fatalf("InOrderVisit error at item %d: %v", count, err)
 	}
 
 	// Verify we iterated all items

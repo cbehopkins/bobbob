@@ -60,12 +60,12 @@ type TrackerStats struct {
 
 // fileBasedObjectTracker uses a hash index file for object tracking
 type fileBasedObjectTracker struct {
-	mu      sync.RWMutex
-	file    *os.File
+	mu   sync.RWMutex
+	file *os.File
 	// deleteOnClose signals that the underlying file should be removed after Close.
 	deleteOnClose bool
-	header  trackerHeader
-	buckets []uint64 // In-memory bucket table (offsets to first entry in chain)
+	header        trackerHeader
+	buckets       []uint64 // In-memory bucket table (offsets to first entry in chain)
 }
 
 // newFileBasedObjectTracker creates a new file-based object tracker

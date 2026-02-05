@@ -138,7 +138,7 @@ func TestMarshalUnmarshalWithLazyRehydration(t *testing.T) {
 
 	availAfterUnmarshal := len(pl2.AvailableAllocators())
 	fullAfterUnmarshal := len(pl2.FullAllocators())
-	t.Logf("After unmarshal (before access): %d available allocators, %d full allocators", 
+	t.Logf("After unmarshal (before access): %d available allocators, %d full allocators",
 		availAfterUnmarshal, fullAfterUnmarshal)
 
 	// Pools should be empty initially (lazy rehydration)
@@ -171,7 +171,7 @@ func TestMarshalUnmarshalWithLazyRehydration(t *testing.T) {
 
 	availAfterAccess := len(pl2AfterAccess.AvailableAllocators())
 	fullAfterAccess := len(pl2AfterAccess.FullAllocators())
-	t.Logf("After accessing object: %d available allocators, %d full allocators", 
+	t.Logf("After accessing object: %d available allocators, %d full allocators",
 		availAfterAccess, fullAfterAccess)
 
 	if availAfterAccess+fullAfterAccess == 0 {

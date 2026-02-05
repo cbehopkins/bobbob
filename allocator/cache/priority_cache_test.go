@@ -231,7 +231,7 @@ func TestOverlappingRanges(t *testing.T) {
 	}
 
 	// Both blocks contain ObjectId 103, so we should get one of them
-	if (result.BaseObjId != 100 && result.BaseObjId != 102) {
+	if result.BaseObjId != 100 && result.BaseObjId != 102 {
 		t.Errorf("Query returned unexpected BaseObjId: %d", result.BaseObjId)
 	}
 
@@ -285,11 +285,11 @@ func TestBoundaryObjectIds(t *testing.T) {
 		objId    types.ObjectId
 		shouldOK bool
 	}{
-		{100, true},    // Start of range
-		{109, true},    // End of range (BaseObjId + BlockCount - 1)
-		{99, false},    // Before range
-		{110, false},   // After range
-		{104, true},    // Middle of range
+		{100, true},  // Start of range
+		{109, true},  // End of range (BaseObjId + BlockCount - 1)
+		{99, false},  // Before range
+		{110, false}, // After range
+		{104, true},  // Middle of range
 	}
 
 	for _, test := range tests {

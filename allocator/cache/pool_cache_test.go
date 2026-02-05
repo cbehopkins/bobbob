@@ -91,8 +91,8 @@ func TestPoolCacheInsertDuplicate(t *testing.T) {
 	defer pc.Close()
 
 	entry := UnloadedBlock{
-		ObjId:     types.ObjectId(100),
-		BaseObjId: types.ObjectId(1000),
+		ObjId:      types.ObjectId(100),
+		BaseObjId:  types.ObjectId(1000),
 		BlockCount: 1024,
 	}
 
@@ -113,11 +113,11 @@ func TestPoolCacheQuery(t *testing.T) {
 	defer pc.Close()
 
 	entry := UnloadedBlock{
-		ObjId:     types.ObjectId(100),
-		BaseObjId: types.ObjectId(1000),
-		BlockSize: types.FileSize(1024),
+		ObjId:      types.ObjectId(100),
+		BaseObjId:  types.ObjectId(1000),
+		BlockSize:  types.FileSize(1024),
 		BlockCount: 1024,
-		Available: true,
+		Available:  true,
 	}
 
 	pc.Insert(entry)
@@ -141,8 +141,8 @@ func TestPoolCacheQueryNotFound(t *testing.T) {
 	defer pc.Close()
 
 	entry := UnloadedBlock{
-		ObjId:     types.ObjectId(100),
-		BaseObjId: types.ObjectId(1000),
+		ObjId:      types.ObjectId(100),
+		BaseObjId:  types.ObjectId(1000),
 		BlockCount: 1024,
 	}
 
@@ -202,8 +202,8 @@ func TestPoolCacheDelete(t *testing.T) {
 	defer pc.Close()
 
 	entry := UnloadedBlock{
-		ObjId:     types.ObjectId(100),
-		BaseObjId: types.ObjectId(1000),
+		ObjId:      types.ObjectId(100),
+		BaseObjId:  types.ObjectId(1000),
 		BlockCount: 1024,
 	}
 
@@ -257,8 +257,8 @@ func TestPoolCacheSizeInBytes(t *testing.T) {
 	// Add entries
 	for i := 0; i < 3; i++ {
 		entry := UnloadedBlock{
-			ObjId:     types.ObjectId(100 + i),
-			BaseObjId: types.ObjectId(1000 + i*1000),
+			ObjId:      types.ObjectId(100 + i),
+			BaseObjId:  types.ObjectId(1000 + i*1000),
 			BlockCount: 1024,
 		}
 		pc.Insert(entry)
@@ -456,12 +456,12 @@ func TestPoolCacheComplexScenario(t *testing.T) {
 	// Simulate caching 5 BlockAllocators from different pools
 	for i := 0; i < 5; i++ {
 		entry := UnloadedBlock{
-			ObjId:           types.ObjectId(1000 + i),
-			BaseObjId:       types.ObjectId(10000 + i*5000),
-			BaseFileOffset:  types.FileOffset(50000 + i*50000),
-			BlockSize:       types.FileSize(1024 * (i + 1)),
-			BlockCount:      1024,
-			Available:       i%2 == 0,
+			ObjId:          types.ObjectId(1000 + i),
+			BaseObjId:      types.ObjectId(10000 + i*5000),
+			BaseFileOffset: types.FileOffset(50000 + i*50000),
+			BlockSize:      types.FileSize(1024 * (i + 1)),
+			BlockCount:     1024,
+			Available:      i%2 == 0,
 		}
 		pc.Insert(entry)
 	}
@@ -493,7 +493,7 @@ func TestPoolCacheComplexScenario(t *testing.T) {
 	data, _ := pc.Marshal()
 	pc2, _ := New()
 	defer pc2.Close()
-	
+
 	pc2.Unmarshal(data)
 	if len(pc2.entries) != 4 {
 		t.Errorf("Expected 4 restored entries, got %d", len(pc2.entries))

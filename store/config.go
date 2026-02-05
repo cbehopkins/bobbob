@@ -30,7 +30,7 @@ func primeTableBootstrapSize() int64 {
 // This is aligned to the PrimeTable size so application metadata starts immediately
 // after the PrimeTable bootstrap region.
 func PrimeObjectStart() ObjectId {
-	return 	ObjectId(primeTableBootstrapSize())
+	return ObjectId(primeTableBootstrapSize())
 }
 
 // Timing constants

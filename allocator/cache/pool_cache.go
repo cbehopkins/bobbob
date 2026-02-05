@@ -17,19 +17,19 @@ var (
 )
 
 const (
-	headerSize = 8  // version(4) + count(4)
+	headerSize = 8 // version(4) + count(4)
 )
 
 // UnloadedBlock represents metadata for a BlockAllocator stored on disk.
 // Includes both lightweight metadata and the bitmap state for proper rehydration.
 type UnloadedBlock struct {
-	ObjId           types.ObjectId   // ObjectId where this block allocator is stored
-	BaseObjId       types.ObjectId   // Starting ObjectId this allocator manages
-	BaseFileOffset  types.FileOffset // Starting FileOffset for this allocator's objects
-	BlockSize       types.FileSize   // Size of each object in the allocator
-	BlockCount      int              // Number of blocks (slots) this allocator manages
-	Available       bool             // Does it have free slots?
-	BitmapData      []byte           // Allocation bitmap from BlockAllocator
+	ObjId          types.ObjectId   // ObjectId where this block allocator is stored
+	BaseObjId      types.ObjectId   // Starting ObjectId this allocator manages
+	BaseFileOffset types.FileOffset // Starting FileOffset for this allocator's objects
+	BlockSize      types.FileSize   // Size of each object in the allocator
+	BlockCount     int              // Number of blocks (slots) this allocator manages
+	Available      bool             // Does it have free slots?
+	BitmapData     []byte           // Allocation bitmap from BlockAllocator
 }
 
 // PoolCache manages unloaded BlockAllocators using a temporary file for persistence.
@@ -164,13 +164,13 @@ func (pc *PoolCache) SizeInBytes() int {
 // Note: Only includes entries currently in the in-memory list (deleted entries excluded).
 func (pc *PoolCache) Marshal() ([]byte, error) {
 	var buf bytes.Buffer
-	
+
 	// Write header
 	header := make([]byte, headerSize)
 	binary.LittleEndian.PutUint32(header[0:4], 0) // version
 	binary.LittleEndian.PutUint32(header[4:8], uint32(len(pc.entries)))
 	buf.Write(header)
-	
+
 	// Write each entry with variable length (fixed metadata + bitmap data)
 	for _, entry := range pc.entries {
 		// Fixed part (41 bytes)
@@ -188,13 +188,13 @@ func (pc *PoolCache) Marshal() ([]byte, error) {
 		// Bitmap length (4 bytes)
 		binary.LittleEndian.PutUint32(entryData[37:41], uint32(len(entry.BitmapData)))
 		buf.Write(entryData)
-		
+
 		// Bitmap data (variable length)
 		if len(entry.BitmapData) > 0 {
 			buf.Write(entry.BitmapData)
 		}
 	}
-	
+
 	return buf.Bytes(), nil
 }
 

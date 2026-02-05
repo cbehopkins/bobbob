@@ -133,7 +133,7 @@ func TestPersistDirtyPropagation(t *testing.T) {
 	// Now invalidate one leaf node (key=3) during traversal
 	// The iterator should detect this and mark it + all ancestors as dirty
 	targetKey := types.IntKey(3)
-	
+
 	dirtyNodes, err := tr.RangeOverTreapPostOrder(func(node *PersistentTreapNode[types.IntKey]) error {
 		key := node.GetKey().(*types.IntKey)
 		if *key == targetKey {
@@ -149,10 +149,10 @@ func TestPersistDirtyPropagation(t *testing.T) {
 
 	// The dirty list should include:
 	// - key=3 (the modified leaf)
-	// - key=5 (parent, has stale child reference)  
+	// - key=5 (parent, has stale child reference)
 	// - key=10 (grandparent, has stale child reference)
 	// But NOT key=7 or key=15 (siblings/uncles, not ancestors)
-	
+
 	t.Logf("After invalidating leaf, %d nodes became dirty", len(dirtyNodes))
 
 	if len(dirtyNodes) == 0 {

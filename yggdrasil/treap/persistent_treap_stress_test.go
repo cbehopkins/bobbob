@@ -19,30 +19,30 @@ func TestPersistentTreapStressRandom(t *testing.T) {
 
 	keyTemplate := (*types.IntKey)(new(int32))
 	treap := NewPersistentTreap[types.IntKey](types.IntLess, keyTemplate, stre)
-	
+
 	// Reference map to track what should be in the treap
 	reference := make(map[int]bool)
-	
+
 	// Use fixed seed for reproducibility
 	rng := rand.New(rand.NewSource(12345))
-	
+
 	const (
 		numOperations = 1000
-		maxKey        = 500  // Key space
-		insertWeight  = 50   // % of operations that are inserts
-		walkWeight    = 25   // % that are walks
-		persistWeight = 15   // % that are persists
-		flushWeight   = 10   // % that are flush operations
+		maxKey        = 500 // Key space
+		insertWeight  = 50  // % of operations that are inserts
+		walkWeight    = 25  // % that are walks
+		persistWeight = 15  // % that are persists
+		flushWeight   = 10  // % that are flush operations
 	)
-	
+
 	insertCount := 0
 	walkCount := 0
 	persistCount := 0
 	flushCount := 0
-	
+
 	for i := 0; i < numOperations; i++ {
 		op := rng.Intn(100)
-		
+
 		switch {
 		case op < insertWeight:
 			// Insert a random key
@@ -51,15 +51,15 @@ func TestPersistentTreapStressRandom(t *testing.T) {
 			treap.Insert(&keyObj)
 			reference[key] = true
 			insertCount++
-			
+
 			if insertCount%100 == 0 {
 				t.Logf("After %d inserts: Reference has %d keys", insertCount, len(reference))
 			}
-			
+
 		case op < insertWeight+walkWeight:
 			// Walk and verify all reference keys are present
 			walked := make(map[int]bool)
-			
+
 			err := treap.InOrderVisit(func(node TreapNodeInterface[types.IntKey]) error {
 				key, ok := node.GetKey().(*types.IntKey)
 				if ok {
@@ -67,11 +67,11 @@ func TestPersistentTreapStressRandom(t *testing.T) {
 				}
 				return nil
 			})
-			
+
 			if err != nil {
 				t.Fatalf("Walk failed after %d ops: %v", i, err)
 			}
-			
+
 			// Verify all reference keys were walked
 			for key := range reference {
 				if !walked[key] {
@@ -80,7 +80,7 @@ func TestPersistentTreapStressRandom(t *testing.T) {
 					t.FailNow()
 				}
 			}
-			
+
 			// Verify no extra keys were walked
 			for key := range walked {
 				if !reference[key] {
@@ -88,9 +88,9 @@ func TestPersistentTreapStressRandom(t *testing.T) {
 					t.FailNow()
 				}
 			}
-			
+
 			walkCount++
-			
+
 		case op < insertWeight+walkWeight+persistWeight:
 			// Persist the tree
 			err := treap.Persist()
@@ -98,11 +98,11 @@ func TestPersistentTreapStressRandom(t *testing.T) {
 				t.Fatalf("Persist failed after %d ops: %v", i, err)
 			}
 			persistCount++
-			
+
 			if persistCount%10 == 0 {
 				t.Logf("Persist %d complete", persistCount)
 			}
-			
+
 		default:
 			// Flush oldest 20% of nodes
 			if treap.root != nil {
@@ -112,7 +112,7 @@ func TestPersistentTreapStressRandom(t *testing.T) {
 					if numToFlush == 0 {
 						numToFlush = 1
 					}
-					
+
 					// Sort by access time and flush oldest
 					// For simplicity, just flush first N
 					flushed := 0
@@ -122,7 +122,7 @@ func TestPersistentTreapStressRandom(t *testing.T) {
 							flushed++
 						}
 					}
-					
+
 					if flushed > 0 {
 						t.Logf("Flush %d: Flushed %d/%d nodes", flushCount, flushed, numToFlush)
 					}
@@ -131,12 +131,12 @@ func TestPersistentTreapStressRandom(t *testing.T) {
 			flushCount++
 		}
 	}
-	
+
 	// Final validation: walk entire tree
-	t.Logf("Final validation: %d inserts, %d walks, %d persists, %d flushes", 
+	t.Logf("Final validation: %d inserts, %d walks, %d persists, %d flushes",
 		insertCount, walkCount, persistCount, flushCount)
 	t.Logf("Reference has %d keys", len(reference))
-	
+
 	// Count in-memory vs flushed
 	inMemory := 0
 	flushed := 0
@@ -147,10 +147,10 @@ func TestPersistentTreapStressRandom(t *testing.T) {
 		flushed = len(reference) - inMemory
 	}
 	t.Logf("Tree state: %d in-memory, ~%d flushed", inMemory, flushed)
-	
+
 	// Final walk to force full traversal
 	walked := make(map[int]bool)
-	
+
 	err := treap.InOrderVisit(func(node TreapNodeInterface[types.IntKey]) error {
 		key, ok := node.GetKey().(*types.IntKey)
 		if ok {
@@ -158,25 +158,25 @@ func TestPersistentTreapStressRandom(t *testing.T) {
 		}
 		return nil
 	})
-	
+
 	if err != nil {
 		t.Fatalf("Final walk failed: %v", err)
 	}
-	
+
 	t.Logf("Final walk yielded %d keys", len(walked))
-	
+
 	// Verify completeness
 	for key := range reference {
 		if !walked[key] {
 			t.Errorf("Final: Key %d in reference but not walked", key)
 		}
 	}
-	
+
 	if len(walked) != len(reference) {
 		t.Errorf("Final: Walked %d keys but reference has %d", len(walked), len(reference))
 		t.FailNow()
 	}
-	
+
 	t.Logf("✓ All %d keys successfully walked", len(walked))
 }
 
@@ -395,7 +395,7 @@ func TestPersistentTreapStressDeterministic(t *testing.T) {
 	keyTemplate := (*types.IntKey)(new(int32))
 	treap := NewPersistentTreap[types.IntKey](types.IntLess, keyTemplate, stre)
 	reference := make(map[int]bool)
-	
+
 	// Helper functions for common operations
 	insert := func(key int) {
 		t.Logf("Insert key=%d", key)
@@ -403,14 +403,14 @@ func TestPersistentTreapStressDeterministic(t *testing.T) {
 		treap.Insert(&keyObj)
 		reference[key] = true
 	}
-	
+
 	persist := func() {
 		t.Logf("Persist (in-memory: %d)", len(treap.GetInMemoryNodes()))
 		err := treap.Persist()
 		if err != nil {
 			t.Fatalf("Persist failed: %v", err)
 		}
-		
+
 		// Validate after persist
 		if validationErrors := treap.ValidateAgainstDisk(); len(validationErrors) > 0 {
 			t.Errorf("Validation errors after persist:")
@@ -421,7 +421,7 @@ func TestPersistentTreapStressDeterministic(t *testing.T) {
 		}
 		t.Logf("  ✓ Persist validation passed")
 	}
-	
+
 	flush := func(percent int) {
 		if treap.root == nil {
 			return
@@ -431,7 +431,7 @@ func TestPersistentTreapStressDeterministic(t *testing.T) {
 		if numToFlush == 0 && len(nodes) > 0 {
 			numToFlush = 1
 		}
-		
+
 		flushed := 0
 		for i := 0; i < numToFlush && i < len(nodes); i++ {
 			err := nodes[i].Node.Flush()
@@ -441,7 +441,7 @@ func TestPersistentTreapStressDeterministic(t *testing.T) {
 		}
 		t.Logf("Flush %d%%: flushed %d/%d nodes (remaining in memory: %d)",
 			percent, flushed, numToFlush, len(treap.GetInMemoryNodes()))
-		
+
 		// Validate after flush
 		if validationErrors := treap.ValidateAgainstDisk(); len(validationErrors) > 0 {
 			t.Errorf("Validation errors after flush:")
@@ -452,10 +452,10 @@ func TestPersistentTreapStressDeterministic(t *testing.T) {
 		}
 		t.Logf("  ✓ Flush validation passed")
 	}
-	
+
 	walk := func() {
 		walked := make(map[int]bool)
-		
+
 		err := treap.InOrderVisit(func(node TreapNodeInterface[types.IntKey]) error {
 			key, ok := node.GetKey().(*types.IntKey)
 			if ok {
@@ -463,23 +463,23 @@ func TestPersistentTreapStressDeterministic(t *testing.T) {
 			}
 			return nil
 		})
-		
+
 		if err != nil {
 			t.Fatalf("Walk failed: %v", err)
 		}
-		
+
 		t.Logf("Walk: yielded %d/%d keys", len(walked), len(reference))
-		
+
 		// Verify
 		for key := range reference {
 			if !walked[key] {
 				t.Errorf("Key %d in reference but not walked", key)
 			}
 		}
-		
+
 		if len(walked) != len(reference) {
 			t.Errorf("Walked %d keys but expected %d", len(walked), len(reference))
-			
+
 			// Show first few missing keys
 			missing := []int{}
 			for key := range reference {
@@ -494,33 +494,33 @@ func TestPersistentTreapStressDeterministic(t *testing.T) {
 			t.FailNow()
 		}
 	}
-	
+
 	// Reproduce a specific failure scenario
 	// Example: Insert several keys, persist, flush some, insert more, walk
-	
+
 	// Phase 1: Initial inserts
 	for i := 0; i < 20; i++ {
 		insert(i)
 	}
-	
+
 	walk() // Should see all 20
-	
+
 	// Phase 2: Persist and flush half
 	persist()
 	flush(50)
 	walk() // Should still see all 20
-	
+
 	// Phase 3: More inserts (will cause rotations)
 	for i := 20; i < 40; i++ {
 		insert(i)
 	}
 	walk() // Should see all 40
-	
+
 	// Phase 4: Persist and flush aggressively
 	persist()
 	flush(80)
 	walk() // Should see all 40
-	
+
 	// Phase 5: More inserts and walks
 	for i := 40; i < 60; i++ {
 		insert(i)
@@ -530,7 +530,7 @@ func TestPersistentTreapStressDeterministic(t *testing.T) {
 		}
 	}
 	walk() // Should see all 60
-	
+
 	t.Logf("✓ All phases completed successfully")
 }
 
@@ -539,7 +539,7 @@ func TestPersistentTreapBasicPersistFlush(t *testing.T) {
 	dir, stre, cleanup := testutil.SetupTestStore(t)
 	defer cleanup()
 	t.Logf("Test store created at: %s", dir)
-	
+
 	// First, test if basic store write/read works
 	testData := []byte{1, 2, 3, 4, 5, 6, 7, 8}
 	objId, err := store.WriteNewObjFromBytes(stre, testData)
@@ -547,25 +547,25 @@ func TestPersistentTreapBasicPersistFlush(t *testing.T) {
 		t.Fatalf("WriteNewObjFromBytes failed: %v", err)
 	}
 	t.Logf("Wrote test data to objectId %d", objId)
-	
+
 	readData, err := store.ReadBytesFromObj(stre, objId)
 	if err != nil {
 		t.Fatalf("ReadBytesFromObj failed: %v", err)
 	}
 	t.Logf("Read back %d bytes", len(readData))
-	
+
 	if len(readData) != len(testData) {
 		t.Fatalf("Length mismatch: wrote %d bytes, read %d bytes", len(testData), len(readData))
 	}
-	
+
 	for i := 0; i < len(testData); i++ {
 		if testData[i] != readData[i] {
 			t.Fatalf("Data mismatch at byte %d: wrote %d, read %d", i, testData[i], readData[i])
 		}
 	}
-	
+
 	t.Logf("✓ Basic store write/read works correctly")
-	
+
 	// Test writing 64 bytes (same size as treap nodes)
 	testData64 := make([]byte, 64)
 	for i := 0; i < 64; i++ {
@@ -576,56 +576,56 @@ func TestPersistentTreapBasicPersistFlush(t *testing.T) {
 		t.Fatalf("WriteNewObjFromBytes (64 bytes) failed: %v", err)
 	}
 	t.Logf("Wrote 64-byte test data to objectId %d", objId64)
-	
+
 	readData64, err := store.ReadBytesFromObj(stre, objId64)
 	if err != nil {
 		t.Fatalf("ReadBytesFromObj (64 bytes) failed: %v", err)
 	}
 	t.Logf("Read back %d bytes", len(readData64))
-	
+
 	if len(readData64) != 64 {
 		t.Fatalf("Length mismatch: wrote 64 bytes, read %d bytes", len(readData64))
 	}
-	
+
 	for i := 0; i < 64; i++ {
 		if testData64[i] != readData64[i] {
-			t.Fatalf("Data mismatch at byte %d: wrote %d, read %d (first 8 bytes: %v)", 
+			t.Fatalf("Data mismatch at byte %d: wrote %d, read %d (first 8 bytes: %v)",
 				i, testData64[i], readData64[i], readData64[0:8])
 		}
 	}
-	
+
 	t.Logf("✓ 64-byte store write/read works correctly")
 
 	keyTemplate := (*types.IntKey)(new(int32))
 	treap := NewPersistentTreap[types.IntKey](types.IntLess, keyTemplate, stre)
-	
+
 	// Create ONE node manually and test its marshal/persist cycle
 	testKey := types.IntKey(42)
 	testNode := NewPersistentTreapNode[types.IntKey](&testKey, 12345, stre, treap)
-	
+
 	// Marshal the node
 	marshaledData, err := testNode.Marshal()
 	if err != nil {
 		t.Fatalf("Manual marshal failed: %v", err)
 	}
-	t.Logf("Manually marshaled node: %d bytes, priority bytes [8-12]: %v", 
+	t.Logf("Manually marshaled node: %d bytes, priority bytes [8-12]: %v",
 		len(marshaledData), marshaledData[8:12])
-	
+
 	// Write it directly
 	manualObjId, err := store.WriteNewObjFromBytes(stre, marshaledData)
 	if err != nil {
 		t.Fatalf("Manual write failed: %v", err)
 	}
 	t.Logf("Manually wrote to objectId %d", manualObjId)
-	
+
 	// Read it back
 	readBackData, err := store.ReadBytesFromObj(stre, manualObjId)
 	if err != nil {
 		t.Fatalf("Manual read back failed: %v", err)
 	}
-	t.Logf("Manually read back: %d bytes, priority bytes [8-12]: %v", 
+	t.Logf("Manually read back: %d bytes, priority bytes [8-12]: %v",
 		len(readBackData), readBackData[8:12])
-	
+
 	// Compare
 	if len(marshaledData) != len(readBackData) {
 		t.Fatalf("Manual: length mismatch")
@@ -636,7 +636,7 @@ func TestPersistentTreapBasicPersistFlush(t *testing.T) {
 		}
 	}
 	t.Logf("✓ Manual marshal/write/read cycle works correctly")
-	
+
 	// Now test persist() on that same node
 	err = testNode.persist()
 	if err != nil {
@@ -644,20 +644,19 @@ func TestPersistentTreapBasicPersistFlush(t *testing.T) {
 	}
 	persistedObjId, _ := testNode.ObjectId()
 	t.Logf("Node persist() wrote to objectId %d", persistedObjId)
-	
+
 	// Read it back
 	persistReadData, err := store.ReadBytesFromObj(stre, persistedObjId)
 	if err != nil {
 		t.Fatalf("Persist read back failed: %v", err)
 	}
-	t.Logf("Persist read back: %d bytes, priority bytes [8-12]: %v", 
+	t.Logf("Persist read back: %d bytes, priority bytes [8-12]: %v",
 		len(persistReadData), persistReadData[8:12])
-		
+
 	t.Logf("========")
 	t.Logf("This is where the bug should be revealed!")
 	t.Logf("========")
 
-	
 	// Insert 10 keys
 	keys := make([]*types.IntKey, 10)
 	for i := 0; i < 10; i++ {
@@ -665,23 +664,23 @@ func TestPersistentTreapBasicPersistFlush(t *testing.T) {
 		keys[i] = &key
 		treap.Insert(&key)
 	}
-	
+
 	t.Logf("Inserted keys: %v", keys)
-	
+
 	// Verify all are in memory
 	nodes := treap.GetInMemoryNodes()
 	t.Logf("After insert: %d nodes in memory", len(nodes))
 	if len(nodes) != 10 {
 		t.Fatalf("Expected 10 in-memory nodes, got %d", len(nodes))
 	}
-	
+
 	// Persist all nodes
 	err = treap.Persist()
 	if err != nil {
 		t.Fatalf("Persist failed: %v", err)
 	}
 	t.Logf("After persist: all nodes should have valid objectIds")
-	
+
 	// Validate in-memory nodes against disk
 	if validationErrors := treap.ValidateAgainstDisk(); len(validationErrors) > 0 {
 		t.Errorf("Validation errors after persist:")
@@ -691,7 +690,7 @@ func TestPersistentTreapBasicPersistFlush(t *testing.T) {
 		t.FailNow()
 	}
 	t.Logf("✓ Validation passed: in-memory data matches disk")
-	
+
 	// Verify nodes have valid objectIds
 	nodes = treap.GetInMemoryNodes()
 	for _, n := range nodes {
@@ -700,7 +699,7 @@ func TestPersistentTreapBasicPersistFlush(t *testing.T) {
 			t.Errorf("Node has invalid objectId after persist: %v (err: %v)", objId, err)
 		}
 	}
-	
+
 	// Flush 5 nodes (50%)
 	nodes = treap.GetInMemoryNodes()
 	flushed := 0
@@ -713,7 +712,7 @@ func TestPersistentTreapBasicPersistFlush(t *testing.T) {
 		}
 	}
 	t.Logf("Flushed %d nodes", flushed)
-	
+
 	// Validate remaining in-memory nodes against disk after flush
 	if validationErrors := treap.ValidateAgainstDisk(); len(validationErrors) > 0 {
 		t.Errorf("Validation errors after flush:")
@@ -723,20 +722,20 @@ func TestPersistentTreapBasicPersistFlush(t *testing.T) {
 		t.FailNow()
 	}
 	t.Logf("✓ Validation passed after flush")
-	
+
 	// Count remaining in memory
 	remaining := len(treap.GetInMemoryNodes())
 	t.Logf("After flush: %d nodes remain in memory", remaining)
-	
+
 	// Walk tree - should see all 10 keys
 	walked := 0
-	
+
 	t.Logf("Starting walk... Tree structure:")
 	if treap.root != nil {
 		rootObjId, _ := treap.root.(*PersistentTreapNode[types.IntKey]).ObjectId()
 		t.Logf("  Root objectId: %v", rootObjId)
 	}
-	
+
 	err = treap.InOrderVisit(func(node TreapNodeInterface[types.IntKey]) error {
 		walked++
 		key, ok := node.GetKey().(*types.IntKey)
@@ -745,18 +744,18 @@ func TestPersistentTreapBasicPersistFlush(t *testing.T) {
 		}
 		return nil
 	})
-	
+
 	if err != nil {
 		t.Fatalf("Walk failed: %v", err)
 	}
-	
+
 	t.Logf("Walk yielded %d keys (expected 10)", walked)
-	
+
 	if walked != 10 {
 		t.Errorf("Expected to walk 10 keys, but got %d", walked)
 		t.Errorf("Flushed %d nodes, %d remain in memory, walked %d", flushed, remaining, walked)
 		t.FailNow()
 	}
-	
+
 	t.Logf("✓ Basic persist/flush/walk cycle works correctly")
 }

@@ -24,16 +24,16 @@ var (
 // pools into a PoolCache to keep memory usage low and rehydrate them on demand.
 // OmniAllocator is thread-safe and protects concurrent access to pools and cache.
 type OmniAllocator struct {
-	mu              sync.RWMutex
-	blockSizes      []int
-	parent          types.Allocator
-	file            *os.File
-	cache           *cache.PoolCache
-	pools           map[int]*pool.PoolAllocator
-	onAllocate      func(types.ObjectId, types.FileOffset, int)
-	drainTicker     *time.Ticker
-	drainDone       chan struct{}
-	drainRunning    bool
+	mu           sync.RWMutex
+	blockSizes   []int
+	parent       types.Allocator
+	file         *os.File
+	cache        *cache.PoolCache
+	pools        map[int]*pool.PoolAllocator
+	onAllocate   func(types.ObjectId, types.FileOffset, int)
+	drainTicker  *time.Ticker
+	drainDone    chan struct{}
+	drainRunning bool
 }
 
 func NewOmniAllocator(blockSizes []int, parent types.Allocator, file *os.File, pc *cache.PoolCache) (*OmniAllocator, error) {

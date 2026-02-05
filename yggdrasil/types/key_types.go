@@ -190,11 +190,12 @@ func (k StringKey) MarshalToObjectId(stre store.Storer) (store.ObjectId, error) 
 	}
 	return store.WriteNewObjFromBytes(stre, marshalled)
 }
+
 // LateMarshal stores the StringKey as a new object in the store.
 func (k StringKey) LateMarshal(stre store.Storer) (store.ObjectId, func() error) {
 	marshalled, err := k.Marshal()
 	if err != nil {
-		return 0, func () error { return err }
+		return 0, func() error { return err }
 	}
 	return store.LateWriteNewObjFromBytes(stre, marshalled)
 }
