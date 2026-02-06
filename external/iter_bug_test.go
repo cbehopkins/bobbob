@@ -42,11 +42,11 @@ func (k testKey) Marshal() ([]byte, error) {
 }
 func (k *testKey) Unmarshal(data []byte) error {
 	if len(data) < 4 {
-		return fmt.Errorf("testKey data too short: %d bytes", len(data))
+		return fmt.Errorf("testKeyFixed data too short: %d bytes", len(data))
 	}
 	length := binary.LittleEndian.Uint32(data[0:4])
 	if int(length) > len(data)-4 {
-		return fmt.Errorf("testKey length %d exceeds data size %d", length, len(data)-4)
+		return fmt.Errorf("testKeyFixed length %d exceeds data size %d", length, len(data)-4)
 	}
 	return json.Unmarshal(data[4:4+length], k)
 }
@@ -64,7 +64,7 @@ func (k *testKey) UnmarshalFromObjectId(id bobbob.ObjectId, stre store.Storer) e
 	return store.ReadGeneric(stre, k, id)
 }
 
-func testKeyLess(a, b testKey) bool {
+func testKeyFixedLess(a, b testKey) bool {
 	if a.Rank != b.Rank {
 		return a.Rank < b.Rank
 	}
@@ -77,7 +77,7 @@ func testKeyLess(a, b testKey) bool {
 // TestBobbobMemoryPressureIssue reproduces data loss with memory-constrained vaults using bobbob types.
 // This test programmatically generates items to trigger memory pressure and flushing,
 // then verifies that InOrderVisit doesn't actually load the flushed nodes from disk.
-func TestBobbobMemoryPressureIssue(t *testing.T) {
+func TestBobbobMemoryPressureIssueFixed(t *testing.T) {
 	tmpDir := t.TempDir()
 	tmpFile := tmpDir + "/memory_pressure.db"
 
@@ -98,7 +98,7 @@ func TestBobbobMemoryPressureIssue(t *testing.T) {
 	coll, err := vault.GetOrCreateCollectionWithIdentity(
 		session.Vault,
 		"memory_pressure_test",
-		testKeyLess,
+		testKeyFixedLess,
 		(*testKey)(new(testKey)),
 		types.JsonPayload[string]{},
 	)
@@ -170,9 +170,30 @@ func TestBobbobMemoryPressureIssue(t *testing.T) {
 		t.Errorf("Baseline iteration should yield all items, but got %d/%d", yieldedCountBaseline, addedCount)
 	}
 
-	// Test 2: Iterate with periodic explicit flushing between iteration batches
+	// Test 2: Iterate with no additional operations - this should trigger the bug
+	// Just do a simple InOrderVisit like the production iterator test does
+	t.Logf("Test 2: Simple InOrderVisit after Persist (reproducing iterator test scenario)...")
+	yieldedCountSimple := 0
+	err = coll.InOrderVisit(func(node treap.TreapNodeInterface[testKey]) error {
+		if node == nil || node.IsNil() {
+			return nil
+		}
+		yieldedCountSimple++
+		if yieldedCountSimple <= 5 || yieldedCountSimple%10000 == 0 {
+			if pNode, ok := node.(treap.PersistentPayloadNodeInterface[testKey, types.JsonPayload[string]]); ok {
+				t.Logf("  Simple item %d: %s", yieldedCountSimple, pNode.GetPayload().Value)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Logf("Simple iteration error: %v", err)
+	}
+	t.Logf("Simple: Yielded %d/%d items", yieldedCountSimple, addedCount)
+
+	// Test 3: Iterate with periodic explicit flushing between iteration batches
 	// This tests that persisted trees can survive multiple flush cycles
-	t.Logf("Test 2: Iterating with periodic flushing between batches...")
+	t.Logf("Test 3: Iterating with periodic flushing between batches...")
 	yieldedCountWithFlush := 0
 	batchSize := 10000 // Iterate 10k items, then flush, repeat
 	totalBatches := (addedCount + batchSize - 1) / batchSize
@@ -223,11 +244,19 @@ func TestBobbobMemoryPressureIssue(t *testing.T) {
 
 	// Report findings
 	t.Logf("Results:")
-	t.Logf("  Baseline (no flushing): %d/%d items", yieldedCountBaseline, addedCount)
+	t.Logf("  Baseline (no additional operations): %d/%d items", yieldedCountBaseline, addedCount)
+	t.Logf("  Simple iteration (reproducing bug): %d/%d items", yieldedCountSimple, addedCount)
 	t.Logf("  With aggressive flushing: %d/%d items", yieldedCountWithFlush, addedCount)
 	finalInMemory := coll.CountInMemoryNodes()
 	t.Logf("  Final in-memory nodes: %d/%d (%.1f%%)", finalInMemory, addedCount,
 		100.0*float64(finalInMemory)/float64(addedCount))
+
+	if yieldedCountSimple < addedCount {
+		loss := 100.0 * float64(addedCount-yieldedCountSimple) / float64(addedCount)
+		t.Errorf("ITERATOR BUG REPRODUCED: Simple InOrderVisit yielded only %d of %d items (%.1f%% data loss)",
+			yieldedCountSimple, addedCount, loss)
+		t.Logf("This matches the production iterator test failure pattern")
+	}
 
 	if yieldedCountWithFlush != addedCount {
 		loss := 100.0 * float64(addedCount-yieldedCountWithFlush) / float64(addedCount)
