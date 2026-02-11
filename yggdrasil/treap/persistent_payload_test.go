@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cbehopkins/bobbob/internal/testutil"
 	"github.com/cbehopkins/bobbob/store"
 	"github.com/cbehopkins/bobbob/yggdrasil/types"
 )
@@ -76,6 +77,71 @@ func (p intPayload) Marshal() ([]byte, error) {
 	buf := make([]byte, 4)
 	binary.LittleEndian.PutUint32(buf, uint32(p.Value))
 	return buf, nil
+}
+
+func TestPersistentPayloadTreapPersistDoesNotRehydrateFlushedNodes(t *testing.T) {
+	stre := setupTestStore(t)
+	defer stre.Close()
+	keyTemplate := types.IntKey(0).New()
+	treap := NewPersistentPayloadTreap[types.IntKey, MockPayload](types.IntLess, keyTemplate, stre)
+
+	keys := []types.IntKey{50, 30, 70, 20, 40, 60, 80}
+	for _, k := range keys {
+		key := k
+		payload := MockPayload{Data: fmt.Sprintf("payload-%d", k)}
+		treap.Insert(&key, payload)
+	}
+
+	if err := treap.Persist(); err != nil {
+		t.Fatalf("persist failed: %v", err)
+	}
+
+	treap.mu.Lock()
+	rootNode, ok := treap.root.(*PersistentPayloadTreapNode[types.IntKey, MockPayload])
+	if !ok || rootNode == nil {
+		treap.mu.Unlock()
+		t.Fatalf("root is not a PersistentPayloadTreapNode")
+	}
+	if err := rootNode.Flush(); err != nil {
+		treap.mu.Unlock()
+		t.Fatalf("flush failed: %v", err)
+	}
+	leftObjId := rootNode.leftObjectId
+	rightObjId := rootNode.rightObjectId
+	if store.IsValidObjectId(leftObjId) && rootNode.TreapNode.left != nil {
+		treap.mu.Unlock()
+		t.Fatalf("expected left pointer nil after flush")
+	}
+	if store.IsValidObjectId(rightObjId) && rootNode.TreapNode.right != nil {
+		treap.mu.Unlock()
+		t.Fatalf("expected right pointer nil after flush")
+	}
+	inMemoryAfterFlush := treap.CountInMemoryNodesLocked()
+	treap.mu.Unlock()
+
+	if err := treap.Persist(); err != nil {
+		t.Fatalf("persist after flush failed: %v", err)
+	}
+
+	if inMemoryAfterPersist := treap.CountInMemoryNodes(); inMemoryAfterPersist != inMemoryAfterFlush {
+		t.Fatalf("expected in-memory node count to remain %d after persist, got %d", inMemoryAfterFlush, inMemoryAfterPersist)
+	}
+
+	treap.mu.RLock()
+	rootNode, ok = treap.root.(*PersistentPayloadTreapNode[types.IntKey, MockPayload])
+	if !ok || rootNode == nil {
+		treap.mu.RUnlock()
+		t.Fatalf("root is not a PersistentPayloadTreapNode")
+	}
+	if store.IsValidObjectId(leftObjId) && rootNode.TreapNode.left != nil {
+		treap.mu.RUnlock()
+		t.Fatalf("persist rehydrated left child unexpectedly")
+	}
+	if store.IsValidObjectId(rightObjId) && rootNode.TreapNode.right != nil {
+		treap.mu.RUnlock()
+		t.Fatalf("persist rehydrated right child unexpectedly")
+	}
+	treap.mu.RUnlock()
 }
 
 func (p intPayload) Unmarshal(data []byte) (types.UntypedPersistentPayload, error) {
@@ -510,7 +576,7 @@ func TestPersistentPayloadTreapNodeMarshalToObjectId(t *testing.T) {
 	node := NewPersistentPayloadTreapNode[types.IntKey, MockPayload](&key, priority, payload, stre, treap)
 
 	// Test MarshalToObjectId - this should write the node to the store
-	objId, finisher := node.LateMarshal(stre)
+	objId, _, finisher := node.LateMarshal(stre)
 	err := finisher()
 	if err != nil {
 		t.Fatalf("Failed to marshal node to ObjectId: %v", err)
@@ -1257,3 +1323,73 @@ func TestPersistentPayloadTreapConcurrentAccess(t *testing.T) {
 		}
 	}
 }
+
+func TestPersistentPayloadTreapCountInMemoryNodes(t *testing.T) {
+	st := setupTestStore(t)
+	defer st.Close()
+
+	tr := NewPersistentPayloadTreap[types.IntKey, MockPayload](types.IntLess, (*types.IntKey)(new(int32)), st)
+	for i := 0; i < 25; i++ {
+		key := types.IntKey(i)
+		tr.Insert(&key, MockPayload{Data: "p"})
+	}
+
+	count := tr.CountInMemoryNodes()
+	if count != 25 {
+		t.Fatalf("expected CountInMemoryNodes=25, got %d", count)
+	}
+}
+
+// TestMinimalPayloadFlushLoadBug is a minimal reproducer for the bug where
+// InOrderVisit does not load flushed nodes from disk for payload treaps.
+func TestMinimalPayloadFlushLoadBug(t *testing.T) {
+	stre := testutil.NewMockStore()
+	defer stre.Close()
+
+	templateKey := types.IntKey(0).New()
+	treap := NewPersistentPayloadTreap[types.IntKey, MockPayload](types.IntLess, templateKey, stre)
+
+	// Insert 10 nodes with payloads
+	keys := []types.IntKey{50, 30, 70, 20, 40, 60, 80, 10, 25, 35}
+	for _, k := range keys {
+		key := k
+		payload := MockPayload{Data: fmt.Sprintf("payload-%d", k)}
+		treap.Insert(&key, payload)
+	}
+
+	// Persist the entire tree
+	if err := treap.Persist(); err != nil {
+		t.Fatalf("Failed to persist tree: %v", err)
+	}
+
+	// Get the root node and manually flush its children
+	treap.mu.Lock()
+	rootNode, ok := treap.root.(*PersistentPayloadTreapNode[types.IntKey, MockPayload])
+	if !ok {
+		treap.mu.Unlock()
+		t.Fatalf("Root is not a PersistentPayloadTreapNode")
+	}
+
+	// Flush the root's children
+	if err := rootNode.Flush(); err != nil {
+		t.Logf("Flush returned error: %v", err)
+	}
+	treap.mu.Unlock()
+
+	// Walk the tree - this should load flushed nodes from disk
+	yieldedCount := 0
+	err := treap.InOrderVisit(func(node TreapNodeInterface[types.IntKey]) error {
+		yieldedCount++
+		return nil
+	})
+
+	if err != nil {
+		t.Fatalf("InOrderVisit failed: %v", err)
+	}
+
+	// Verify all nodes were yielded
+	if yieldedCount != len(keys) {
+		t.Errorf("BUG: InOrderVisit yielded only %d of %d nodes", yieldedCount, len(keys))
+	}
+}
+

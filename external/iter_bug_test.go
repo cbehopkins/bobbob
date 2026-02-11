@@ -112,7 +112,7 @@ func TestBobbobMemoryPressureIssueFixed(t *testing.T) {
 	// Create more items than memory budget can hold to force flushing
 	const maxItems = 100_000 // Increase to ensure flushing
 	addedCount := 0
-	for i := 0; i < maxItems; i++ {
+	for i := range maxItems {
 		// Create file path as payload - keep paths short to minimize variation
 		path := fmt.Sprintf("file_%d", i)
 		payload := types.JsonPayload[string]{Value: path}

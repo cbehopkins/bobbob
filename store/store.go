@@ -144,6 +144,7 @@ func LateWriteNewObjFromBytes(s Storer, data []byte) (ObjectId, func() error) {
 		return 0, func() error { return err }
 	}
 	lateWriter := func() error {
+		// log.Printf("store: LateWriteNewObjFromBytes start obj=%d size=%d", objId, size)
 		if finisher != nil {
 			defer func() {
 				if err := finisher(); err != nil {
@@ -152,6 +153,7 @@ func LateWriteNewObjFromBytes(s Storer, data []byte) (ObjectId, func() error) {
 			}()
 		}
 		n, err := writer.Write(data)
+		// log.Printf("store: LateWriteNewObjFromBytes done obj=%d n=%d err=%v", objId, n, err)
 		if err != nil {
 			if err := s.DeleteObj(objId); err != nil {
 				// Clean up allocated object on write error (best effort)
@@ -187,7 +189,9 @@ func WriteBytesToObj(s Storer, data []byte, objectId ObjectId) error {
 		}
 	}()
 
+	// log.Printf("store: WriteBytesToObj start obj=%d size=%d", objectId, len(data))
 	n, err := writer.Write(data)
+	// log.Printf("store: WriteBytesToObj done obj=%d n=%d err=%v", objectId, n, err)
 	if err != nil {
 		return err
 	}
@@ -216,7 +220,10 @@ func ReadBytesFromObj(s Storer, objId ObjectId) ([]byte, error) {
 		}()
 	}
 
-	return io.ReadAll(objReader)
+	// log.Printf("store: ReadBytesFromObj start obj=%d", objId)
+	data, err := io.ReadAll(objReader)
+	// log.Printf("store: ReadBytesFromObj done obj=%d n=%d err=%v", objId, len(data), err)
+	return data, err
 }
 
 // WriteGeneric writes a generic object to the store

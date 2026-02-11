@@ -42,7 +42,9 @@ func (p InstrumentedStringPayload) Marshal() ([]byte, error) {
 
 func (p InstrumentedStringPayload) Unmarshal(data []byte) (types.UntypedPersistentPayload, error) {
 	var sp types.StringPayload
-	if err := sp.Unmarshal(data); err != nil {
+	tmp, err := sp.Unmarshal(data)
+	sp = tmp.(types.StringPayload)
+	if err != nil {
 		return nil, err
 	}
 	return InstrumentedStringPayload{Value: sp}, nil
@@ -53,22 +55,21 @@ func (p InstrumentedStringPayload) SizeInBytes() int {
 }
 
 // LateMarshal increments the call counter and delegates to StringPayload.
-func (p InstrumentedStringPayload) LateMarshal(s bobbob.Storer) (bobbob.ObjectId, bobbob.Finisher) {
+func (p InstrumentedStringPayload) LateMarshal(s bobbob.Storer) (bobbob.ObjectId, int, bobbob.Finisher) {
 	instrumentedLateMarshalCalls.Add(1)
 	return p.Value.LateMarshal(s)
 }
 
 // LateUnmarshal increments the call counter and delegates to StringPayload.
-func (p InstrumentedStringPayload) LateUnmarshal(id bobbob.ObjectId, s bobbob.Storer) bobbob.Finisher {
+func (p *InstrumentedStringPayload) LateUnmarshal(id bobbob.ObjectId, size int, s bobbob.Storer) bobbob.Finisher {
 	instrumentedLateUnmarshalCalls.Add(1)
-	var sp types.StringPayload
-	finisher := sp.LateUnmarshal(id, s)
+	finisher := (&p.Value).LateUnmarshal(id, size, s)
 	return func() error {
 		if err := finisher(); err != nil {
 			return err
 		}
 		instrumentedLastUnmarshalMu.Lock()
-		instrumentedLastUnmarshalValue = string(bytes.TrimRight([]byte(sp), "\x00"))
+		instrumentedLastUnmarshalValue = string(bytes.TrimRight([]byte(p.Value), "\x00"))
 		instrumentedLastUnmarshalMu.Unlock()
 		return nil
 	}
@@ -135,10 +136,20 @@ func TestVaultUsesLateMarshalLateUnmarshalForInstrumentedPayload(t *testing.T) {
 	}
 	defer reloadSession.Close()
 
-	_ = reloadCollections[0].(*treap.PersistentPayloadTreap[types.IntKey, InstrumentedStringPayload])
+	reloadColl := reloadCollections[0].(*treap.PersistentPayloadTreap[types.IntKey, InstrumentedStringPayload])
+
+	if got := instrumentedLateUnmarshalCalls.Load(); got != 0 {
+		t.Fatalf("expected 0 LateUnmarshal calls after reload, got %d", got)
+	}
+
+	reloadedNode := reloadColl.Search(&key)
+	if reloadedNode == nil || reloadedNode.IsNil() {
+		t.Fatalf("expected to find reloaded payload")
+	}
+	_ = reloadedNode.GetPayload()
 
 	if got := instrumentedLateUnmarshalCalls.Load(); got != 1 {
-		t.Fatalf("expected 1 LateUnmarshal call after reload, got %d", got)
+		t.Fatalf("expected 1 LateUnmarshal call after payload access, got %d", got)
 	}
 	if got := getInstrumentedLastUnmarshalValue(); got != "payload-7" {
 		t.Fatalf("expected LateUnmarshal to read %q, got %q", "payload-7", got)

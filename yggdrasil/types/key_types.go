@@ -192,12 +192,13 @@ func (k StringKey) MarshalToObjectId(stre store.Storer) (store.ObjectId, error) 
 }
 
 // LateMarshal stores the StringKey as a new object in the store.
-func (k StringKey) LateMarshal(stre store.Storer) (store.ObjectId, func() error) {
+func (k StringKey) LateMarshal(stre store.Storer) (store.ObjectId, int, func() error) {
 	marshalled, err := k.Marshal()
 	if err != nil {
-		return 0, func() error { return err }
+		return 0, 0, func() error { return err }
 	}
-	return store.LateWriteNewObjFromBytes(stre, marshalled)
+	objId, fin := store.LateWriteNewObjFromBytes(stre, marshalled)
+	return objId, len(marshalled), fin
 }
 
 // UnmarshalFromObjectId loads the StringKey from an object in the store.
@@ -217,6 +218,10 @@ type MD5Key [16]byte
 // Value returns the MD5Key itself.
 func (k MD5Key) Value() MD5Key {
 	return k
+}
+
+func (k MD5Key) String() string {
+	return fmt.Sprintf("%x", k[:])
 }
 
 // SizeInBytes returns 16 for the MD5 hash.
@@ -255,7 +260,7 @@ func (k *MD5Key) Unmarshal(data []byte) error {
 	if len(data) != 16 {
 		return errors.New("MD5Key must be exactly 16 bytes")
 	}
-	copy(k[:], data)
+	copy(k[:], data[:16])
 	return nil
 }
 

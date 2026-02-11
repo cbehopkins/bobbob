@@ -60,15 +60,15 @@ func TestConcurrentPersistAllocatorNoPanic(t *testing.T) {
 	var wg sync.WaitGroup
 	errs := make(chan error, numWorkers*opsPerWorker)
 
-	for w := 0; w < numWorkers; w++ {
+	for w := range numWorkers {
 		wg.Add(1)
 		go func(workerID int) {
 			defer wg.Done()
-			for i := 0; i < opsPerWorker; i++ {
+			for i := range opsPerWorker {
 				key := types.MD5Key{}
 				copy(key[:], fmt.Sprintf("worker-%02d-op-%03d", workerID, i))
 
-				collection.Insert(&key, testData{Value: i})
+				collection.Insert(&key, testData{Value: i})			
 
 				if node := collection.Search(&key); node != nil {
 					if err := node.Persist(); err != nil {

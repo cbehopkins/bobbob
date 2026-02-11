@@ -57,11 +57,16 @@ type UnmarshalSimple interface {
 }
 
 type LateMarshaler interface {
-	LateMarshal(s Storer) (ObjectId, Finisher)
+	// LateMarshal returns the ObjectId where the payload will be written,
+	// the logical size of the payload in bytes, and a Finisher to call when
+	// the I/O has completed.
+	LateMarshal(s Storer) (ObjectId, int, Finisher)
 }
 
 type LateUnmarshaler interface {
-	LateUnmarshal(id ObjectId, s Storer) Finisher
+	// LateUnmarshal reads a payload stored under id with the provided logical size.
+	// size may be 0 when unknown; implementations should handle that case.
+	LateUnmarshal(id ObjectId, size int, s Storer) Finisher
 }
 
 // ErrRePreAllocate is returned when an object needs more ObjectIds than initially allocated

@@ -50,7 +50,10 @@ func NewTop(file *os.File, blockSizes []int, maxBlockCount int) (*Top, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create OmniAllocator: %w", err)
 	}
-
+	err = omniAlloc.StartDrainWorker(0)
+	if err != nil {
+		return nil, err
+	}
 	// Create PrimeTable and register slots
 	primeTable := NewPrimeTable()
 	primeTable.Add() // Slot 0: BasicAllocator

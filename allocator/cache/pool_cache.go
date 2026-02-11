@@ -262,3 +262,16 @@ func (pc *PoolCache) Close() error {
 	}
 	return nil
 }
+
+// TempFileSize returns the current size of the cache temp file.
+// Intended for diagnostics and soak tests.
+func (pc *PoolCache) TempFileSize() (int64, error) {
+	if pc == nil || pc.tempFile == nil {
+		return 0, errors.New("cache is closed")
+	}
+	info, err := pc.tempFile.Stat()
+	if err != nil {
+		return 0, err
+	}
+	return info.Size(), nil
+}

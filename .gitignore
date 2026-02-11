@@ -8,3 +8,5 @@
 *.allocs.json
 *.allocs.idx
 *.dat
+*.exe
+*.out

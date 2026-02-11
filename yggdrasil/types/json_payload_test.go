@@ -2,6 +2,7 @@ package types
 
 import (
 	"bytes"
+	"encoding/binary"
 	"testing"
 
 	"github.com/cbehopkins/bobbob/store"
@@ -40,12 +41,20 @@ func TestJsonPayloadMarshal(t *testing.T) {
 		t.Error("expected non-empty marshaled data")
 	}
 
-	// Verify it's valid JSON
-	if !bytes.Contains(data, []byte("test")) {
-		t.Error("expected marshaled data to contain 'test'")
+	if len(data) < 4 {
+		t.Fatal("expected length-prefixed payload")
 	}
-	if !bytes.Contains(data, []byte("42")) {
-		t.Error("expected marshaled data to contain '42'")
+	jsonLen := binary.LittleEndian.Uint32(data[:4])
+	if int(jsonLen) != len(data)-4 {
+		t.Fatalf("expected length %d to match payload size %d", jsonLen, len(data)-4)
+	}
+	jsonData := data[4:]
+	// Verify the JSON portion contains expected values
+	if !bytes.Contains(jsonData, []byte("test")) {
+		t.Error("expected marshaled JSON to contain 'test'")
+	}
+	if !bytes.Contains(jsonData, []byte("42")) {
+		t.Error("expected marshaled JSON to contain '42'")
 	}
 }
 
@@ -208,6 +217,24 @@ func TestJsonPayloadUnmarshalInvalidData(t *testing.T) {
 	_, err := payload.Unmarshal(invalidData)
 	if err == nil {
 		t.Error("expected error unmarshaling invalid JSON, got nil")
+	}
+}
+
+// TestJsonPayloadUnmarshalWithPaddingGarbage verifies length-prefixed JSON ignores
+// trailing garbage bytes (e.g., block-aligned storage not zeroed).
+func TestJsonPayloadUnmarshalWithPaddingGarbage(t *testing.T) {
+	original := JsonPayload[string]{Value: "payload"}
+	data, err := original.Marshal()
+	if err != nil {
+		t.Fatalf("marshal failed: %v", err)
+	}
+
+	// Simulate block-aligned storage with garbage bytes after JSON.
+	data = append(data, 0x00, 0xFF, 0x7A)
+
+	_, err = original.Unmarshal(data)
+	if err != nil {
+		t.Fatalf("expected unmarshal to tolerate padding garbage, got error: %v", err)
 	}
 }
 
@@ -424,7 +451,7 @@ func TestJsonPayloadLateMarshalUnmarshalSimple(t *testing.T) {
 		Value: SimpleStruct{Name: "late", Count: 7},
 	}
 
-	objId, finisher := original.LateMarshal(mockStore)
+	objId, _, finisher := original.LateMarshal(mockStore)
 	if finisher == nil {
 		t.Fatal("LateMarshal returned nil finisher")
 	}
@@ -433,7 +460,7 @@ func TestJsonPayloadLateMarshalUnmarshalSimple(t *testing.T) {
 	}
 
 	var restored JsonPayload[SimpleStruct]
-	unmarshalFinisher := restored.LateUnmarshal(objId, mockStore)
+	unmarshalFinisher := restored.LateUnmarshal(objId, 0, mockStore)
 	if unmarshalFinisher == nil {
 		t.Fatal("LateUnmarshal returned nil finisher")
 	}
@@ -466,7 +493,7 @@ func TestJsonPayloadLateMarshalUnmarshalComplex(t *testing.T) {
 		},
 	}
 
-	objId, finisher := original.LateMarshal(mockStore)
+	objId, _, finisher := original.LateMarshal(mockStore)
 	if finisher == nil {
 		t.Fatal("LateMarshal returned nil finisher")
 	}
@@ -475,7 +502,7 @@ func TestJsonPayloadLateMarshalUnmarshalComplex(t *testing.T) {
 	}
 
 	var restored JsonPayload[ComplexStruct]
-	unmarshalFinisher := restored.LateUnmarshal(objId, mockStore)
+	unmarshalFinisher := restored.LateUnmarshal(objId, 0, mockStore)
 	if unmarshalFinisher == nil {
 		t.Fatal("LateUnmarshal returned nil finisher")
 	}

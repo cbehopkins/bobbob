@@ -29,19 +29,23 @@ func (isp InstrumentedStringPayload) SizeInBytes() int {
 }
 
 func (isp *InstrumentedStringPayload) Unmarshal(data []byte) error {
-	return isp.value.Unmarshal(data)
+	tmp, err := isp.value.Unmarshal(data)
+	if err == nil {
+		isp.value = tmp.(StringPayload)
+	}
+	return err
 }
 
 // LateMarshal increments the call counter and delegates to StringPayload
-func (isp *InstrumentedStringPayload) LateMarshal(s bobbob.Storer) (bobbob.ObjectId, bobbob.Finisher) {
+func (isp *InstrumentedStringPayload) LateMarshal(s bobbob.Storer) (bobbob.ObjectId, int, bobbob.Finisher) {
 	isp.lateMarshalCalls++
 	return isp.value.LateMarshal(s)
 }
 
 // LateUnmarshal increments the call counter and delegates to StringPayload
-func (isp *InstrumentedStringPayload) LateUnmarshal(id bobbob.ObjectId, s bobbob.Storer) bobbob.Finisher {
+func (isp *InstrumentedStringPayload) LateUnmarshal(id bobbob.ObjectId, size int, s bobbob.Storer) bobbob.Finisher {
 	isp.lateUnmarshalCalls++
-	return isp.value.LateUnmarshal(id, s)
+	return isp.value.LateUnmarshal(id, size, s)
 }
 
 func (isp InstrumentedStringPayload) GetLateMarshalCalls() int {
@@ -63,7 +67,7 @@ func TestInstrumentedStringPayloadDetectsLateMethods(t *testing.T) {
 	}
 
 	// Call LateMarshal
-	objId, marshalFinisher := instrumented.LateMarshal(mockStore)
+	objId, _, marshalFinisher := instrumented.LateMarshal(mockStore)
 	if instrumented.GetLateMarshalCalls() != 1 {
 		t.Fatalf("expected 1 LateMarshal call after calling LateMarshal, got %d", instrumented.GetLateMarshalCalls())
 	}
@@ -75,7 +79,7 @@ func TestInstrumentedStringPayloadDetectsLateMethods(t *testing.T) {
 
 	// Call LateUnmarshal
 	var restored InstrumentedStringPayload
-	unmarshalFinisher := restored.LateUnmarshal(objId, mockStore)
+	unmarshalFinisher := restored.LateUnmarshal(objId, 0, mockStore)
 	if restored.GetLateUnmarshalCalls() != 1 {
 		t.Fatalf("expected 1 LateUnmarshal call after calling LateUnmarshal, got %d", restored.GetLateUnmarshalCalls())
 	}
@@ -110,14 +114,14 @@ func TestInstrumentedStringPayloadMultipleCalls(t *testing.T) {
 			instrumented := &InstrumentedStringPayload{value: StringPayload(tt.value)}
 
 			// Marshal
-			objId, marshalFinisher := instrumented.LateMarshal(mockStore)
+			objId, _, marshalFinisher := instrumented.LateMarshal(mockStore)
 			if err := marshalFinisher(); err != nil {
 				t.Fatalf("marshal finisher failed: %v", err)
 			}
 
 			// Unmarshal
 			restored := &InstrumentedStringPayload{}
-			unmarshalFinisher := restored.LateUnmarshal(objId, mockStore)
+			unmarshalFinisher := restored.LateUnmarshal(objId, 0, mockStore)
 			if err := unmarshalFinisher(); err != nil {
 				t.Fatalf("unmarshal finisher failed: %v", err)
 			}

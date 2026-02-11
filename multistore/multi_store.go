@@ -51,7 +51,7 @@ import (
 func buildComprehensiveBlockSizes() []int {
 	// Binary growth pattern: 32, 64, 128, 256, 512, 1024, 2048, 4096
 	binaryGrowth := []int{
-		32, 64, 128, 256, 512, 1024, 2048, 4096,
+		16, 32, 64, 128, 256, 512, 1024, 2048, 4096,
 	}
 
 	// Add treap-specific sizes

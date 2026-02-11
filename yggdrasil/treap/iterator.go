@@ -1,8 +1,6 @@
 package treap
 
 import (
-	"fmt"
-
 	"github.com/cbehopkins/bobbob/store"
 )
 
@@ -63,10 +61,10 @@ func (t *PersistentTreap[K]) InOrderMutate(callback MutatingCallback[K]) error {
 		return err
 	}
 
-	// Delete all accumulated trash
+	// Queue all accumulated trash for deletion and flush pending deletes.
 	for _, objId := range trashList {
-		if err := t.Store.DeleteObj(objId); err != nil {
-			return fmt.Errorf("failed to delete trash ObjectId %d: %w", objId, err)
+		if store.IsValidObjectId(objId) {
+			t.queueDelete(objId)
 		}
 	}
 

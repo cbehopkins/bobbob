@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/cbehopkins/bobbob"
+	"github.com/cbehopkins/bobbob/internal/testutil"
 	"github.com/cbehopkins/bobbob/store"
 	"github.com/cbehopkins/bobbob/yggdrasil/types"
 )
@@ -23,10 +24,10 @@ func setupTestStore(t *testing.T) store.Storer {
 // TestPersistentTreapBasics verifies basic operations on a persistent treap:
 // insertion, search, deletion, walking, and counting nodes.
 func TestPersistentTreapBasics(t *testing.T) {
-	store := setupTestStore(t)
-	defer store.Close()
+	stre := setupTestStore(t)
+	defer stre.Close()
 	var keyTemplate *types.IntKey = (*types.IntKey)(new(int32))
-	treap := NewPersistentTreap[types.IntKey](types.IntLess, keyTemplate, store)
+	treap := NewPersistentTreap[types.IntKey](types.IntLess, keyTemplate, stre)
 
 	keys := []*types.IntKey{
 		(*types.IntKey)(new(int32)),
@@ -113,6 +114,70 @@ func TestPersistentTreapBasics(t *testing.T) {
 	if !found {
 		t.Errorf("Expected callback to be called with key %d, but it was not in the accessed nodes: %v", *searchKey, accessedNodes)
 	}
+}
+
+func TestPersistentTreapPersistDoesNotRehydrateFlushedNodes(t *testing.T) {
+	stre := setupTestStore(t)
+	defer stre.Close()
+	var keyTemplate *types.IntKey = (*types.IntKey)(new(int32))
+	treap := NewPersistentTreap[types.IntKey](types.IntLess, keyTemplate, stre)
+
+	keys := []types.IntKey{50, 30, 70, 20, 40, 60, 80}
+	for _, k := range keys {
+		key := k
+		treap.Insert(&key)
+	}
+
+	if err := treap.Persist(); err != nil {
+		t.Fatalf("persist failed: %v", err)
+	}
+
+	treap.mu.Lock()
+	rootNode, ok := treap.root.(*PersistentTreapNode[types.IntKey])
+	if !ok || rootNode == nil {
+		treap.mu.Unlock()
+		t.Fatalf("root is not a PersistentTreapNode")
+	}
+	if err := rootNode.Flush(); err != nil {
+		treap.mu.Unlock()
+		t.Fatalf("flush failed: %v", err)
+	}
+	leftObjId := rootNode.leftObjectId
+	rightObjId := rootNode.rightObjectId
+	if store.IsValidObjectId(leftObjId) && rootNode.TreapNode.left != nil {
+		treap.mu.Unlock()
+		t.Fatalf("expected left pointer nil after flush")
+	}
+	if store.IsValidObjectId(rightObjId) && rootNode.TreapNode.right != nil {
+		treap.mu.Unlock()
+		t.Fatalf("expected right pointer nil after flush")
+	}
+	inMemoryAfterFlush := treap.countInMemoryNodes(treap.root)
+	treap.mu.Unlock()
+
+	if err := treap.Persist(); err != nil {
+		t.Fatalf("persist after flush failed: %v", err)
+	}
+
+	if inMemoryAfterPersist := treap.CountInMemoryNodes(); inMemoryAfterPersist != inMemoryAfterFlush {
+		t.Fatalf("expected in-memory node count to remain %d after persist, got %d", inMemoryAfterFlush, inMemoryAfterPersist)
+	}
+
+	treap.mu.RLock()
+	rootNode, ok = treap.root.(*PersistentTreapNode[types.IntKey])
+	if !ok || rootNode == nil {
+		treap.mu.RUnlock()
+		t.Fatalf("root is not a PersistentTreapNode")
+	}
+	if store.IsValidObjectId(leftObjId) && rootNode.TreapNode.left != nil {
+		treap.mu.RUnlock()
+		t.Fatalf("persist rehydrated left child unexpectedly")
+	}
+	if store.IsValidObjectId(rightObjId) && rootNode.TreapNode.right != nil {
+		treap.mu.RUnlock()
+		t.Fatalf("persist rehydrated right child unexpectedly")
+	}
+	treap.mu.RUnlock()
 }
 
 // TestPersistentTreapSearchComplexWithError verifies that SearchComplex on persistent treaps
@@ -755,5 +820,211 @@ func TestPersistentTreapWalkReverse(t *testing.T) {
 		if walkedKeys[i] != key {
 			t.Errorf("Expected key %d at position %d, but got %d", key, i, walkedKeys[i])
 		}
+	}
+}
+
+func TestPersistentTreapCount(t *testing.T) {
+	st := setupTestStore(t)
+	defer st.Close()
+
+	tr := NewPersistentTreap[types.IntKey](types.IntLess, (*types.IntKey)(new(int32)), st)
+	for i := 0; i < 50; i++ {
+		key := types.IntKey(i)
+		tr.Insert(&key)
+	}
+
+	count, err := tr.Count()
+	if err != nil {
+		t.Fatalf("Count failed: %v", err)
+	}
+	if count != 50 {
+		t.Fatalf("expected Count=50, got %d", count)
+	}
+}
+
+func TestPersistentTreapCountInMemoryNodes(t *testing.T) {
+	st := setupTestStore(t)
+	defer st.Close()
+
+	tr := NewPersistentTreap[types.IntKey](types.IntLess, (*types.IntKey)(new(int32)), st)
+	for i := 0; i < 20; i++ {
+		key := types.IntKey(i)
+		tr.Insert(&key)
+	}
+
+	count := tr.CountInMemoryNodes()
+	if count != 20 {
+		t.Fatalf("expected CountInMemoryNodes=20, got %d", count)
+	}
+}
+
+// TestPersistentTreapRotationCorruption demonstrates the bug where rotations
+// invalidate objectIds but parent references remain pointing to deleted objects.
+func TestPersistentTreapRotationCorruption(t *testing.T) {
+	dir, stre, cleanup := testutil.SetupTestStore(t)
+	defer cleanup()
+	t.Logf("Test store created at: %s", dir)
+
+	keyTemplate := (*types.IntKey)(new(int32))
+	treap := NewPersistentTreap[types.IntKey](types.IntLess, keyTemplate, stre)
+
+	// Phase 1: Build initial tree with specific priorities to control structure
+	// We'll insert nodes that will definitely cause a rotation later
+
+	// Insert root with high priority (stays at root)
+	key1 := types.IntKey(50)
+	treap.InsertComplex(&key1, Priority(1000))
+
+	// Insert left child with medium priority
+	key2 := types.IntKey(25)
+	treap.InsertComplex(&key2, Priority(500))
+
+	// Insert right child with medium priority
+	key3 := types.IntKey(75)
+	treap.InsertComplex(&key3, Priority(500))
+
+	t.Logf("Initial tree structure created")
+
+	// Phase 2: Persist the tree - all nodes get valid objectIds
+	if err := treap.Persist(); err != nil {
+		t.Fatalf("Failed to persist initial tree: %v", err)
+	}
+	t.Logf("Tree persisted - all nodes have objectIds on disk")
+
+	// Validate before rotation
+	errors := treap.ValidateAgainstDisk()
+	if len(errors) > 0 {
+		t.Errorf("Validation BEFORE rotation failed with %d errors:", len(errors))
+		for _, e := range errors {
+			t.Errorf("  - %s", e)
+		}
+	} else {
+		t.Logf("Validation before rotation: PASS")
+	}
+
+	// Phase 3: Insert a node with very high priority that will cause rotation
+	// This will be inserted under node 25 but its high priority will cause it to rotate up
+	key4 := types.IntKey(20)
+	treap.InsertComplex(&key4, Priority(2000)) // Higher priority than root!
+
+	t.Logf("Inserted node 20 with priority 2000 (should cause rotations)")
+
+	// Phase 4: Validate against disk WITHOUT persisting first
+	// This is where the bug should show up
+	errors = treap.ValidateAgainstDisk()
+	if len(errors) > 0 {
+		t.Logf("Validation AFTER rotation failed with %d errors (BUG REPRODUCED):", len(errors))
+		for _, e := range errors {
+			t.Logf("  - %s", e)
+		}
+		t.Fatalf("BUG: Rotation caused disk corruption - nodes reference deleted objectIds")
+	} else {
+		t.Logf("Validation after rotation: PASS (bug not reproduced)")
+	}
+}
+
+// TestPersistentTreapMinimalRotationBug is an even simpler test with just 2 nodes
+func TestPersistentTreapMinimalRotationBug(t *testing.T) {
+	dir, stre, cleanup := testutil.SetupTestStore(t)
+	defer cleanup()
+	t.Logf("Test store created at: %s", dir)
+
+	keyTemplate := (*types.IntKey)(new(int32))
+	treap := NewPersistentTreap[types.IntKey](types.IntLess, keyTemplate, stre)
+
+	// Insert root
+	key1 := types.IntKey(10)
+	treap.InsertComplex(&key1, Priority(100))
+
+	// Check objectId before persist
+	root1 := treap.Root().(*PersistentTreapNode[types.IntKey])
+	t.Logf("Before persist: node 10 has objectId=%d", root1.objectId)
+
+	// Persist
+	if err := treap.Persist(); err != nil {
+		t.Fatalf("Failed to persist: %v", err)
+	}
+
+	// Check objectId after persist
+	root1 = treap.Root().(*PersistentTreapNode[types.IntKey])
+	t.Logf("After persist: node 10 has objectId=%d", root1.objectId)
+
+	// Insert child with HIGHER priority to force rotation
+	key2 := types.IntKey(5)
+	treap.InsertComplex(&key2, Priority(200)) // Higher priority causes rotation!
+
+	t.Logf("After rotation insert:")
+
+	// After rotation, node 5 should be root
+	root2 := treap.Root().(*PersistentTreapNode[types.IntKey])
+	rootKey := root2.GetKey().(*types.IntKey)
+	t.Logf("  New root: key=%d, objectId=%d", *rootKey, root2.objectId)
+
+	// Node 10 should now be a child
+	// The bug is that node 10's objectId might be stale (still pointing to old disk location)
+	// but the actual node structure changed due to rotation
+
+	// Validate against disk - this should catch the bug
+	errors := treap.ValidateAgainstDisk()
+	if len(errors) > 0 {
+		t.Logf("Validation after rotation found %d errors (BUG REPRODUCED):", len(errors))
+		for _, e := range errors {
+			t.Logf("  - %s", e)
+		}
+		t.Fatalf("BUG: Rotation invalidated objectIds without proper cleanup")
+	} else {
+		t.Logf("Validation after rotation: PASS")
+	}
+}
+
+// TestMinimalFlushLoadBug is a minimal reproducer for the bug where
+// InOrderVisit does not load flushed nodes from disk.
+func TestMinimalFlushLoadBug(t *testing.T) {
+	stre := testutil.NewMockStore()
+	defer stre.Close()
+
+	templateKey := types.IntKey(0).New()
+	treap := NewPersistentTreap(types.IntLess, templateKey, stre)
+
+	// Insert 10 nodes
+	keys := []types.IntKey{50, 30, 70, 20, 40, 60, 80, 10, 25, 35}
+	for _, k := range keys {
+		key := k
+		treap.Insert(&key)
+	}
+
+	// Persist the entire tree
+	if err := treap.Persist(); err != nil {
+		t.Fatalf("Failed to persist tree: %v", err)
+	}
+
+	// Get the root node and manually flush its children
+	treap.mu.Lock()
+	rootNode, ok := treap.root.(*PersistentTreapNode[types.IntKey])
+	if !ok {
+		treap.mu.Unlock()
+		t.Fatalf("Root is not a PersistentTreapNode")
+	}
+
+	// Flush the root's children
+	if err := rootNode.Flush(); err != nil {
+		t.Logf("Flush returned error: %v", err)
+	}
+	treap.mu.Unlock()
+
+	//Walk the tree - this should load flushed nodes from disk
+	yieldedCount := 0
+	err := treap.InOrderVisit(func(node TreapNodeInterface[types.IntKey]) error {
+		yieldedCount++
+		return nil
+	})
+
+	if err != nil {
+		t.Fatalf("InOrderVisit failed: %v", err)
+	}
+
+	// Verify all nodes were yielded
+	if yieldedCount != len(keys) {
+		t.Errorf("BUG: InOrderVisit yielded only %d of %d nodes", yieldedCount, len(keys))
 	}
 }

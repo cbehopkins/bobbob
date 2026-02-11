@@ -11,7 +11,7 @@ func TestStringPayloadMarshalUnmarshalWithMockStore(t *testing.T) {
 
 	original := StringPayload("hello mock store")
 
-	objId, finisher := original.LateMarshal(mockStore)
+	objId, _, finisher := original.LateMarshal(mockStore)
 
 	if finisher == nil {
 		t.Fatal("LateMarshal returned nil finisher")
@@ -21,7 +21,7 @@ func TestStringPayloadMarshalUnmarshalWithMockStore(t *testing.T) {
 	}
 
 	var restored StringPayload
-	unmarshalFinisher := restored.LateUnmarshal(objId, mockStore)
+	unmarshalFinisher := restored.LateUnmarshal(objId, 0, mockStore)
 
 	if unmarshalFinisher == nil {
 		t.Fatal("LateUnmarshal returned nil finisher")

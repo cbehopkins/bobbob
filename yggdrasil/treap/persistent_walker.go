@@ -155,6 +155,10 @@ func rangeOverPostOrder[T any, N PersistentNodeWalker[T]](root N, callback func(
 		}
 	}
 
+	// Queue old ObjectIds for deletion after traversal completes.
+	// Prefer to queue via the treap parent when available so deletions are
+	// deferred and centralized; fall back to immediate deletion on the store
+	// if no treap parent can be located.
 	// Delete old ObjectIds for all dirty nodes after traversal completes.
 	rootStore := root.GetStore()
 	for objId := range dirtyOldIds {
@@ -164,6 +168,102 @@ func rangeOverPostOrder[T any, N PersistentNodeWalker[T]](root N, callback func(
 	}
 
 	// Build dirty node slice from set (order not guaranteed)
+	dirtyNodes := make([]N, 0, len(dirtySet))
+	for node := range dirtySet {
+		if n, ok := any(node).(N); ok {
+			dirtyNodes = append(dirtyNodes, n)
+		}
+	}
+
+	return dirtyNodes, nil
+}
+
+// rangeOverPostOrderInMemory walks only in-memory nodes in post-order.
+// It never loads children from disk (GetTransient*), so it is safe for
+// persistence that should not rehydrate flushed subtrees.
+func rangeOverPostOrderInMemory[T any, N PersistentNodeWalker[T]](root N, callback func(node N) error) ([]N, error) {
+	if any(root) == nil {
+		return nil, nil
+	}
+
+	type frame struct {
+		node    N
+		visited bool
+	}
+
+	stack := []frame{{node: root, visited: false}}
+	dirtySet := make(map[PersistentNodeWalker[T]]struct{})
+	dirtyOldIds := make(map[store.ObjectId]struct{})
+	var path []N
+
+	for len(stack) > 0 {
+		f := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+
+		if any(f.node) == nil || f.node.IsNil() {
+			continue
+		}
+
+		if f.visited {
+			oldObjectId := f.node.GetObjectIdNoAlloc()
+
+			if err := callback(f.node); err != nil {
+				return nil, err
+			}
+
+			if store.IsValidObjectId(oldObjectId) && !store.IsValidObjectId(f.node.GetObjectIdNoAlloc()) {
+				dirtySet[f.node] = struct{}{}
+				if store.IsValidObjectId(oldObjectId) {
+					dirtyOldIds[oldObjectId] = struct{}{}
+				}
+
+				for i := len(path) - 2; i >= 0; i-- {
+					ancestor := path[i]
+					if any(ancestor) != nil {
+						dirtySet[ancestor] = struct{}{}
+					}
+					ancestorObjId := ancestor.GetObjectIdNoAlloc()
+					if store.IsValidObjectId(ancestorObjId) {
+						dirtyOldIds[ancestorObjId] = struct{}{}
+					}
+				}
+			}
+
+			if len(path) > 0 {
+				path = path[:len(path)-1]
+			}
+			continue
+		}
+
+		path = append(path, f.node)
+		stack = append(stack, frame{node: f.node, visited: true})
+
+		rightChild := f.node.GetRightChild()
+		if rightChild != nil && !rightChild.IsNil() {
+			rightNode, ok := any(rightChild).(N)
+			if !ok {
+				return nil, fmt.Errorf("right child is not expected node type")
+			}
+			stack = append(stack, frame{node: rightNode, visited: false})
+		}
+
+		leftChild := f.node.GetLeftChild()
+		if leftChild != nil && !leftChild.IsNil() {
+			leftNode, ok := any(leftChild).(N)
+			if !ok {
+				return nil, fmt.Errorf("left child is not expected node type")
+			}
+			stack = append(stack, frame{node: leftNode, visited: false})
+		}
+	}
+
+	rootStore := root.GetStore()
+	for objId := range dirtyOldIds {
+		if store.IsValidObjectId(objId) {
+			_ = rootStore.DeleteObj(objId)
+		}
+	}
+
 	dirtyNodes := make([]N, 0, len(dirtySet))
 	for node := range dirtySet {
 		if n, ok := any(node).(N); ok {

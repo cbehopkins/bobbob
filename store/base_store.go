@@ -33,7 +33,7 @@ func NewBasicStore(filePath string) (*baseStore, error) {
 	}
 
 	// Create the new TopAllocator
-	blockSizes := []int{64, 256, 1024}
+	blockSizes := []int{16, 32, 64, 256, 1024}
 	maxBlockCount := 1024
 	topAlloc, err := allocator.NewTop(file, blockSizes, maxBlockCount)
 	if err != nil {
@@ -61,7 +61,7 @@ func LoadBaseStore(filePath string) (*baseStore, error) {
 	// Read the initial offset
 
 	// Load the new TopAllocator from the file
-	blockSizes := []int{64, 256, 1024}
+	blockSizes := []int{16, 32, 64, 256, 1024}
 	maxBlockCount := 1024
 	topAlloc, err := allocator.NewTopFromFile(file, blockSizes, maxBlockCount)
 	if err != nil {
