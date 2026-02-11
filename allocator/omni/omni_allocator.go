@@ -17,6 +17,7 @@ import (
 var (
 	ErrNoParentAllocator  = errors.New("parent allocator required")
 	ErrNoMatchingPoolSize = errors.New("no pool supports requested size")
+	ErrInvalidBlockSize   = errors.New("invalid block size")
 )
 
 // OmniAllocator routes allocation requests to size-appropriate PoolAllocators
@@ -376,6 +377,27 @@ func (o *OmniAllocator) Unmarshal(data []byte) error {
 
 func (o *OmniAllocator) Parent() types.Allocator {
 	return o.parent
+}
+
+// AddBlockSize registers a new block size for allocation routing.
+// This is safe to call at runtime; the updated sizes are persisted on Save().
+func (o *OmniAllocator) AddBlockSize(size int) error {
+	if size <= 0 {
+		return ErrInvalidBlockSize
+	}
+
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	for _, existing := range o.blockSizes {
+		if existing == size {
+			return nil
+		}
+	}
+
+	o.blockSizes = append(o.blockSizes, size)
+	o.blockSizes = normalizeSizes(o.blockSizes)
+	return nil
 }
 
 func (o *OmniAllocator) GetObjectIdsInAllocator(blockSize int, allocatorIndex int) []types.ObjectId {

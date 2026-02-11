@@ -167,6 +167,29 @@ func (v *Vault) Allocator() atypes.Allocator {
 	return nil
 }
 
+func (v *Vault) ensureAllocatorBlockSizes(sizes []int) error {
+	if len(sizes) == 0 {
+		return nil
+	}
+	alloc := v.Allocator()
+	if alloc == nil {
+		return nil
+	}
+	configurable, ok := alloc.(interface{ AddBlockSize(int) error })
+	if !ok {
+		return nil
+	}
+	for _, size := range sizes {
+		if size <= 0 {
+			continue
+		}
+		if err := configurable.AddBlockSize(size); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // Note: NewVault has been removed. Use LoadVault for both new and existing vaults.
 
 // LoadVault loads an existing vault from a store.
@@ -274,11 +297,18 @@ func GetOrCreateCollection[K any, P yttypes.PersistentPayload[P]](
 		return nil, fmt.Errorf("collection %s exists but has wrong type", collectionName)
 	}
 
+	// Pre-configure allocator block sizes for fixed-size payload nodes.
+	var zeroP P
+	if nodeSize, ok := treap.PersistentPayloadTreapFixedNodeSize(zeroP); ok {
+		if err := v.ensureAllocatorBlockSizes([]int{nodeSize}); err != nil {
+			return nil, err
+		}
+	}
+
 	// Check if the collection exists in the registry
 	collInfo, exists := v.CollectionRegistry.GetCollection(collectionName)
 	if exists {
 		// Validate type codes match what we expect
-		var zeroP P
 		expectedKeyShortCode, err := v.TypeMap.GetShortCode(keyTemplate)
 		if err != nil {
 			return nil, fmt.Errorf("key type not registered: %w", err)
@@ -312,7 +342,6 @@ func GetOrCreateCollection[K any, P yttypes.PersistentPayload[P]](
 	treap := treap.NewPersistentPayloadTreap[K, P](lessFunc, keyTemplate, v.Store)
 
 	// Get the type short codes
-	var zeroP P
 
 	// Use the template to get the short code (not the generic K)
 	keyShortCode, err := v.TypeMap.GetShortCode(keyTemplate)
@@ -370,6 +399,11 @@ func GetOrCreateKeyOnlyCollection[K any](
 			return treap, nil
 		}
 		return nil, fmt.Errorf("collection %s exists but has wrong type", collectionName)
+	}
+
+	// Ensure allocator has the fixed treap node size available.
+	if err := v.ensureAllocatorBlockSizes(treap.PersistentTreapObjectSizes()); err != nil {
+		return nil, err
 	}
 
 	// Check if the collection exists in the registry

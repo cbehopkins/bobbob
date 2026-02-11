@@ -1,7 +1,9 @@
 package vault_test
 
 import (
+	"encoding/binary"
 	"fmt"
+	"io"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -16,13 +18,17 @@ type testData struct {
 }
 
 func (t testData) Marshal() ([]byte, error) {
-	return []byte(fmt.Sprintf("%d", t.Value)), nil
+	buf := make([]byte, 8)
+	binary.LittleEndian.PutUint64(buf, uint64(int64(t.Value)))
+	return buf, nil
 }
 
 func (t testData) Unmarshal(data []byte) (types.UntypedPersistentPayload, error) {
-	var val int
-	_, err := fmt.Sscanf(string(data), "%d", &val)
-	return testData{Value: val}, err
+	if len(data) < 8 {
+		return testData{}, io.ErrUnexpectedEOF
+	}
+	val := int64(binary.LittleEndian.Uint64(data[:8]))
+	return testData{Value: int(val)}, nil
 }
 
 func (t testData) SizeInBytes() int {

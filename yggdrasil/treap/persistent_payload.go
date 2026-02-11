@@ -20,6 +20,28 @@ import (
 var tracePayload = os.Getenv("BOBBOB_TRACE_PAYLOAD") != ""
 var debugPayload = os.Getenv("BOBBOB_DEBUG_PAYLOAD") != ""
 
+// PersistentPayloadTreapFixedNodeSize returns the fixed node size for payload treaps
+// when the payload is stored out-of-line (LateMarshaler). Returns false when the
+// payload is inline and size depends on the payload value.
+func PersistentPayloadTreapFixedNodeSize[P types.PersistentPayload[P]](payloadTemplate P) (int, bool) {
+	if !payloadIsLateMarshaler(payloadTemplate) {
+		return 0, false
+	}
+	var n PersistentPayloadTreapNode[any, P]
+	n.payload = payloadTemplate
+	return n.sizeInBytes(), true
+}
+
+func payloadIsLateMarshaler[P types.PersistentPayload[P]](payloadTemplate P) bool {
+	if _, ok := any(payloadTemplate).(bobbob.LateMarshaler); ok {
+		return true
+	}
+	if _, ok := any(&payloadTemplate).(bobbob.LateMarshaler); ok {
+		return true
+	}
+	return false
+}
+
 // UntypedPersistentPayload and types.PersistentPayload interfaces have been moved to interfaces.go
 
 // PersistentPayloadTreapNode represents a node in the persistent payload treap.

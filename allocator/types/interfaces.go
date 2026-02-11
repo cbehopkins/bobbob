@@ -50,6 +50,15 @@ type Allocator interface {
 	Marsheller
 }
 
+// BlockSizeConfigurable is an optional extension for allocators that can
+// add new fixed block sizes after initialization.
+//
+// Use with a type assertion; allocators that do not support this simply
+// ignore the request at higher layers.
+type BlockSizeConfigurable interface {
+	AddBlockSize(size int) error
+}
+
 // BasicAllocator defines core allocation and deletion operations.
 // All allocator types (BasicAllocator, PoolAllocator, BlockAllocator, OmniAllocator) implement these.
 type BasicAllocator interface {

@@ -252,6 +252,14 @@ func (t *Top) Unmarshal(data []byte) error {
 	return t.omniAllocator.Unmarshal(data)
 }
 
+// AddBlockSize registers a new fixed block size in the OmniAllocator.
+// This can be called at runtime; the updated configuration is persisted on Save().
+func (t *Top) AddBlockSize(size int) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.omniAllocator.AddBlockSize(size)
+}
+
 // Save persists the entire allocator hierarchy to disk.
 // Sequence:
 //  1. Marshal OmniAllocator, allocate from BasicAllocator, write to file
