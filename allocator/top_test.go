@@ -294,6 +294,55 @@ func TestTopGetFile(t *testing.T) {
 	}
 }
 
+func TestTopGetObjectCount(t *testing.T) {
+	tmpFile, err := os.CreateTemp(os.TempDir(), "top_test_*.db")
+	if err != nil {
+		t.Fatalf("failed to create temp file: %v", err)
+	}
+	defer tmpFile.Close()
+	defer os.Remove(tmpFile.Name())
+
+	blockSizes := []int{64, 256, 1024}
+	top, err := NewTop(tmpFile, blockSizes, 1024)
+	if err != nil {
+		t.Fatalf("failed to create Top: %v", err)
+	}
+
+	if got := top.GetObjectCount(); got != 0 {
+		t.Fatalf("expected 0 objects at start, got %d", got)
+	}
+
+	smallObj, _, err := top.Allocate(64)
+	if err != nil {
+		t.Fatalf("failed to allocate pooled object: %v", err)
+	}
+	if got := top.GetObjectCount(); got != 1 {
+		t.Fatalf("expected 1 object after pooled allocation, got %d", got)
+	}
+
+	largeObj, _, err := top.Allocate(5000)
+	if err != nil {
+		t.Fatalf("failed to allocate parent object: %v", err)
+	}
+	if got := top.GetObjectCount(); got != 2 {
+		t.Fatalf("expected 2 objects after mixed allocations, got %d", got)
+	}
+
+	if err := top.DeleteObj(smallObj); err != nil {
+		t.Fatalf("failed to delete pooled object: %v", err)
+	}
+	if got := top.GetObjectCount(); got != 1 {
+		t.Fatalf("expected 1 object after deleting pooled object, got %d", got)
+	}
+
+	if err := top.DeleteObj(largeObj); err != nil {
+		t.Fatalf("failed to delete parent object: %v", err)
+	}
+	if got := top.GetObjectCount(); got != 0 {
+		t.Fatalf("expected 0 objects after deleting all objects, got %d", got)
+	}
+}
+
 func TestTopImplementsTopAllocator(t *testing.T) {
 	tmpFile, err := os.CreateTemp(os.TempDir(), "top_test_*.db")
 	if err != nil {

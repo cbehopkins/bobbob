@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"os"
+	"sync"
 
 	"github.com/cbehopkins/bobbob/allocator/block"
 	"github.com/cbehopkins/bobbob/allocator/types"
@@ -30,6 +31,7 @@ type ParentAllocator interface {
 // PoolAllocator manages fixed-size allocations using multiple BlockAllocators.
 // Maintains separate lists for available and full BlockAllocators.
 type PoolAllocator struct {
+	mu             sync.RWMutex
 	blockSize      int
 	nextBlockCount int // Next BlockAllocator will have this many slots
 	parent         ParentAllocator
@@ -67,6 +69,9 @@ func (p *PoolAllocator) Allocate(size int) (types.ObjectId, types.FileOffset, er
 	if size != p.blockSize {
 		return 0, 0, ErrSizeMismatch
 	}
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
 
 	// Try available BlockAllocators
 	for i, blkAlloc := range p.available {
@@ -126,6 +131,9 @@ func (p *PoolAllocator) AllocateRun(size int, count int) ([]types.ObjectId, []ty
 	if size != p.blockSize {
 		return nil, nil, ErrSizeMismatch
 	}
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
 
 	// Try available BlockAllocators
 	for i, blkAlloc := range p.available {
@@ -205,6 +213,9 @@ func (p *PoolAllocator) DeleteObj(objId types.ObjectId) error {
 
 // GetObjectInfo returns the FileOffset and Size for an ObjectId.
 func (p *PoolAllocator) GetObjectInfo(objId types.ObjectId) (types.FileOffset, types.FileSize, error) {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+
 	// Binary search in available allocators
 	if alloc := p.findAllocatorByObjectId(p.available, objId); alloc != nil {
 		return alloc.GetObjectInfo(objId)
@@ -225,6 +236,9 @@ func (p *PoolAllocator) GetFile() *os.File {
 
 // ContainsObjectId returns true if this pool owns the ObjectId.
 func (p *PoolAllocator) ContainsObjectId(objId types.ObjectId) bool {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+
 	// Binary search in available allocators (kept in sorted order by ObjectId)
 	if alloc := p.findAllocatorByObjectId(p.available, objId); alloc != nil {
 		return true
@@ -246,6 +260,9 @@ func (p *PoolAllocator) SetOnAllocate(callback func(types.ObjectId, types.FileOf
 // DrainFullAllocators removes all full allocators from the pool and returns them.
 // Useful when delegating allocator ownership to the PoolCache.
 func (p *PoolAllocator) DrainFullAllocators() []*block.BlockAllocator {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
 	allocs := p.full
 	p.full = make([]*block.BlockAllocator, 0)
 	return allocs
@@ -261,6 +278,9 @@ func (p *PoolAllocator) AttachAllocator(alloc *block.BlockAllocator, available b
 		return ErrSizeMismatch
 	}
 
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
 	if available {
 		p.insertIntoAvailableList(alloc)
 	} else {
@@ -272,6 +292,9 @@ func (p *PoolAllocator) AttachAllocator(alloc *block.BlockAllocator, available b
 // Marshal serializes the pool state to bytes.
 // Format: blockSize (4) | nextBlockCount (4) | numAvailable (4) | numFull (4) | [availableObjIds] | [fullObjIds]
 func (p *PoolAllocator) Marshal() ([]byte, error) {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+
 	// Persist all BlockAllocators first and collect their ObjectIds
 	availableObjIds := make([]types.ObjectId, 0, len(p.available))
 	for _, blkAlloc := range p.available {
@@ -339,6 +362,9 @@ func (p *PoolAllocator) Marshal() ([]byte, error) {
 // Unmarshal restores pool state from bytes.
 // Note: BlockAllocators are NOT loaded into memory - they remain as ObjectIds for lazy loading.
 func (p *PoolAllocator) Unmarshal(data []byte) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
 	if len(data) < 16 {
 		return errors.New("insufficient data for pool unmarshal")
 	}
@@ -398,6 +424,9 @@ func (p *PoolAllocator) createBlockAllocator() (*block.BlockAllocator, error) {
 
 // Stats returns allocation statistics across all BlockAllocators.
 func (p *PoolAllocator) Stats() (allocated, free, total int) {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+
 	for _, blkAlloc := range p.available {
 		a, f, t := blkAlloc.Stats()
 		allocated += a
@@ -415,8 +444,18 @@ func (p *PoolAllocator) Stats() (allocated, free, total int) {
 	return
 }
 
+// GetObjectCount returns the number of currently allocated logical objects
+// across all block allocators managed by this pool.
+func (p *PoolAllocator) GetObjectCount() int {
+	allocated, _, _ := p.Stats()
+	return allocated
+}
+
 // AvailableAllocators returns a copy of the allocators that currently have free slots.
 func (p *PoolAllocator) AvailableAllocators() []*block.BlockAllocator {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+
 	allocs := make([]*block.BlockAllocator, len(p.available))
 	copy(allocs, p.available)
 	return allocs
@@ -424,6 +463,9 @@ func (p *PoolAllocator) AvailableAllocators() []*block.BlockAllocator {
 
 // FullAllocators returns a copy of the allocators that are fully allocated.
 func (p *PoolAllocator) FullAllocators() []*block.BlockAllocator {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+
 	allocs := make([]*block.BlockAllocator, len(p.full))
 	copy(allocs, p.full)
 	return allocs
@@ -431,6 +473,9 @@ func (p *PoolAllocator) FullAllocators() []*block.BlockAllocator {
 
 // RestoreAllocators replaces the available and full allocator lists.
 func (p *PoolAllocator) RestoreAllocators(available []*block.BlockAllocator, full []*block.BlockAllocator) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
 	p.available = available
 	p.full = full
 }

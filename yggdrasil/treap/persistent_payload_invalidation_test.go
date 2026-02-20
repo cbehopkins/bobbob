@@ -7,7 +7,7 @@ import (
 	"github.com/cbehopkins/bobbob/yggdrasil/types"
 )
 
-func TestPersistentPayloadSetPayloadInvalidatesObjectId(t *testing.T) {
+func TestPersistentPayloadUpdatePayloadInvalidatesObjectId(t *testing.T) {
 	st := setupTestStore(t)
 	defer st.Close()
 
@@ -32,9 +32,17 @@ func TestPersistentPayloadSetPayloadInvalidatesObjectId(t *testing.T) {
 		t.Fatalf("expected valid objectId after persist, got %d", objId)
 	}
 
-	payloadNode.SetPayload(MockPayload{Data: "after"})
-	if !payloadNode.IsObjectIdInvalid() {
-		t.Fatal("expected objectId invalid after SetPayload")
+	if err := tr.UpdatePayload(&key, MockPayload{Data: "after"}); err != nil {
+		t.Fatalf("UpdatePayload failed: %v", err)
+	}
+
+	nodeAfter := tr.Search(&key)
+	if nodeAfter == nil || nodeAfter.IsNil() {
+		t.Fatal("expected to find node after UpdatePayload")
+	}
+	payloadNodeAfter := nodeAfter.(*PersistentPayloadTreapNode[types.IntKey, MockPayload])
+	if !payloadNodeAfter.IsObjectIdInvalid() {
+		t.Fatal("expected objectId invalid after UpdatePayload")
 	}
 
 	if err := tr.Persist(); err != nil {

@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cbehopkins/bobbob"
 	"github.com/cbehopkins/bobbob/internal/testutil"
 	"github.com/cbehopkins/bobbob/store"
 	"github.com/cbehopkins/bobbob/yggdrasil/types"
@@ -46,7 +47,7 @@ func (p MockPayload) SizeInBytes() int {
 
 // ComplexPayload tracks a child object allocation to ensure deletes free nested objects.
 type ComplexPayload struct {
-	Child store.ObjectId
+	Child bobbob.ObjectId
 	Data  []byte
 }
 
@@ -59,12 +60,22 @@ func (k intPersistentKey) New() types.PersistentKey[intPersistentKey] {
 	v := intPersistentKey(-1)
 	return &v
 }
-func (k intPersistentKey) SizeInBytes() int { return store.ObjectId(0).SizeInBytes() }
-func (k intPersistentKey) MarshalToObjectId(stre store.Storer) (store.ObjectId, error) {
-	return store.ObjectId(k), nil
+func (k intPersistentKey) SizeInBytes() int { return bobbob.ObjectId(0).SizeInBytes() }
+func (k intPersistentKey) MarshalToObjectId(stre bobbob.Storer) (bobbob.ObjectId, error) {
+	return bobbob.ObjectId(k), nil
 }
-func (k *intPersistentKey) UnmarshalFromObjectId(id store.ObjectId, stre store.Storer) error {
+func (k *intPersistentKey) UnmarshalFromObjectId(id bobbob.ObjectId, stre bobbob.Storer) error {
 	*k = intPersistentKey(id)
+	return nil
+}
+func (k intPersistentKey) LateMarshal(stre bobbob.Storer) (bobbob.ObjectId, int, bobbob.Finisher) {
+	return bobbob.ObjectId(k), k.SizeInBytes(), func() error { return nil }
+}
+func (k *intPersistentKey) LateUnmarshal(id bobbob.ObjectId, size int, stre bobbob.Storer) bobbob.Finisher {
+	*k = intPersistentKey(id)
+	return func() error { return nil }
+}
+func (k intPersistentKey) DeleteDependents(stre bobbob.Storer) error {
 	return nil
 }
 
@@ -155,7 +166,7 @@ func (p intPayload) Unmarshal(data []byte) (types.UntypedPersistentPayload, erro
 func (p intPayload) SizeInBytes() int { return 4 }
 
 // DeleteDependents deletes the child allocation owned by this payload.
-func (p ComplexPayload) DeleteDependents(stre store.Storer) error {
+func (p ComplexPayload) DeleteDependents(stre bobbob.Storer) error {
 	if store.IsValidObjectId(p.Child) {
 		return stre.DeleteObj(p.Child)
 	}
@@ -174,7 +185,7 @@ func (p ComplexPayload) Unmarshal(data []byte) (types.UntypedPersistentPayload, 
 	if len(data) < 8 {
 		return nil, fmt.Errorf("data too short for ComplexPayload: %d", len(data))
 	}
-	var child store.ObjectId
+	var child bobbob.ObjectId
 	if err := child.Unmarshal(data[:8]); err != nil {
 		return nil, err
 	}
@@ -195,7 +206,7 @@ func TestPersistentPayloadTreapNodeMarshalUnmarshal(t *testing.T) {
 	priority := Priority(100)
 	payload := MockPayload{Data: "test_payload"}
 	treap := NewPersistentPayloadTreap[types.IntKey, MockPayload](types.IntLess, (*types.IntKey)(new(int32)), store)
-	node := NewPersistentPayloadTreapNode[types.IntKey, MockPayload](&key, priority, payload, store, treap)
+	node := NewPersistentPayloadTreapNode[types.IntKey, MockPayload](&key, priority, payload, treap)
 
 	// Marshal the node
 	data, err := node.Marshal()
@@ -205,6 +216,7 @@ func TestPersistentPayloadTreapNodeMarshalUnmarshal(t *testing.T) {
 
 	// Unmarshal the node
 	unmarshalledNode := &PersistentPayloadTreapNode[types.IntKey, MockPayload]{}
+	unmarshalledNode.container = &treap.PersistentTreap
 	unmarshalledNode.payload = MockPayload{}
 	err = unmarshalledNode.unmarshal(data, &key)
 	if err != nil {
@@ -449,7 +461,7 @@ func TestPersistentPayloadTreapPersistenceOne(t *testing.T) {
 
 	// Simplification for this test
 	// We will implement an object lookup mechanism later
-	var treapObjectId store.ObjectId
+	var treapObjectId bobbob.ObjectId
 	treapObjectId, _ = treap.root.(*PersistentPayloadTreapNode[types.IntKey, MockPayload]).ObjectId()
 
 	// Close the store
@@ -516,7 +528,7 @@ func TestPersistentPayloadTreapPersistence(t *testing.T) {
 
 	// Simplification for this test
 	// We will implement an object lookup mechanism later
-	var treapObjectId store.ObjectId
+	var treapObjectId bobbob.ObjectId
 	treapObjectId, _ = treap.root.(*PersistentPayloadTreapNode[types.IntKey, MockPayload]).ObjectId()
 	var bob PersistentTreap[types.IntKey]
 	bob.keyTemplate = (*types.IntKey)(new(int32))
@@ -573,7 +585,7 @@ func TestPersistentPayloadTreapNodeMarshalToObjectId(t *testing.T) {
 	priority := Priority(150)
 	payload := MockPayload{Data: "dummy_payload_data"}
 	treap := NewPersistentPayloadTreap[types.IntKey, MockPayload](types.IntLess, (*types.IntKey)(new(int32)), stre)
-	node := NewPersistentPayloadTreapNode[types.IntKey, MockPayload](&key, priority, payload, stre, treap)
+	node := NewPersistentPayloadTreapNode[types.IntKey, MockPayload](&key, priority, payload, treap)
 
 	// Test MarshalToObjectId - this should write the node to the store
 	objId, _, finisher := node.LateMarshal(stre)
@@ -1156,7 +1168,7 @@ func TestPersistentPayloadDeleteFreesNestedObjects(t *testing.T) {
 	defer st.Close()
 
 	bs, ok := st.(interface {
-		GetObjectInfo(store.ObjectId) (store.ObjectInfo, bool)
+		GetObjectInfo(bobbob.ObjectId) (store.ObjectInfo, bool)
 	})
 	if !ok {
 		t.Fatalf("store does not expose GetObjectInfo")
@@ -1191,7 +1203,7 @@ func TestPersistentPayloadDeleteFreesStringKeyBackingObject(t *testing.T) {
 	defer st.Close()
 
 	bs, ok := st.(interface {
-		GetObjectInfo(store.ObjectId) (store.ObjectInfo, bool)
+		GetObjectInfo(bobbob.ObjectId) (store.ObjectInfo, bool)
 	})
 	if !ok {
 		t.Fatalf("store does not expose GetObjectInfo")
@@ -1220,7 +1232,7 @@ func TestPersistentPayloadDeleteFreesStringKeyBackingObject(t *testing.T) {
 	if len(nodeBytes) < 8 {
 		t.Fatalf("root object too small to contain key object id: %d bytes", len(nodeBytes))
 	}
-	keyObjId := store.ObjectId(binary.LittleEndian.Uint64(nodeBytes[:8]))
+	keyObjId := bobbob.ObjectId(binary.LittleEndian.Uint64(nodeBytes[:8]))
 
 	if _, found := bs.GetObjectInfo(keyObjId); !found {
 		t.Fatalf("expected key backing object %d to exist before delete", keyObjId)
@@ -1392,4 +1404,3 @@ func TestMinimalPayloadFlushLoadBug(t *testing.T) {
 		t.Errorf("BUG: InOrderVisit yielded only %d of %d nodes", yieldedCount, len(keys))
 	}
 }
-

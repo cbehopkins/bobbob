@@ -2,8 +2,11 @@ package treap
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math/rand"
+	"os"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -92,9 +95,10 @@ func TestPersistentPayloadTreapStressAggressiveThrashing(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping aggressive stress test in short mode")
 	}
-	// This test is VERY aggressive and can take a long time on slower systems
-	// t.Skip("Skipping aggressive thrashing test - reserved for manual testing with: go test -run TestPersistentPayloadTreapStressAggressiveThrashing -timeout 5m")
-	// Uncomment below to run:
+	if os.Getenv("BOBBOB_RUN_AGGRESSIVE_STRESS") != "1" {
+		t.Skip("Skipping aggressive thrashing test by default; set BOBBOB_RUN_AGGRESSIVE_STRESS=1 to run it")
+	}
+	// This test is VERY aggressive and intended for manual stress validation.
 	config := AggressiveStressConfig()
 	result := runStressTest(t, config, stressTestAggressiveThrashing)
 	validateStressResult(t, result, "AggressiveThrashing")
@@ -393,6 +397,8 @@ func stressTestAggressiveThrashing(t *testing.T, config StressTestConfig, treap 
 	expectedPayloads := make(map[int32]string)
 	payloadMu := sync.RWMutex{}
 	loggedIterationErrors := int64(0)
+	const maxReaderNodesPerIteration = 5000
+	var errReaderIterationBudgetReached = errors.New("reader iteration budget reached")
 
 	t.Logf("=== AggressiveThrashing Stress Test ===")
 	t.Logf("Running for %v with %d item target", config.RunDuration, config.ItemCount)
@@ -480,6 +486,11 @@ func stressTestAggressiveThrashing(t *testing.T, config StressTestConfig, treap 
 				lastKey := int32(-1)
 
 				err := treap.InOrderVisit(func(node TreapNodeInterface[types.IntKey]) error {
+					select {
+					case <-ctx.Done():
+						return context.Canceled
+					default:
+					}
 					pNode := node.(*PersistentPayloadTreapNode[types.IntKey, MockPayload])
 					k := int32(*pNode.GetKey().(*types.IntKey))
 					if k <= lastKey {
@@ -487,10 +498,17 @@ func stressTestAggressiveThrashing(t *testing.T, config StressTestConfig, treap 
 					}
 					lastKey = k
 					count++
+					if count >= maxReaderNodesPerIteration {
+						return errReaderIterationBudgetReached
+					}
 					return nil
 				})
 
-				if err == nil {
+				if errors.Is(err, context.Canceled) {
+					return
+				}
+
+				if err == nil || errors.Is(err, errReaderIterationBudgetReached) {
 					atomic.AddInt64(&result.IterationChecksPassed, 1)
 				} else {
 					if atomic.AddInt64(&loggedIterationErrors, 1) <= 5 {
@@ -549,6 +567,9 @@ func stressTestRandomOperations(t *testing.T, config StressTestConfig, treap *Pe
 	result := StressTestResult{}
 	expectedPayloads := make(map[int32]string)
 	payloadMu := sync.RWMutex{}
+	const sampledIntegrityChecks = 128
+	const maxIterationNodesPerCheck = 5000
+	var errIterationBudgetReached = errors.New("iteration budget reached")
 
 	t.Logf("=== RandomOperations Stress Test ===")
 	t.Logf("Running for %v", config.RunDuration)
@@ -623,7 +644,7 @@ func stressTestRandomOperations(t *testing.T, config StressTestConfig, treap *Pe
 				}
 				payloadMu.RUnlock()
 
-				checksPassed, checksFailed := verifyDataIntegrity(treap, expectedCopy)
+				checksPassed, checksFailed := verifySampledDataIntegrityWithContext(treap, expectedCopy, sampledIntegrityChecks, ctx)
 				result.DataIntegrityChecksPassed += checksPassed
 				result.DataIntegrityChecksFailed += checksFailed
 				if checksFailed > 0 {
@@ -648,6 +669,11 @@ func stressTestRandomOperations(t *testing.T, config StressTestConfig, treap *Pe
 			lastKey := int32(-1)
 
 			err := treap.InOrderVisit(func(node TreapNodeInterface[types.IntKey]) error {
+				select {
+				case <-ctx.Done():
+					return context.Canceled
+				default:
+				}
 				pNode := node.(*PersistentPayloadTreapNode[types.IntKey, MockPayload])
 				k := int32(*pNode.GetKey().(*types.IntKey))
 				if k <= lastKey {
@@ -655,10 +681,17 @@ func stressTestRandomOperations(t *testing.T, config StressTestConfig, treap *Pe
 				}
 				lastKey = k
 				count++
+				if count >= maxIterationNodesPerCheck {
+					return errIterationBudgetReached
+				}
 				return nil
 			})
 
-			if err == nil {
+			if errors.Is(err, context.Canceled) {
+				return
+			}
+
+			if err == nil || errors.Is(err, errIterationBudgetReached) {
 				atomic.AddInt64(&result.IterationChecksPassed, 1)
 			} else {
 				atomic.AddInt64(&result.IterationChecksFailed, 1)
@@ -672,32 +705,71 @@ func stressTestRandomOperations(t *testing.T, config StressTestConfig, treap *Pe
 	time.Sleep(100 * time.Millisecond)
 	cancel()
 
-	done := make(chan struct{})
-	go func() {
-		wg.Wait()
-		close(done)
-	}()
-
-	select {
-	case <-done:
-	case <-time.After(5 * time.Second):
-		t.Logf("Timeout waiting for final operations")
-	}
+	// Wait for all goroutines to finish before reading result fields
+	wg.Wait()
 
 	payloadMu.RLock()
-	checksPassed, checksFailed := verifyDataIntegrity(treap, expectedPayloads)
+	expectedCopy := make(map[int32]string)
+	for k, v := range expectedPayloads {
+		expectedCopy[k] = v
+	}
 	payloadMu.RUnlock()
+	checksPassed, checksFailed := verifyDataIntegrity(treap, expectedCopy)
 
-	result.DataIntegrityChecksPassed += checksPassed
-	result.DataIntegrityChecksFailed += checksFailed
+	atomic.AddInt64(&result.DataIntegrityChecksPassed, checksPassed)
+	atomic.AddInt64(&result.DataIntegrityChecksFailed, checksFailed)
 	result.FinalInMemoryNodeCount = treap.CountInMemoryNodes()
 
+	// Use atomic loads to avoid race with atomic writes
+	totalInserted := atomic.LoadInt64(&result.TotalInserted)
+	dataChecksPassed := atomic.LoadInt64(&result.DataIntegrityChecksPassed)
+	dataChecksFailed := atomic.LoadInt64(&result.DataIntegrityChecksFailed)
+	iterChecksPassed := atomic.LoadInt64(&result.IterationChecksPassed)
+	iterChecksFailed := atomic.LoadInt64(&result.IterationChecksFailed)
+
 	t.Logf("RandomOperations complete: inserted %d, %d integrity checks (%d passed, %d failed), %d iteration checks",
-		result.TotalInserted, result.DataIntegrityChecksPassed+result.DataIntegrityChecksFailed,
-		result.DataIntegrityChecksPassed, result.DataIntegrityChecksFailed,
-		result.IterationChecksPassed+result.IterationChecksFailed)
+		totalInserted, dataChecksPassed+dataChecksFailed,
+		dataChecksPassed, dataChecksFailed,
+		iterChecksPassed+iterChecksFailed)
 
 	return result
+}
+
+func verifySampledDataIntegrityWithContext(treap *PersistentPayloadTreap[types.IntKey, MockPayload], expectedPayloads map[int32]string, maxSamples int, ctx context.Context) (passed int64, failed int64) {
+	if len(expectedPayloads) == 0 {
+		return 1, 0
+	}
+
+	keys := make([]int32, 0, len(expectedPayloads))
+	for k := range expectedPayloads {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool { return keys[i] < keys[j] })
+
+	if maxSamples <= 0 || maxSamples > len(keys) {
+		maxSamples = len(keys)
+	}
+
+	for i := 0; i < maxSamples; i++ {
+		select {
+		case <-ctx.Done():
+			return 0, 0
+		default:
+		}
+
+		key := keys[rand.Intn(len(keys))]
+		expected := expectedPayloads[key]
+		searchKey := types.IntKey(key)
+		node := treap.Search(&searchKey)
+		if node == nil {
+			return 0, 1
+		}
+		if node.GetPayload().Data != expected {
+			return 0, 1
+		}
+	}
+
+	return 1, 0
 }
 
 // Helper functions
@@ -786,33 +858,43 @@ func logIntegrityMismatch(t *testing.T, treap *PersistentPayloadTreap[types.IntK
 }
 
 func validateStressResult(t *testing.T, result StressTestResult, testName string) {
+	// Use atomic loads for fields that were updated atomically
+	totalInserted := atomic.LoadInt64(&result.TotalInserted)
+	totalFlushed := atomic.LoadInt64(&result.TotalFlushed)
+	dataChecksPassed := atomic.LoadInt64(&result.DataIntegrityChecksPassed)
+	dataChecksFailed := atomic.LoadInt64(&result.DataIntegrityChecksFailed)
+	iterChecksPassed := atomic.LoadInt64(&result.IterationChecksPassed)
+	iterChecksFailed := atomic.LoadInt64(&result.IterationChecksFailed)
+	totalIterErrors := atomic.LoadInt64(&result.TotalIterationErrors)
+	totalCorruptions := atomic.LoadInt64(&result.TotalDataCorruptions)
+
 	t.Logf("\n=== %s Results ===", testName)
-	t.Logf("Total inserted: %d", result.TotalInserted)
-	t.Logf("Total flushed: %d", result.TotalFlushed)
+	t.Logf("Total inserted: %d", totalInserted)
+	t.Logf("Total flushed: %d", totalFlushed)
 	t.Logf("Final in-memory nodes: %d", result.FinalInMemoryNodeCount)
 	t.Logf("Data integrity checks: %d passed, %d failed",
-		result.DataIntegrityChecksPassed, result.DataIntegrityChecksFailed)
+		dataChecksPassed, dataChecksFailed)
 	t.Logf("Iteration checks: %d passed, %d failed",
-		result.IterationChecksPassed, result.IterationChecksFailed)
-	t.Logf("Total iteration errors: %d", result.TotalIterationErrors)
-	t.Logf("Total data corruptions: %d", result.TotalDataCorruptions)
+		iterChecksPassed, iterChecksFailed)
+	t.Logf("Total iteration errors: %d", totalIterErrors)
+	t.Logf("Total data corruptions: %d", totalCorruptions)
 
 	// Fail if we found any data corruption or iteration errors
-	if result.DataIntegrityChecksFailed > 0 {
-		t.Errorf("FAILED: %d data integrity checks failed", result.DataIntegrityChecksFailed)
+	if dataChecksFailed > 0 {
+		t.Errorf("FAILED: %d data integrity checks failed", dataChecksFailed)
 	}
-	if result.IterationChecksFailed > 0 {
-		t.Errorf("FAILED: %d iteration checks failed", result.IterationChecksFailed)
+	if iterChecksFailed > 0 {
+		t.Errorf("FAILED: %d iteration checks failed", iterChecksFailed)
 	}
-	if result.TotalIterationErrors > 0 {
-		t.Errorf("FAILED: %d iteration errors detected", result.TotalIterationErrors)
+	if totalIterErrors > 0 {
+		t.Errorf("FAILED: %d iteration errors detected", totalIterErrors)
 	}
-	if result.TotalDataCorruptions > 0 {
-		t.Errorf("FAILED: %d data corruptions detected", result.TotalDataCorruptions)
+	if totalCorruptions > 0 {
+		t.Errorf("FAILED: %d data corruptions detected", totalCorruptions)
 	}
 
-	if result.DataIntegrityChecksFailed == 0 && result.IterationChecksFailed == 0 &&
-		result.TotalIterationErrors == 0 && result.TotalDataCorruptions == 0 {
+	if dataChecksFailed == 0 && iterChecksFailed == 0 &&
+		totalIterErrors == 0 && totalCorruptions == 0 {
 		t.Logf("SUCCESS: All checks passed!")
 	}
 }

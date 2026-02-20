@@ -1,7 +1,9 @@
 package multistore
 
 import (
+	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -273,6 +275,28 @@ func TestMultiStoreWriteToObj(t *testing.T) {
 	// Verify using helper
 	testutil.VerifyObject(t, ms, objId, updatedData)
 	t.Logf("SUCCESS: Object data was successfully updated")
+}
+
+func TestNewMultiStoreRejectsNonEmptyFile(t *testing.T) {
+	tempDir := t.TempDir()
+	tempFile := filepath.Join(tempDir, "test_non_empty.bin")
+
+	if err := os.WriteFile(tempFile, []byte("existing-data"), 0o666); err != nil {
+		t.Fatalf("failed to seed file: %v", err)
+	}
+
+	_, err := NewMultiStore(tempFile, 0)
+	if !errors.Is(err, ErrStoreAlreadyExists) {
+		t.Fatalf("expected ErrStoreAlreadyExists, got %v", err)
+	}
+
+	contents, err := os.ReadFile(tempFile)
+	if err != nil {
+		t.Fatalf("failed to read seeded file: %v", err)
+	}
+	if string(contents) != "existing-data" {
+		t.Fatalf("file was unexpectedly modified, got %q", string(contents))
+	}
 }
 
 // TestMultiStoreMultipleObjects tests writing and reading multiple objects

@@ -80,7 +80,9 @@ func TestTreap(t *testing.T) {
 	// Test UpdatePriority
 	keyToUpdate := keys[2]
 	newPriority := Priority(200)
-	treap.UpdatePriority(keyToUpdate, newPriority)
+	if err := treap.UpdatePriority(keyToUpdate, newPriority); err != nil {
+		t.Fatalf("UpdatePriority returned error: %v", err)
+	}
 	updatedNode := treap.Search(keyToUpdate)
 	if updatedNode == nil {
 		t.Errorf("Expected to find key %d in the treap after updating priority, but it was not found", keyToUpdate)
@@ -547,7 +549,9 @@ func TestTreapUpdatePriorityKeepsKey(t *testing.T) {
 	}
 
 	// Update priority for an existing key
-	treap.UpdatePriority(types.IntKey(15), Priority(999))
+	if err := treap.UpdatePriority(types.IntKey(15), Priority(999)); err != nil {
+		t.Fatalf("UpdatePriority returned error: %v", err)
+	}
 
 	if node := treap.Search(types.IntKey(15)); node == nil || node.IsNil() {
 		t.Fatal("expected key 15 to remain after UpdatePriority")

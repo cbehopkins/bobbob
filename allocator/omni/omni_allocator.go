@@ -178,6 +178,38 @@ func (o *OmniAllocator) SetOnAllocate(callback func(types.ObjectId, types.FileOf
 	}
 }
 
+// GetObjectCount returns the number of currently allocated logical objects
+// visible through this allocator.
+func (o *OmniAllocator) GetObjectCount() int {
+	o.mu.RLock()
+	defer o.mu.RUnlock()
+
+	pooledCount := 0
+	internalRangeCount := 0
+	for _, pl := range o.pools {
+		pooledCount += pl.GetObjectCount()
+		internalRangeCount += len(pl.AvailableAllocators()) + len(pl.FullAllocators())
+	}
+
+	cachedCount := 0
+	if o.cache != nil {
+		cachedCount = o.cache.GetObjectCount()
+		internalRangeCount += len(o.cache.GetAll())
+	}
+
+	parentCount := 0
+	if countable, ok := o.parent.(interface{ GetObjectCount() int }); ok {
+		parentCount = countable.GetObjectCount()
+	}
+
+	directParentCount := parentCount - internalRangeCount
+	if directParentCount < 0 {
+		directParentCount = 0
+	}
+
+	return directParentCount + pooledCount + cachedCount
+}
+
 func (o *OmniAllocator) Marshal() ([]byte, error) {
 	// Layout:
 	// [blockSizesCount:4][blockSize:4]... (configuration)

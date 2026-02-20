@@ -26,17 +26,22 @@
 package multistore
 
 import (
+	"bytes"
+	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/cbehopkins/bobbob"
 	"github.com/cbehopkins/bobbob/allocator"
 	"github.com/cbehopkins/bobbob/allocator/types"
 	"github.com/cbehopkins/bobbob/store"
+	"github.com/cbehopkins/bobbob/stringstore"
 	"github.com/cbehopkins/bobbob/yggdrasil/treap"
 )
 
@@ -84,7 +89,38 @@ const (
 	// DefaultDeleteQueueBufferSize is the buffer size for the asynchronous delete queue.
 	// Larger values reduce contention but use more memory.
 	DefaultDeleteQueueBufferSize = 1024
+	stringStoreMetaVersion       = 1
+	multiStoreStateVersion       = 1
 )
+
+var multiStoreStateMagic = [8]byte{'B', 'B', 'M', 'S', 'T', 'A', 'T', 'E'}
+
+const (
+	multiStoreStatePathMax     = 1024
+	multiStoreStatePayloadSize = 1104
+)
+
+type persistedStringStoreMeta struct {
+	Version              int             `json:"version"`
+	WrapperStateObjId    bobbob.ObjectId `json:"wrapper_state_obj_id"`
+	FilePath             string          `json:"file_path"`
+	MaxNumberOfStrings   int             `json:"max_number_of_strings"`
+	StartingObjectId     bobbob.ObjectId `json:"starting_object_id"`
+	ObjectIdInterval     bobbob.ObjectId `json:"object_id_interval"`
+	WriteFlushNanos      int64           `json:"write_flush_nanos"`
+	WriteMaxBatchBytes   int             `json:"write_max_batch_bytes"`
+	UnloadOnFull         bool            `json:"unload_on_full,omitempty"`
+	UnloadAfterIdleNanos int64           `json:"unload_after_idle_nanos,omitempty"`
+	UnloadScanNanos      int64           `json:"unload_scan_nanos,omitempty"`
+	LazyLoadShards       bool            `json:"lazy_load_shards,omitempty"`
+}
+
+type persistedMultiStoreState struct {
+	Version     int                       `json:"version"`
+	StringStore *persistedStringStoreMeta `json:"string_store,omitempty"`
+}
+
+var ErrStoreAlreadyExists = errors.New("store file already exists and is non-empty; use LoadMultiStore")
 
 type deleteQueue struct {
 	mu       sync.Mutex // Protects isClosed
@@ -187,10 +223,310 @@ func (dq *deleteQueue) Flush() {
 type multiStore struct {
 	filePath     string
 	file         *os.File
-	top          *allocator.Top
+	top          *allocator.Top          // FIXME: Can we not use parent and the Allocator interface instead of exposing the Top directly?
 	tokenManager *store.DiskTokenManager // nil for unlimited, otherwise limits concurrent disk ops
 	deleteQueue  *deleteQueue
 	lock         sync.RWMutex
+	// StringStore support (lazy-initialized)
+	stringStore           *stringstore.StringStore
+	stringStoreLock       sync.RWMutex
+	stringStoreWrapperObj bobbob.ObjectId
+	stateObjId            bobbob.ObjectId
+}
+
+func marshalMultiStoreState(state persistedMultiStoreState) ([]byte, error) {
+	if state.Version == 0 {
+		state.Version = multiStoreStateVersion
+	}
+	payload, err := encodeMultiStoreStateFixed(state)
+	if err != nil {
+		return nil, err
+	}
+	buf := bytes.NewBuffer(make([]byte, 0, len(multiStoreStateMagic)+4+len(payload)))
+	if _, err := buf.Write(multiStoreStateMagic[:]); err != nil {
+		return nil, err
+	}
+	if err := binary.Write(buf, binary.LittleEndian, uint32(len(payload))); err != nil {
+		return nil, err
+	}
+	if _, err := buf.Write(payload); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+func unmarshalMultiStoreState(data []byte) (*persistedMultiStoreState, bool, error) {
+	minLen := len(multiStoreStateMagic) + 4
+	if len(data) < minLen {
+		return nil, false, nil
+	}
+	if !bytes.Equal(data[:len(multiStoreStateMagic)], multiStoreStateMagic[:]) {
+		return nil, false, nil
+	}
+	payloadLen := int(binary.LittleEndian.Uint32(data[len(multiStoreStateMagic):minLen]))
+	if payloadLen < 0 || len(data) < minLen+payloadLen {
+		return nil, true, fmt.Errorf("invalid multistore state payload length")
+	}
+	payload := data[minLen : minLen+payloadLen]
+	if payloadLen == multiStoreStatePayloadSize {
+		state, err := decodeMultiStoreStateFixed(payload)
+		if err != nil {
+			return nil, true, err
+		}
+		if state.Version != multiStoreStateVersion {
+			return nil, true, fmt.Errorf("unsupported multistore state version: %d", state.Version)
+		}
+		return state, true, nil
+	}
+
+	// Legacy JSON payloads (variable length)
+	var state persistedMultiStoreState
+	if err := json.Unmarshal(payload, &state); err != nil {
+		return nil, true, err
+	}
+	if state.Version != multiStoreStateVersion {
+		return nil, true, fmt.Errorf("unsupported multistore state version: %d", state.Version)
+	}
+	return &state, true, nil
+}
+
+func encodeMultiStoreStateFixed(state persistedMultiStoreState) ([]byte, error) {
+	payload := make([]byte, multiStoreStatePayloadSize)
+	off := 0
+
+	var encodeErr error
+	putU32 := func(v uint32) {
+		if encodeErr != nil {
+			return
+		}
+		if off+4 > len(payload) {
+			encodeErr = fmt.Errorf("multistore payload overflow")
+			return
+		}
+		binary.LittleEndian.PutUint32(payload[off:], v)
+		off += 4
+	}
+	putU64 := func(v uint64) {
+		if encodeErr != nil {
+			return
+		}
+		if off+8 > len(payload) {
+			encodeErr = fmt.Errorf("multistore payload overflow")
+			return
+		}
+		binary.LittleEndian.PutUint64(payload[off:], v)
+		off += 8
+	}
+	putBool := func(v bool) {
+		if encodeErr != nil {
+			return
+		}
+		if off+1 > len(payload) {
+			encodeErr = fmt.Errorf("multistore payload overflow")
+			return
+		}
+		if v {
+			payload[off] = 1
+		} else {
+			payload[off] = 0
+		}
+		off++
+	}
+	putPad := func(n int) {
+		if encodeErr != nil {
+			return
+		}
+		if off+n > len(payload) {
+			encodeErr = fmt.Errorf("multistore payload overflow")
+			return
+		}
+		for i := 0; i < n; i++ {
+			payload[off+i] = 0
+		}
+		off += n
+	}
+	putFixedString := func(s string, max int) {
+		if encodeErr != nil {
+			return
+		}
+		if len(s) > max {
+			encodeErr = fmt.Errorf("stringstore file path exceeds max length %d", max)
+			return
+		}
+		if off+max > len(payload) {
+			encodeErr = fmt.Errorf("multistore payload overflow")
+			return
+		}
+		copy(payload[off:off+max], s)
+		off += max
+	}
+
+	putU32(uint32(state.Version))
+	putBool(state.StringStore != nil)
+	putPad(3)
+
+	var meta persistedStringStoreMeta
+	if state.StringStore != nil {
+		meta = *state.StringStore
+	}
+
+	putU32(uint32(meta.Version))
+	putU64(uint64(meta.WrapperStateObjId))
+	putFixedString(meta.FilePath, multiStoreStatePathMax)
+	putU32(uint32(meta.MaxNumberOfStrings))
+	putU64(uint64(meta.StartingObjectId))
+	putU64(uint64(meta.ObjectIdInterval))
+	putU64(uint64(meta.WriteFlushNanos))
+	putU32(uint32(meta.WriteMaxBatchBytes))
+	putBool(meta.UnloadOnFull)
+	putPad(3)
+	putU64(uint64(meta.UnloadAfterIdleNanos))
+	putU64(uint64(meta.UnloadScanNanos))
+	putBool(meta.LazyLoadShards)
+	putPad(7)
+
+	if off != len(payload) {
+		return nil, fmt.Errorf("multistore payload size mismatch: %d", off)
+	}
+	return payload, nil
+}
+
+func decodeMultiStoreStateFixed(payload []byte) (*persistedMultiStoreState, error) {
+	if len(payload) != multiStoreStatePayloadSize {
+		return nil, fmt.Errorf("invalid multistore payload size")
+	}
+	off := 0
+
+	readU32 := func() uint32 {
+		v := binary.LittleEndian.Uint32(payload[off:])
+		off += 4
+		return v
+	}
+	readU64 := func() uint64 {
+		v := binary.LittleEndian.Uint64(payload[off:])
+		off += 8
+		return v
+	}
+	readBool := func() bool {
+		v := payload[off] != 0
+		off++
+		return v
+	}
+	readPad := func(n int) {
+		off += n
+	}
+	readFixedString := func(max int) string {
+		buf := payload[off : off+max]
+		off += max
+		return string(bytes.TrimRight(buf, "\x00"))
+	}
+
+	state := persistedMultiStoreState{}
+	state.Version = int(readU32())
+	hasStringStore := readBool()
+	readPad(3)
+
+	meta := persistedStringStoreMeta{}
+	meta.Version = int(readU32())
+	meta.WrapperStateObjId = bobbob.ObjectId(readU64())
+	meta.FilePath = readFixedString(multiStoreStatePathMax)
+	meta.MaxNumberOfStrings = int(readU32())
+	meta.StartingObjectId = bobbob.ObjectId(readU64())
+	meta.ObjectIdInterval = bobbob.ObjectId(readU64())
+	meta.WriteFlushNanos = int64(readU64())
+	meta.WriteMaxBatchBytes = int(readU32())
+	meta.UnloadOnFull = readBool()
+	readPad(3)
+	meta.UnloadAfterIdleNanos = int64(readU64())
+	meta.UnloadScanNanos = int64(readU64())
+	meta.LazyLoadShards = readBool()
+	readPad(7)
+
+	if hasStringStore {
+		state.StringStore = &meta
+	}
+	return &state, nil
+}
+
+func (s *multiStore) loadPersistedState() (*persistedMultiStoreState, error) {
+	meta := s.top.GetStoreMeta()
+	if !store.IsValidObjectId(meta.ObjId) || meta.Sz <= 0 {
+		return nil, nil
+	}
+
+	data, err := store.ReadBytesFromObj(s, meta.ObjId)
+	if err != nil {
+		// Legacy files may have non-state metadata in this slot; treat as absent.
+		return nil, nil
+	}
+
+	state, matched, err := unmarshalMultiStoreState(data)
+	if err != nil {
+		return nil, err
+	}
+	if !matched {
+		return nil, nil
+	}
+
+	s.stateObjId = meta.ObjId
+	return state, nil
+}
+
+func (s *multiStore) persistState(state persistedMultiStoreState) error {
+	data, err := marshalMultiStoreState(state)
+	if err != nil {
+		return err
+	}
+
+	if store.IsValidObjectId(s.stateObjId) {
+		info, infoErr := s.getObjectInfo(s.stateObjId)
+		if infoErr == nil && info.Size == len(data) {
+			writer, finisher, writeErr := s.WriteToObj(s.stateObjId)
+			if writeErr == nil {
+				n, writeErr := writer.Write(data)
+				if finisher != nil {
+					finishErr := finisher()
+					if writeErr == nil {
+						writeErr = finishErr
+					}
+				}
+				if writeErr == nil && n == len(data) {
+					s.top.SetStoreMeta(allocator.FileInfo{
+						ObjId: s.stateObjId,
+						Fo:    info.Offset,
+						Sz:    types.FileSize(info.Size),
+					})
+					return nil
+				}
+			}
+		}
+	}
+
+	newObjId, err := store.WriteNewObjFromBytes(s, data)
+	if err != nil {
+		return err
+	}
+	info, err := s.getObjectInfo(newObjId)
+	if err != nil {
+		return err
+	}
+
+	oldObjId := s.stateObjId
+	s.stateObjId = newObjId
+
+	s.top.SetStoreMeta(allocator.FileInfo{
+		ObjId: newObjId,
+		Fo:    info.Offset,
+		Sz:    types.FileSize(info.Size),
+	})
+
+	if store.IsValidObjectId(oldObjId) && oldObjId != newObjId {
+		s.lock.Lock()
+		_ = s.top.DeleteObj(oldObjId)
+		s.lock.Unlock()
+	}
+
+	return nil
 }
 
 // NewMultiStore creates a new multiStore at the given file path.
@@ -199,9 +535,19 @@ type multiStore struct {
 // If maxDiskTokens > 0, limits concurrent disk I/O operations to that count.
 // Pass 0 for unlimited concurrent disk operations.
 func NewMultiStore(filePath string, maxDiskTokens int) (*multiStore, error) {
-	file, err := os.OpenFile(filePath, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0o666)
+	file, err := os.OpenFile(filePath, os.O_RDWR|os.O_CREATE, 0o666)
 	if err != nil {
 		return nil, err
+	}
+
+	info, err := file.Stat()
+	if err != nil {
+		_ = file.Close()
+		return nil, err
+	}
+	if info.Size() > 0 {
+		_ = file.Close()
+		return nil, ErrStoreAlreadyExists
 	}
 
 	topAlloc, err := allocator.NewTop(file, buildComprehensiveBlockSizes(), DefaultBlockCount)
@@ -211,10 +557,12 @@ func NewMultiStore(filePath string, maxDiskTokens int) (*multiStore, error) {
 	}
 
 	ms := &multiStore{
-		filePath:     filePath,
-		file:         file,
-		top:          topAlloc,
-		tokenManager: store.NewDiskTokenManager(maxDiskTokens),
+		filePath:              filePath,
+		file:                  file,
+		top:                   topAlloc,
+		tokenManager:          store.NewDiskTokenManager(maxDiskTokens),
+		stringStoreWrapperObj: bobbob.ObjNotAllocated,
+		stateObjId:            bobbob.ObjNotAllocated,
 	}
 	ms.deleteQueue = newDeleteQueue(DefaultDeleteQueueBufferSize, ms.deleteObj)
 	return ms, nil
@@ -236,14 +584,51 @@ func LoadMultiStore(filePath string, maxDiskTokens int) (*multiStore, error) {
 	}
 
 	ms := &multiStore{
-		filePath:     filePath,
-		file:         file,
-		top:          topAlloc,
-		tokenManager: store.NewDiskTokenManager(maxDiskTokens),
+		filePath:              filePath,
+		file:                  file,
+		top:                   topAlloc,
+		tokenManager:          store.NewDiskTokenManager(maxDiskTokens),
+		stringStoreWrapperObj: bobbob.ObjNotAllocated,
+		stateObjId:            bobbob.ObjNotAllocated,
 	}
 	ms.deleteQueue = newDeleteQueue(DefaultDeleteQueueBufferSize, ms.deleteObj)
 
+	state, err := ms.loadPersistedState()
+	if err != nil {
+		_ = file.Close()
+		return nil, fmt.Errorf("load multistore metadata: %w", err)
+	}
+	if state != nil && state.StringStore != nil && store.IsValidObjectId(state.StringStore.WrapperStateObjId) {
+		cfg := stringstore.Config{
+			FilePath:           state.StringStore.FilePath,
+			MaxNumberOfStrings: state.StringStore.MaxNumberOfStrings,
+			StartingObjectId:   state.StringStore.StartingObjectId,
+			ObjectIdInterval:   state.StringStore.ObjectIdInterval,
+			WriteFlushInterval: time.Duration(state.StringStore.WriteFlushNanos),
+			WriteMaxBatchBytes: state.StringStore.WriteMaxBatchBytes,
+			UnloadOnFull:       state.StringStore.UnloadOnFull,
+			UnloadAfterIdle:    time.Duration(state.StringStore.UnloadAfterIdleNanos),
+			UnloadScanInterval: time.Duration(state.StringStore.UnloadScanNanos),
+			LazyLoadShards:     state.StringStore.LazyLoadShards,
+		}
+		ss, loadErr := stringstore.LoadStringStoreFromStore(cfg, ms, state.StringStore.WrapperStateObjId)
+		if loadErr != nil {
+			_ = file.Close()
+			return nil, fmt.Errorf("restore StringStore: %w", loadErr)
+		}
+		ss.AttachParentStore(ms)
+		ms.stringStore = ss
+		ms.stringStoreWrapperObj = state.StringStore.WrapperStateObjId
+	}
+
 	return ms, nil
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 // NewConcurrentMultiStore creates a multiStore wrapped with concurrent access support.
@@ -290,6 +675,158 @@ func (s *multiStore) Allocator() types.Allocator {
 	return s.top
 }
 
+// AllocateRun allocates multiple contiguous ObjectIds efficiently.
+func (s *multiStore) AllocateRun(size int, count int) ([]bobbob.ObjectId, []store.FileOffset, error) {
+	if s.top == nil {
+		return nil, nil, fmt.Errorf("store is not initialized")
+	}
+	return s.top.AllocateRun(size, count)
+}
+
+// StringStorer interface implementation
+
+// ensureStringStoreOpen lazily initializes the StringStore on first string allocation.
+func (s *multiStore) ensureStringStoreOpen() error {
+	s.stringStoreLock.Lock()
+	defer s.stringStoreLock.Unlock()
+
+	if s.stringStore != nil {
+		return nil
+	}
+
+	// Derive temp file path from existing file path
+	stringStorePath := s.filePath + ".strings"
+
+	// Allocate ObjectId range from BasicAllocator for StringStore's first shard
+	// The state object serves dual purpose: stores shard metadata + defines ObjectId namespace
+	const stateSize = 1024 * 1024 // 1MB for state metadata (handles growth)
+	s.lock.Lock()
+	stateObjId, _, err := s.top.Allocate(stateSize)
+	s.lock.Unlock()
+	if err != nil {
+		return fmt.Errorf("failed to allocate StringStore state object: %w", err)
+	}
+
+	// StringStore ObjectIds start after the state object, using the allocated space as namespace
+	// This ensures no collision with other allocator-managed objects
+	cfg := stringstore.Config{
+		FilePath:           stringStorePath,
+		MaxNumberOfStrings: 10000,                  // Tunable per deployment
+		StartingObjectId:   stateObjId + 4,         // Offset by 4 to avoid state object itself
+		ObjectIdInterval:   4,                      // Standard spacing
+		WriteFlushInterval: 100 * time.Millisecond, // Background flush interval
+		WriteMaxBatchBytes: 1024 * 1024,            // 1MB batch size
+		UnloadOnFull:       true,
+		LazyLoadShards:     true,
+	}
+
+	ss, err := stringstore.NewStringStore(cfg)
+	if err != nil {
+		return fmt.Errorf("failed to create StringStore: %w", err)
+	}
+	ss.AttachParentStore(s)
+
+	s.stringStore = ss
+	s.stringStoreWrapperObj = bobbob.ObjNotAllocated
+	return nil
+}
+
+// NewStringObj stores a string and returns its ObjectId (StringStorer interface).
+func (s *multiStore) NewStringObj(data string) (bobbob.ObjectId, error) {
+	if err := s.ensureStringStoreOpen(); err != nil {
+		return bobbob.ObjNotAllocated, err
+	}
+
+	s.stringStoreLock.RLock()
+	defer s.stringStoreLock.RUnlock()
+
+	// Allocate space and write string data
+	objId, err := s.stringStore.NewObj(len(data))
+	if err != nil {
+		return bobbob.ObjNotAllocated, err
+	}
+
+	writer, finisher, err := s.stringStore.WriteToObj(objId)
+	if err != nil {
+		_ = s.stringStore.DeleteObj(objId)
+		return bobbob.ObjNotAllocated, err
+	}
+
+	_, err = writer.Write([]byte(data))
+	if err != nil {
+		if finisher != nil {
+			_ = finisher()
+		}
+		_ = s.stringStore.DeleteObj(objId)
+		return bobbob.ObjNotAllocated, err
+	}
+
+	if finisher != nil {
+		if err := finisher(); err != nil {
+			_ = s.stringStore.DeleteObj(objId)
+			return bobbob.ObjNotAllocated, err
+		}
+	}
+
+	return objId, nil
+}
+
+// StringFromObjId retrieves a string by ObjectId (StringStorer interface).
+func (s *multiStore) StringFromObjId(objId bobbob.ObjectId) (string, error) {
+	s.stringStoreLock.RLock()
+	defer s.stringStoreLock.RUnlock()
+
+	if s.stringStore == nil {
+		return "", fmt.Errorf("string object %d: StringStore not initialized", objId)
+	}
+
+	reader, finisher, err := s.stringStore.LateReadObj(objId)
+	if err != nil {
+		return "", err
+	}
+	data, err := io.ReadAll(reader)
+	if finisher != nil {
+		finishErr := finisher()
+		if err != nil {
+			if finishErr != nil {
+				return "", fmt.Errorf("read failed: %w; finisher failed: %v", err, finishErr)
+			}
+			return "", err
+		}
+		if finishErr != nil {
+			return "", fmt.Errorf("read finisher failed: %w", finishErr)
+		}
+	}
+	if err != nil {
+		return "", err
+	}
+
+	return string(data), nil
+}
+
+// HasStringObj checks if a given ObjectId is a string object (StringStorer interface).
+func (s *multiStore) HasStringObj(objId bobbob.ObjectId) bool {
+	s.stringStoreLock.RLock()
+	defer s.stringStoreLock.RUnlock()
+
+	if s.stringStore == nil {
+		return false
+	}
+
+	// Check if object currently exists (not just if ID is in range)
+	// Try to read it - if successful, it exists
+	// FIXME there must be a more efficient way to do this....
+	reader, finisher, err := s.stringStore.LateReadObj(objId)
+	if err != nil {
+		return false
+	}
+	_ = reader
+	if finisher != nil {
+		finisher()
+	}
+	return true
+}
+
 // All legacy metadata marshal/unmarshal helpers removed; allocator.Top handles persistence
 
 // Close closes the multiStore and releases the file handle.
@@ -299,28 +836,73 @@ func (s *multiStore) Close() error {
 	if s.deleteQueue != nil {
 		s.deleteQueue.Close()
 	}
+
+	// Close StringStore if it exists
+	var persistedState persistedMultiStoreState
+	persistedState.Version = multiStoreStateVersion
+
+	s.stringStoreLock.Lock()
+	if s.stringStore != nil {
+		cfg := s.stringStore.Config()
+		wrapperObjId, persistErr := s.stringStore.PersistToStore(s, s.stringStoreWrapperObj)
+		if persistErr != nil {
+			s.stringStoreLock.Unlock()
+			return fmt.Errorf("failed to persist StringStore: %w", persistErr)
+		}
+		s.stringStoreWrapperObj = wrapperObjId
+		persistedState.StringStore = &persistedStringStoreMeta{
+			Version:              stringStoreMetaVersion,
+			WrapperStateObjId:    wrapperObjId,
+			FilePath:             cfg.FilePath,
+			MaxNumberOfStrings:   cfg.MaxNumberOfStrings,
+			StartingObjectId:     cfg.StartingObjectId,
+			ObjectIdInterval:     cfg.ObjectIdInterval,
+			WriteFlushNanos:      int64(cfg.WriteFlushInterval),
+			WriteMaxBatchBytes:   cfg.WriteMaxBatchBytes,
+			UnloadOnFull:         cfg.UnloadOnFull,
+			UnloadAfterIdleNanos: int64(cfg.UnloadAfterIdle),
+			UnloadScanNanos:      int64(cfg.UnloadScanInterval),
+			LazyLoadShards:       cfg.LazyLoadShards,
+		}
+
+		if err := s.stringStore.Close(); err != nil {
+			s.stringStoreLock.Unlock()
+			return fmt.Errorf("failed to close StringStore: %w", err)
+		}
+		s.stringStore = nil
+	} else if store.IsValidObjectId(s.stringStoreWrapperObj) {
+		persistedState.StringStore = &persistedStringStoreMeta{
+			Version:           stringStoreMetaVersion,
+			WrapperStateObjId: s.stringStoreWrapperObj,
+		}
+	}
+	s.stringStoreLock.Unlock()
+
 	if s.file == nil {
 		return nil
 	}
 
-	// Ensure store metadata is set (required by Top.Save)
-	// Use minimal metadata if no prime object exists
-	if s.top.GetStoreMeta().Sz == 0 {
-		primeObjectId := bobbob.ObjectId(store.PrimeObjectStart())
-		if info, err := s.getObjectInfo(primeObjectId); err == nil {
-			// Prime object exists, use it
-			s.top.SetStoreMeta(allocator.FileInfo{
-				ObjId: primeObjectId,
-				Fo:    info.Offset,
-				Sz:    types.FileSize(info.Size),
-			})
-		} else {
-			// No prime object; use minimal metadata (1 byte is sufficient for Top.Save check)
-			s.top.SetStoreMeta(allocator.FileInfo{
-				ObjId: 0,
-				Fo:    0,
-				Sz:    1, // Non-zero to pass the Save() check
-			})
+	if persistedState.StringStore != nil {
+		if err := s.persistState(persistedState); err != nil {
+			return fmt.Errorf("failed to persist multistore metadata: %w", err)
+		}
+	} else {
+		// Preserve historical behavior for stores that never used StringStore.
+		if s.top.GetStoreMeta().Sz == 0 {
+			primeObjectId := bobbob.ObjectId(store.PrimeObjectStart())
+			if info, err := s.getObjectInfo(primeObjectId); err == nil {
+				s.top.SetStoreMeta(allocator.FileInfo{
+					ObjId: primeObjectId,
+					Fo:    info.Offset,
+					Sz:    types.FileSize(info.Size),
+				})
+			} else {
+				s.top.SetStoreMeta(allocator.FileInfo{
+					ObjId: 0,
+					Fo:    0,
+					Sz:    1,
+				})
+			}
 		}
 	}
 
@@ -367,10 +949,32 @@ func (s *multiStore) getObjectInfo(objId bobbob.ObjectId) (store.ObjectInfo, err
 
 // DeleteObj removes an object from the store and frees its space.
 // It retrieves object metadata from the allocator and frees its space.
+// For string objects, routes deletion to StringStore.
 func (s *multiStore) DeleteObj(objId bobbob.ObjectId) error {
 	if !store.IsValidObjectId(store.ObjectId(objId)) {
 		return nil
 	}
+
+	// Check if this ObjectId belongs to StringStore's range and route accordingly
+	// Use ownership check (not existence) since object may already be deleted
+	s.stringStoreLock.RLock()
+	if s.stringStore != nil && s.stringStore.OwnsObjectId(objId) {
+		ss := s.stringStore
+		s.stringStoreLock.RUnlock()
+		if err := ss.DeleteObj(objId); err != nil {
+			if errors.Is(err, io.ErrUnexpectedEOF) {
+				// No shard exists for this ObjectId; fall back to allocator delete.
+			} else {
+				return err
+			}
+		} else {
+			return nil
+		}
+	} else {
+		s.stringStoreLock.RUnlock()
+	}
+
+	// Otherwise route to allocator (existing behavior)
 	s.deleteQueue.Enqueue(objId)
 	return nil
 }

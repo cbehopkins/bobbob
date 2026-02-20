@@ -98,37 +98,43 @@ func NewPayloadTreap[K any, P any](lessFunc func(a, b K) bool) *PayloadTreap[K, 
 // InsertComplex inserts a new node with the given value, priority, and payload into the treap.
 // The type K must implement the types.Key[K] interface (e.g., IntKey, StringKey).
 // Use this method when you need to specify a custom priority value.
-func (t *PayloadTreap[K, P]) InsertComplex(value K, priority Priority, payload P) {
+// Returns an error if insertion fails.
+func (t *PayloadTreap[K, P]) InsertComplex(value K, priority Priority, payload P) error {
 	// Since K implements types.Key[K], convert to use as key
 	key := any(value).(types.Key[K])
 	if existing := SearchNode(t.Treap.root, key.Value(), t.Treap.Less); existing != nil && !existing.IsNil() {
 		if payloadNode, ok := existing.(*PayloadTreapNode[K, P]); ok {
 			payloadNode.SetPayload(payload)
-			return
+			return nil
 		}
 	}
 	newNode := NewPayloadTreapNode(key, priority, payload)
 	inserted, err := InsertNode(t.Treap.root, newNode, t.Treap.Less, nil)
 	if err != nil {
-		panic(err)
+		return err
 	}
 	t.Treap.root = inserted
+	return nil
 }
 
 // Insert inserts a new node with the given value and payload into the treap with a random priority.
 // This is the preferred method for most use cases.
-func (t *PayloadTreap[K, P]) Insert(value K, payload P) {
-	t.InsertComplex(value, randomPriority(), payload)
+// Returns an error if insertion fails.
+// Insert inserts a new node with the given value and payload into the treap with a random priority.
+func (t *PayloadTreap[K, P]) Insert(value K, payload P) error {
+	return t.InsertComplex(value, randomPriority(), payload)
 }
 
 // Delete removes the node with the given value from the payload treap.
-func (t *PayloadTreap[K, P]) Delete(value K) {
+// Returns an error if deletion fails.
+func (t *PayloadTreap[K, P]) Delete(value K) error {
 	key := any(value).(types.Key[K])
 	deleted, err := DeleteNode(t.Treap.root, key.Value(), t.Treap.Less, nil)
 	if err != nil {
-		panic(err)
+		return err
 	}
 	t.Treap.root = deleted
+	return nil
 }
 
 // SearchComplex searches for the node with the given value in the payload treap.

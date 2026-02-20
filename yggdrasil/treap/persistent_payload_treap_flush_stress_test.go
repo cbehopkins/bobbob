@@ -68,27 +68,37 @@ func TestPersistentPayloadTreapFlushInsertInterleaved(t *testing.T) {
 		// Search for a random existing key (will trigger load from disk)
 		searchIdx := round % len(keys)
 		searchKey := types.IntKey(keys[searchIdx])
-		result := treap.Search(&searchKey)
-		if result == nil || result.IsNil() {
+		var foundPayload MockPayload
+		result, err := treap.SearchComplex(&searchKey, func(node TreapNodeInterface[types.IntKey]) error {
+			foundPayload = node.(*PersistentPayloadTreapNode[types.IntKey, MockPayload]).GetPayload()
+			return nil
+		})
+		if err != nil {
+			t.Errorf("Round %d: Search failed for key %d: %v", round, keys[searchIdx], err)
+		} else if result == nil || result.IsNil() {
 			t.Errorf("Round %d: Failed to find key %d after flush+insert", round, keys[searchIdx])
 		} else {
 			// Verify payload
-			payload := result.GetPayload()
 			expectedData := fmt.Sprintf("%d", keys[searchIdx]*100)
-			if payload.Data != expectedData {
-				t.Errorf("Round %d: Payload mismatch for key %d: got %q, expected %q", round, keys[searchIdx], payload.Data, expectedData)
+			if foundPayload.Data != expectedData {
+				t.Errorf("Round %d: Payload mismatch for key %d: got %q, expected %q", round, keys[searchIdx], foundPayload.Data, expectedData)
 			}
 		}
 
 		// Verify the newly inserted key
-		result = treap.Search(&keyObj)
-		if result == nil || result.IsNil() {
+		var insertedPayload MockPayload
+		result, err = treap.SearchComplex(&keyObj, func(node TreapNodeInterface[types.IntKey]) error {
+			insertedPayload = node.(*PersistentPayloadTreapNode[types.IntKey, MockPayload]).GetPayload()
+			return nil
+		})
+		if err != nil {
+			t.Errorf("Round %d: Search failed for newly inserted key %d: %v", round, newKey, err)
+		} else if result == nil || result.IsNil() {
 			t.Errorf("Round %d: Failed to find newly inserted key %d", round, newKey)
 		} else {
-			payload := result.GetPayload()
 			expectedData := fmt.Sprintf("%d", newKey*100)
-			if payload.Data != expectedData {
-				t.Errorf("Round %d: Payload mismatch for newly inserted key %d: got %q, expected %q", round, newKey, payload.Data, expectedData)
+			if insertedPayload.Data != expectedData {
+				t.Errorf("Round %d: Payload mismatch for newly inserted key %d: got %q, expected %q", round, newKey, insertedPayload.Data, expectedData)
 			}
 		}
 	}
@@ -96,11 +106,16 @@ func TestPersistentPayloadTreapFlushInsertInterleaved(t *testing.T) {
 	// Phase 3: Final validation - ensure all keys are present with correct payloads
 	for i, k := range keys {
 		searchKey := types.IntKey(k)
-		result := treap.Search(&searchKey)
-		if result == nil || result.IsNil() {
+		var payload MockPayload
+		result, err := treap.SearchComplex(&searchKey, func(node TreapNodeInterface[types.IntKey]) error {
+			payload = node.(*PersistentPayloadTreapNode[types.IntKey, MockPayload]).GetPayload()
+			return nil
+		})
+		if err != nil {
+			t.Errorf("Final validation failed for key %d (index %d): %v", k, i, err)
+		} else if result == nil || result.IsNil() {
 			t.Errorf("Final validation failed for key %d (index %d)", k, i)
 		} else {
-			payload := result.GetPayload()
 			expectedData := fmt.Sprintf("%d", k*100)
 			if payload.Data != expectedData {
 				t.Errorf("Final validation: Payload mismatch for key %d: got %q, expected %q", k, payload.Data, expectedData)
@@ -180,13 +195,20 @@ func TestPersistentPayloadTreapFlushInsertConcurrent(t *testing.T) {
 		rng := rand.New(rand.NewSource(42))
 		for i := 0; i < 100; i++ {
 			searchKey := types.IntKey(rng.Intn(initialSize) * 10)
-			result := treap.Search(&searchKey)
+			var payload MockPayload
+			result, err := treap.SearchComplex(&searchKey, func(node TreapNodeInterface[types.IntKey]) error {
+				payload = node.(*PersistentPayloadTreapNode[types.IntKey, MockPayload]).GetPayload()
+				return nil
+			})
+			if err != nil {
+				errChan <- fmt.Errorf("Search goroutine: search failed for key %d: %v", searchKey, err)
+				return
+			}
 			if result == nil || result.IsNil() {
 				errChan <- fmt.Errorf("Search goroutine: key %d not found", searchKey)
 				return
 			}
 			// Verify payload
-			payload := result.GetPayload()
 			keyInt := int(searchKey)
 			expectedData := fmt.Sprintf("%d", (keyInt/10)*1000)
 			if payload.Data != expectedData {
@@ -207,11 +229,16 @@ func TestPersistentPayloadTreapFlushInsertConcurrent(t *testing.T) {
 	// Final validation
 	for i := 0; i < initialSize; i++ {
 		keyObj := types.IntKey(i * 10)
-		result := treap.Search(&keyObj)
-		if result == nil || result.IsNil() {
+		var payload MockPayload
+		result, err := treap.SearchComplex(&keyObj, func(node TreapNodeInterface[types.IntKey]) error {
+			payload = node.(*PersistentPayloadTreapNode[types.IntKey, MockPayload]).GetPayload()
+			return nil
+		})
+		if err != nil {
+			t.Errorf("Final validation search failed for key %d: %v", i*10, err)
+		} else if result == nil || result.IsNil() {
 			t.Errorf("Final validation failed for key %d", i*10)
 		} else {
-			payload := result.GetPayload()
 			expectedData := fmt.Sprintf("%d", i*1000)
 			if payload.Data != expectedData {
 				t.Errorf("Final validation: Payload mismatch for key %d: got %q, expected %q", i*10, payload.Data, expectedData)

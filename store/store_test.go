@@ -11,14 +11,6 @@ import (
 	"testing"
 )
 
-// min returns the minimum of two integers
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
 func setupStore(tb testing.TB, prefix string) (string, *baseStore) {
 	dir, err := os.MkdirTemp("", prefix)
 	if err != nil {

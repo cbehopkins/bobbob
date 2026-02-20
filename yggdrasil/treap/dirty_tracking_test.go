@@ -156,6 +156,99 @@ func TestPersistDirtyPropagation(t *testing.T) {
 	// This test documents the current behavior
 	t.Logf("Tracked %d dirty nodes", len(dirtyNodes))
 }
+func TestRotateTrackedDirtyList(t *testing.T) {
+	key20 := types.IntKey(20)
+	key10 := types.IntKey(10)
+	key30 := types.IntKey(30)
+	key15 := types.IntKey(15)
+
+	root := NewTreapNode[types.IntKey](key20, 10)
+	left := NewTreapNode[types.IntKey](key10, 20)
+	right := NewTreapNode[types.IntKey](key30, 5)
+	leftRight := NewTreapNode[types.IntKey](key15, 15)
+
+	_ = left.SetRight(leftRight)
+	_ = root.SetLeft(left)
+	_ = root.SetRight(right)
+
+	dirtyKeys := make(map[int]struct{})
+	track := func(node TreapNodeInterface[types.IntKey]) {
+		if node == nil || node.IsNil() {
+			return
+		}
+		key := node.GetKey().(types.IntKey)
+		dirtyKeys[int(key)] = struct{}{}
+	}
+
+	newRoot, err := RotateRightTracked(root, track)
+	if err != nil {
+		t.Fatalf("RotateRightTracked failed: %v", err)
+	}
+
+	if got := int(newRoot.GetKey().(types.IntKey)); got != 10 {
+		t.Fatalf("Expected new root key=10, got %d", got)
+	}
+
+	if _, ok := dirtyKeys[20]; !ok {
+		t.Fatal("Expected dirty list to include old root key=20")
+	}
+	if _, ok := dirtyKeys[10]; !ok {
+		t.Fatal("Expected dirty list to include new root key=10")
+	}
+}
+
+func TestDeleteNodeTrackedDirtyListWithRotation(t *testing.T) {
+	key20 := types.IntKey(20)
+	key10 := types.IntKey(10)
+	key30 := types.IntKey(30)
+
+	root := NewTreapNode[types.IntKey](key20, 100)
+	left := NewTreapNode[types.IntKey](key10, 90)
+	right := NewTreapNode[types.IntKey](key30, 80)
+
+	_ = root.SetLeft(left)
+	_ = root.SetRight(right)
+
+	dirtyKeys := make(map[int]struct{})
+	track := func(node TreapNodeInterface[types.IntKey]) {
+		if node == nil || node.IsNil() {
+			return
+		}
+		key := node.GetKey().(types.IntKey)
+		dirtyKeys[int(key)] = struct{}{}
+	}
+
+	var deletedKeys []int
+	cleanup := func(node TreapNodeInterface[types.IntKey], dt DirtyTracker[types.IntKey]) {
+		if node == nil || node.IsNil() {
+			return
+		}
+		key := node.GetKey().(types.IntKey)
+		deletedKeys = append(deletedKeys, int(key))
+		if dt != nil {
+			dt(node)
+		}
+	}
+
+	newRoot, err := DeleteNodeTracked(root, key20, types.IntLess, nil, track, cleanup)
+	if err != nil {
+		t.Fatalf("DeleteNodeTracked failed: %v", err)
+	}
+	if newRoot == nil || newRoot.IsNil() {
+		t.Fatal("Expected non-nil root after delete")
+	}
+
+	if len(deletedKeys) != 1 || deletedKeys[0] != 20 {
+		t.Fatalf("Expected deleted key=20, got %v", deletedKeys)
+	}
+
+	if _, ok := dirtyKeys[20]; !ok {
+		t.Fatal("Expected dirty list to include deleted key=20")
+	}
+	if _, ok := dirtyKeys[10]; !ok {
+		t.Fatal("Expected dirty list to include new root key=10")
+	}
+}
 
 // TestPayloadTreapRangeOver verifies that PersistentPayloadTreapNode
 // works with the polymorphic walker interface.

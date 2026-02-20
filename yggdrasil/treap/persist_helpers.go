@@ -9,11 +9,11 @@ import (
 
 type persistSyncNode[T any] interface {
 	PersistentNodeWalker[T]
-	getLeftObjectId() store.ObjectId
-	setLeftObjectId(store.ObjectId)
-	getRightObjectId() store.ObjectId
-	setRightObjectId(store.ObjectId)
-	SetObjectId(store.ObjectId)
+	getLeftObjectId() bobbob.ObjectId
+	setLeftObjectId(bobbob.ObjectId)
+	getRightObjectId() bobbob.ObjectId
+	setRightObjectId(bobbob.ObjectId)
+	SetObjectId(bobbob.ObjectId)
 	persistSelf() error
 }
 

@@ -601,7 +601,7 @@ func TestPersistentTreapBasicPersistFlush(t *testing.T) {
 
 	// Create ONE node manually and test its marshal/persist cycle
 	testKey := types.IntKey(42)
-	testNode := NewPersistentTreapNode[types.IntKey](&testKey, 12345, stre, treap)
+	testNode := NewPersistentTreapNode[types.IntKey](&testKey, 12345, treap)
 
 	// Marshal the node
 	marshaledData, err := testNode.Marshal()

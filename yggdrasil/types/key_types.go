@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/cbehopkins/bobbob"
 	"github.com/cbehopkins/bobbob/store"
 )
 
@@ -37,26 +38,41 @@ func (k IntKey) New() PersistentKey[IntKey] {
 
 // SizeInBytes returns the size of an ObjectId since IntKey fits within it.
 func (k IntKey) SizeInBytes() int {
-	return store.ObjectId(0).SizeInBytes()
+	return bobbob.ObjectId(0).SizeInBytes()
 }
 
 // MarshalToObjectId stores the IntKey by casting it to an ObjectId.
 // This is a special optimization since IntKey fits in the ObjectId space.
-func (k IntKey) MarshalToObjectId(stre store.Storer) (store.ObjectId, error) {
+func (k IntKey) MarshalToObjectId(stre bobbob.Storer) (bobbob.ObjectId, error) {
 	// Here we cheat because we know IntKey will fit into the ObjectId storage space
 	// I do not recommend this trick, but as long as Unmarshal knows about it, it is ok
-	return store.ObjectId(k), nil
+	return bobbob.ObjectId(k), nil
+}
+func (k IntKey) LateMarshal(stre bobbob.Storer) (bobbob.ObjectId, int, bobbob.Finisher) {
+	oid, err := k.MarshalToObjectId(stre)
+	if err != nil {
+		return 0, 0, func() error { return err }
+	}
+	return oid, k.SizeInBytes(), nil
+}
+func (k *IntKey) LateUnmarshal(id bobbob.ObjectId, size int, stre bobbob.Storer) bobbob.Finisher {
+	return func() error { return k.UnmarshalFromObjectId(id, stre) }
 }
 
 // UnmarshalFromObjectId loads the IntKey by casting from an ObjectId.
-func (k *IntKey) UnmarshalFromObjectId(id store.ObjectId, stre store.Storer) error {
+func (k *IntKey) UnmarshalFromObjectId(id bobbob.ObjectId, stre bobbob.Storer) error {
 	*k = IntKey(id)
 	return nil
 }
 
 // DependentObjectIds returns the list of ObjectIds that this key depends on.
 // IntKey stores its value directly in the ObjectId, so it has no dependent allocations.
-func (k IntKey) DependentObjectIds() []store.ObjectId {
+func (k IntKey) DependentObjectIds() []bobbob.ObjectId {
+	return nil
+}
+
+// DeleteDependents is a no-op for IntKey since it stores its value directly in the ObjectId.
+func (k IntKey) DeleteDependents(stre bobbob.Storer) error {
 	return nil
 }
 
@@ -102,15 +118,25 @@ func (k ShortUIntKey) SizeInBytes() int {
 }
 
 // MarshalToObjectId stores the ShortUIntKey in the lower bytes of an ObjectId.
-func (k ShortUIntKey) MarshalToObjectId(stre store.Storer) (store.ObjectId, error) {
+func (k ShortUIntKey) MarshalToObjectId(stre bobbob.Storer) (bobbob.ObjectId, error) {
 	// Store as uint16 in ObjectId's lower bytes
-	return store.ObjectId(k), nil
+	return bobbob.ObjectId(k), nil
+}
+func (k ShortUIntKey) LateMarshal(stre bobbob.Storer) (bobbob.ObjectId, int, bobbob.Finisher) {
+	oid, err := k.MarshalToObjectId(stre)
+	if err != nil {
+		return 0, 0, func() error { return err }
+	}
+	return oid, k.SizeInBytes(), nil
 }
 
 // UnmarshalFromObjectId loads the ShortUIntKey from an ObjectId's lower bytes.
-func (k *ShortUIntKey) UnmarshalFromObjectId(id store.ObjectId, stre store.Storer) error {
+func (k *ShortUIntKey) UnmarshalFromObjectId(id bobbob.ObjectId, stre bobbob.Storer) error {
 	*k = ShortUIntKey(uint16(id))
 	return nil
+}
+func (k ShortUIntKey) LateUnmarshal(id bobbob.ObjectId, size int, stre bobbob.Storer) bobbob.Finisher {
+	return func() error { return k.UnmarshalFromObjectId(id, stre) }
 }
 
 // Marshal encodes the ShortUIntKey to a 2-byte little-endian representation.
@@ -126,6 +152,11 @@ func (k *ShortUIntKey) Unmarshal(data []byte) error {
 		return errors.New("invalid data length for ShortUIntKey")
 	}
 	*k = ShortUIntKey(binary.LittleEndian.Uint16(data))
+	return nil
+}
+
+// DeleteDependents is a no-op for ShortUIntKey since it stores its value directly in the ObjectId.
+func (k ShortUIntKey) DeleteDependents(stre bobbob.Storer) error {
 	return nil
 }
 
@@ -183,7 +214,7 @@ func (k StringKey) New() PersistentKey[StringKey] {
 }
 
 // MarshalToObjectId stores the StringKey as a new object in the store.
-func (k StringKey) MarshalToObjectId(stre store.Storer) (store.ObjectId, error) {
+func (k StringKey) MarshalToObjectId(stre bobbob.Storer) (bobbob.ObjectId, error) {
 	marshalled, err := k.Marshal()
 	if err != nil {
 		return 0, err
@@ -192,7 +223,18 @@ func (k StringKey) MarshalToObjectId(stre store.Storer) (store.ObjectId, error) 
 }
 
 // LateMarshal stores the StringKey as a new object in the store.
-func (k StringKey) LateMarshal(stre store.Storer) (store.ObjectId, int, func() error) {
+func (k StringKey) LateMarshal(stre bobbob.Storer) (bobbob.ObjectId, int, bobbob.Finisher) {
+	// Try to use StringStorer interface if available
+	if ss, ok := stre.(bobbob.StringStorer); ok {
+		value := string(k)
+		objId, err := ss.NewStringObj(value)
+		if err != nil {
+			return objId, 0, func() error { return err }
+		}
+		return objId, len(value), func() error { return nil }
+	}
+
+	// Fallback to generic allocation with length prefix
 	marshalled, err := k.Marshal()
 	if err != nil {
 		return 0, 0, func() error { return err }
@@ -206,8 +248,28 @@ func (k StringKey) LateMarshal(stre store.Storer) (store.ObjectId, int, func() e
 // for cleaning up its own backing ObjectId. This cleanup must happen BEFORE
 // any new allocation during a subsequent update, but the backing object itself
 // is owned by this key and should be managed by higher layers if needed.
-func (k *StringKey) UnmarshalFromObjectId(id store.ObjectId, stre store.Storer) error {
+func (k *StringKey) UnmarshalFromObjectId(id bobbob.ObjectId, stre bobbob.Storer) error {
 	return store.ReadGeneric(stre, k, id)
+}
+func (k *StringKey) LateUnmarshal(id bobbob.ObjectId, size int, stre bobbob.Storer) bobbob.Finisher {
+	return func() error {
+		if ss, ok := stre.(bobbob.StringStorer); ok {
+			value, err := ss.StringFromObjId(id)
+			if err != nil {
+				return err
+			}
+			*k = StringKey(value)
+			return nil
+		}
+		return k.UnmarshalFromObjectId(id, stre)
+	}
+}
+
+// DeleteDependents is a no-op for StringKey.
+// StringKey creates a new backing object each time it's marshalled,
+// so there's no persistent dependent object to clean up.
+func (k StringKey) DeleteDependents(stre bobbob.Storer) error {
+	return nil
 }
 
 // MD5Key represents a 16-byte MD5 hash that can be used as a treap key.
@@ -271,17 +333,36 @@ func (k MD5Key) New() PersistentKey[MD5Key] {
 }
 
 // MarshalToObjectId stores the MD5Key as a new object in the store.
-func (k MD5Key) MarshalToObjectId(stre store.Storer) (store.ObjectId, error) {
+func (k MD5Key) MarshalToObjectId(stre bobbob.Storer) (bobbob.ObjectId, error) {
 	marshalled, err := k.Marshal()
 	if err != nil {
 		return 0, err
 	}
 	return store.WriteNewObjFromBytes(stre, marshalled)
 }
+func (k MD5Key) LateMarshal(stre bobbob.Storer) (bobbob.ObjectId, int, bobbob.Finisher) {
+	marshalled, err := k.Marshal()
+	if err != nil {
+		return 0, 0, func() error { return err }
+	}
+	objId, fin := store.LateWriteNewObjFromBytes(stre, marshalled)
+	return objId, len(marshalled), fin
+
+}
 
 // UnmarshalFromObjectId loads the MD5Key from an object in the store.
-func (k *MD5Key) UnmarshalFromObjectId(id store.ObjectId, stre store.Storer) error {
+func (k *MD5Key) UnmarshalFromObjectId(id bobbob.ObjectId, stre bobbob.Storer) error {
 	return store.ReadGeneric(stre, k, id)
+}
+func (k *MD5Key) LateUnmarshal(id bobbob.ObjectId, size int, stre bobbob.Storer) bobbob.Finisher {
+	return func() error { return k.UnmarshalFromObjectId(id, stre) }
+}
+
+// DeleteDependents is a no-op for MD5Key.
+// MD5Key creates a new backing object each time it's marshalled,
+// so there's no persistent dependent object to clean up.
+func (k MD5Key) DeleteDependents(stre bobbob.Storer) error {
+	return nil
 }
 
 // MD5KeyFromString converts a 32-character hex string to a 16-byte MD5Key.

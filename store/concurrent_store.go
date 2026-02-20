@@ -3,25 +3,10 @@ package store
 import (
 	"io"
 	"sync"
-	"sync/atomic"
 
 	"github.com/cbehopkins/bobbob"
 	"github.com/cbehopkins/bobbob/allocator/types"
 )
-
-// objectLock wraps a mutex with a reference count for garbage collection.
-// When refCount drops to 0, the lock can be safely removed from the map.
-type objectLock struct {
-	mu       sync.RWMutex
-	refCount atomic.Int32
-}
-
-// objectLockPool reduces allocation overhead by reusing objectLock structs.
-var objectLockPool = sync.Pool{
-	New: func() interface{} {
-		return &objectLock{}
-	},
-}
 
 // concurrentStore wraps any Storer with per-object locking to allow
 // safe concurrent access to different objects.
@@ -29,7 +14,7 @@ var objectLockPool = sync.Pool{
 type concurrentStore struct {
 	innerStore Storer
 	lock       sync.RWMutex
-	lockMap    map[ObjectId]*objectLock
+	objectLocks *ObjectLockMap
 	diskTokens chan struct{} // nil for unlimited, otherwise limits concurrent disk ops
 }
 
@@ -61,41 +46,19 @@ func NewConcurrentStoreWrapping(innerStore Storer, maxDiskTokens int) *concurren
 	return &concurrentStore{
 		innerStore: innerStore,
 		lock:       sync.RWMutex{},
-		lockMap:    make(map[ObjectId]*objectLock),
+		objectLocks: NewObjectLockMap(),
 		diskTokens: diskTokens,
 	}
 }
 
-// acquireObjectLock looks up or creates an object lock and increments its reference count.
-// Returns the lock for the caller to lock/unlock.
-// Uses objectLockPool to reduce allocation overhead.
-func (s *concurrentStore) acquireObjectLock(objectId ObjectId) *objectLock {
-	s.lock.Lock()
-	objLock, ok := s.lockMap[objectId]
-	if !ok {
-		objLock = objectLockPool.Get().(*objectLock)
-		// refCount is already 0 from reset or new allocation
-		s.lockMap[objectId] = objLock
-	}
-	objLock.refCount.Add(1)
-	s.lock.Unlock()
-	return objLock
+// acquireObjectLock is a convenience wrapper for ObjectLockMap.AcquireObjectLock.
+func (s *concurrentStore) acquireObjectLock(objectId ObjectId) *ObjectLock {
+	return s.objectLocks.AcquireObjectLock(objectId)
 }
 
-// releaseObjectLock decrements the reference count and removes the lock from the map if unused.
-// Returns the lock to objectLockPool for reuse to reduce allocation overhead.
-func (s *concurrentStore) releaseObjectLock(objectId ObjectId, objLock *objectLock) {
-	if objLock.refCount.Add(-1) == 0 {
-		// Reference count is now 0; try to remove from map
-		s.lock.Lock()
-		// Double-check refCount is still 0 (race protection)
-		if objLock.refCount.Load() == 0 {
-			delete(s.lockMap, objectId)
-			objLock.refCount.Store(0) // Reset for pool reuse (safety)
-			objectLockPool.Put(objLock)
-		}
-		s.lock.Unlock()
-	}
+// releaseObjectLock is a convenience wrapper for ObjectLockMap.ReleaseObjectLock.
+func (s *concurrentStore) releaseObjectLock(objectId ObjectId, objLock *ObjectLock) {
+	s.objectLocks.ReleaseObjectLock(objectId, objLock)
 }
 
 func (s *concurrentStore) LateWriteNewObj(size int) (bobbob.ObjectId, io.Writer, bobbob.Finisher, error) {
@@ -115,9 +78,9 @@ func (s *concurrentStore) LateWriteNewObj(size int) (bobbob.ObjectId, io.Writer,
 		return objectId, nil, nil, err
 	}
 	objLock := s.acquireObjectLock(objectId)
-	objLock.mu.Lock()
+	objLock.Mu.Lock()
 	newFinisher := func() error {
-		defer objLock.mu.Unlock()
+		defer objLock.Mu.Unlock()
 		defer s.releaseObjectLock(objectId, objLock)
 		if s.diskTokens != nil {
 			defer func() { s.diskTokens <- struct{}{} }() // Release disk token
@@ -135,10 +98,10 @@ func (s *concurrentStore) WriteToObj(objectId bobbob.ObjectId) (io.Writer, bobbo
 		<-s.diskTokens // Acquire disk token
 	}
 	objLock := s.acquireObjectLock(objectId)
-	objLock.mu.Lock()
+	objLock.Mu.Lock()
 	writer, finisher, err := s.innerStore.WriteToObj(objectId)
 	if err != nil {
-		objLock.mu.Unlock()
+		objLock.Mu.Unlock()
 		s.releaseObjectLock(objectId, objLock)
 		if s.diskTokens != nil {
 			s.diskTokens <- struct{}{} // Release on error
@@ -146,7 +109,7 @@ func (s *concurrentStore) WriteToObj(objectId bobbob.ObjectId) (io.Writer, bobbo
 		return nil, nil, err
 	}
 	newFinisher := func() error {
-		defer objLock.mu.Unlock()
+		defer objLock.Mu.Unlock()
 		defer s.releaseObjectLock(objectId, objLock)
 		if s.diskTokens != nil {
 			defer func() { s.diskTokens <- struct{}{} }() // Release disk token
@@ -164,10 +127,10 @@ func (s *concurrentStore) LateReadObj(offset ObjectId) (io.Reader, bobbob.Finish
 		<-s.diskTokens // Acquire disk token
 	}
 	objLock := s.acquireObjectLock(offset)
-	objLock.mu.RLock()
+	objLock.Mu.RLock()
 	reader, finisher, err := s.innerStore.LateReadObj(offset)
 	if err != nil {
-		objLock.mu.RUnlock()
+		objLock.Mu.RUnlock()
 		s.releaseObjectLock(offset, objLock)
 		if s.diskTokens != nil {
 			s.diskTokens <- struct{}{} // Release on error
@@ -175,7 +138,7 @@ func (s *concurrentStore) LateReadObj(offset ObjectId) (io.Reader, bobbob.Finish
 		return nil, nil, err
 	}
 	newFinisher := func() error {
-		defer objLock.mu.RUnlock()
+		defer objLock.Mu.RUnlock()
 		defer s.releaseObjectLock(offset, objLock)
 		if s.diskTokens != nil {
 			defer func() { s.diskTokens <- struct{}{} }() // Release disk token
@@ -208,17 +171,17 @@ func (s *concurrentStore) WriteBatchedObjs(objIds []ObjectId, data []byte, sizes
 	}
 
 	// Acquire all object locks in sorted order
-	locks := make([]*objectLock, len(objIds))
+	locks := make([]*ObjectLock, len(objIds))
 	for _, idx := range sortedIndices {
 		objId := objIds[idx]
 		locks[idx] = s.acquireObjectLock(objId)
-		locks[idx].mu.Lock()
+		locks[idx].Mu.Lock()
 	}
 
 	// Ensure all locks are released and reference counts decremented
 	defer func() {
 		for i, lock := range locks {
-			lock.mu.Unlock()
+			lock.Mu.Unlock()
 			s.releaseObjectLock(objIds[i], lock)
 		}
 	}()
@@ -270,7 +233,7 @@ func (s *concurrentStore) PrimeObject(size int) (ObjectId, error) {
 func (s *concurrentStore) DeleteObj(objId ObjectId) error {
 	s.lock.Lock()
 	err := s.innerStore.DeleteObj(objId)
-	delete(s.lockMap, objId) // Clean up lock map while we have the lock
+	s.objectLocks.DeleteLock(objId) // Clean up lock map while we have the lock
 	s.lock.Unlock()
 	return err
 }
@@ -284,8 +247,38 @@ func (s *concurrentStore) Close() error {
 // This allows external callers to configure allocation callbacks through the
 // concurrency wrapper without breaking encapsulation.
 func (s *concurrentStore) Allocator() types.Allocator {
-	if provider, ok := s.innerStore.(interface{ Allocator() types.Allocator }); ok {
+	if provider, ok := s.innerStore.(AllocatorProvider); ok {
 		return provider.Allocator()
 	}
 	return nil
+}
+
+// NewStringObj stores a string and returns its ObjectId.
+// StringStore manages its own ObjectId namespace and internal locking, so no global lock needed.
+// Unlike NewObj(), this doesn't modify the main allocator state.
+func (s *concurrentStore) NewStringObj(data string) (bobbob.ObjectId, error) {
+	if stringer, ok := s.innerStore.(bobbob.StringStorer); ok {
+		return stringer.NewStringObj(data)
+	}
+	return bobbob.ObjNotAllocated, bobbob.ErrStringStorerNotSupported
+}
+
+// StringFromObjId retrieves a string by ObjectId.
+// Delegates to the wrapped store's StringStorer interface if available.
+func (s *concurrentStore) StringFromObjId(objId bobbob.ObjectId) (string, error) {
+	// StringStorer methods are read-only on the StringStore (which has its own locks)
+	// We don't need to acquire our per-object lock here since StringStore is thread-safe
+	if stringer, ok := s.innerStore.(bobbob.StringStorer); ok {
+		return stringer.StringFromObjId(objId)
+	}
+	return "", bobbob.ErrStringStorerNotSupported
+}
+
+// HasStringObj checks if a given ObjectId is a string object in this store.
+// Delegates to the wrapped store's StringStorer interface if available.
+func (s *concurrentStore) HasStringObj(objId bobbob.ObjectId) bool {
+	if stringer, ok := s.innerStore.(bobbob.StringStorer); ok {
+		return stringer.HasStringObj(objId)
+	}
+	return false
 }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
+	"math/bits"
 	"os"
 	"sort"
 
@@ -146,6 +147,49 @@ func (pc *PoolCache) GetAll() []UnloadedBlock {
 	result := make([]UnloadedBlock, len(pc.entries))
 	copy(result, pc.entries)
 	return result
+}
+
+// GetObjectCount returns the number of allocated logical objects represented
+// by unloaded block allocators currently in cache.
+func (pc *PoolCache) GetObjectCount() int {
+	if pc == nil {
+		return 0
+	}
+	total := 0
+	for _, entry := range pc.entries {
+		total += countAllocatedBits(entry.BitmapData, entry.BlockCount)
+	}
+	return total
+}
+
+func countAllocatedBits(bitmapData []byte, blockCount int) int {
+	if blockCount <= 0 {
+		return 0
+	}
+	if len(bitmapData) <= 8 {
+		return 0
+	}
+
+	// BlockAllocator.Marshal format: startingFileOffset(8 bytes) + packed bitmap.
+	bitmap := bitmapData[8:]
+	count := 0
+	remaining := blockCount
+
+	for _, b := range bitmap {
+		if remaining <= 0 {
+			break
+		}
+		if remaining >= 8 {
+			count += bits.OnesCount8(b)
+			remaining -= 8
+			continue
+		}
+		mask := uint8((1 << remaining) - 1)
+		count += bits.OnesCount8(b & mask)
+		remaining = 0
+	}
+
+	return count
 }
 
 // SizeInBytes returns the size of the marshaled cache data.

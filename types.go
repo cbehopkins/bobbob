@@ -72,6 +72,9 @@ type LateUnmarshaler interface {
 // ErrRePreAllocate is returned when an object needs more ObjectIds than initially allocated
 var ErrRePreAllocate = errors.New("object requires re-preallocation")
 
+// ErrStringStorerNotSupported is returned when a store doesn't support StringStorer operations
+var ErrStringStorerNotSupported = errors.New("store does not support StringStorer interface")
+
 // Finisher is a callback that must be called when you have finished
 // with the associated I/O operation. It releases resources and ensures
 // data is properly flushed or locks are released.
@@ -148,4 +151,24 @@ type Storer interface {
 	BasicStorer
 	ObjReader
 	ObjWriter
+}
+
+// StringStorer is an optional interface that stores may implement to provide
+// specialized string storage. Implementations use type assertions to check for this interface.
+// If not available, callers fall back to generic object allocation.
+//
+// This pattern allows stores like StringStore (via MultiStore) to optimize string handling
+// without breaking backward compatibility with stores that don't support it.
+type StringStorer interface {
+	// NewStringObj stores a string and returns its ObjectId.
+	// Returns error if string is too large or storage fails.
+	NewStringObj(data string) (ObjectId, error)
+
+	// StringFromObjId retrieves a string by ObjectId.
+	// Returns error if objId doesn't exist or is not a string object.
+	StringFromObjId(objId ObjectId) (string, error)
+
+	// HasStringObj checks if a given ObjectId is a string object in this store.
+	// Used by DeleteObj to determine routing.
+	HasStringObj(objId ObjectId) bool
 }

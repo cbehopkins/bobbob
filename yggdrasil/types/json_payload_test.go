@@ -132,33 +132,36 @@ func TestJsonPayloadRoundTrip(t *testing.T) {
 	}
 }
 
-// TestJsonPayloadSizeInBytes verifies that SizeInBytes returns the correct byte count
-// of the marshaled JSON data.
+// TestJsonPayloadSizeInBytes verifies that SizeInBytes returns -1 (LateMarshal indicator).
+// JsonPayload uses LateMarshal, so SizeInBytes should not be used directly.
 func TestJsonPayloadSizeInBytes(t *testing.T) {
 	payload := JsonPayload[SimpleStruct]{
 		Value: SimpleStruct{Name: "size test", Count: 999},
 	}
 
 	size := payload.SizeInBytes()
-	if size <= 0 {
-		t.Errorf("expected positive size, got %d", size)
+	if size != -1 {
+		t.Errorf("expected -1 (LateMarshal indicator), got %d", size)
 	}
 
-	// Size should match marshaled data length
-	data, _ := payload.Marshal()
-	if size != len(data) {
-		t.Errorf("expected size %d to match data length %d", size, len(data))
+	// Verify marshaled data is valid (even though SizeInBytes returns -1)
+	data, err := payload.Marshal()
+	if err != nil {
+		t.Fatalf("Marshal failed: %v", err)
+	}
+	if len(data) <= 0 {
+		t.Errorf("expected positive marshaled data length, got %d", len(data))
 	}
 }
 
-// TestJsonPayloadSizeInBytesEmpty verifies that an empty struct serializes to "{}" with
-// a size of 2 bytes.
+// TestJsonPayloadSizeInBytesEmpty verifies that SizeInBytes returns -1 (LateMarshal indicator)
+// even for empty structs.
 func TestJsonPayloadSizeInBytesEmpty(t *testing.T) {
 	payload := JsonPayload[SimpleStruct]{}
 
 	size := payload.SizeInBytes()
-	if size <= 0 {
-		t.Errorf("expected positive size for empty struct, got %d", size)
+	if size != -1 {
+		t.Errorf("expected -1 (LateMarshal indicator) for empty struct, got %d", size)
 	}
 }
 
@@ -394,9 +397,15 @@ func TestJsonPayloadLargeData(t *testing.T) {
 		t.Fatalf("marshal failed: %v", err)
 	}
 
+	// SizeInBytes returns -1 for LateMarshal types
 	size := original.SizeInBytes()
-	if size != len(data) {
-		t.Errorf("SizeInBytes %d doesn't match actual size %d", size, len(data))
+	if size != -1 {
+		t.Errorf("expected SizeInBytes to return -1 (LateMarshal indicator), got %d", size)
+	}
+
+	// Verify actual marshaled size is reasonable
+	if len(data) <= 0 {
+		t.Errorf("expected positive marshaled data length, got %d", len(data))
 	}
 
 	empty := JsonPayload[LargeStruct]{}

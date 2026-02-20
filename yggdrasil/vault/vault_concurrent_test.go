@@ -8,7 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cbehopkins/bobbob/store"
+	"github.com/cbehopkins/bobbob/multistore"
+	"github.com/cbehopkins/bobbob/yggdrasil/treap"
 	"github.com/cbehopkins/bobbob/yggdrasil/types"
 )
 
@@ -21,10 +22,10 @@ type TestData struct {
 // TestVaultConcurrentReaders verifies that multiple goroutines can safely
 // read from the vault concurrently without conflicts.
 func TestVaultConcurrentReaders(t *testing.T) {
-	// Setup: Create a vault with concurrent store
+	// Setup: Create a vault with concurrent multistore (supports StringStorer)
 	tempDir := t.TempDir()
 	storePath := filepath.Join(tempDir, "concurrent_readers.db")
-	stre, err := store.NewConcurrentStore(storePath, 0)
+	stre, err := multistore.NewConcurrentMultiStore(storePath, 0)
 	if err != nil {
 		t.Fatalf("Failed to create concurrent store: %v", err)
 	}
@@ -78,15 +79,21 @@ func TestVaultConcurrentReaders(t *testing.T) {
 				// Read random items
 				keyID := (readerID*readsPerReader + j) % itemCount
 				key := types.IntKey(keyID)
-				node := coll.Search(&key)
-
-				if node.IsNil() {
+				var payload types.JsonPayload[TestData]
+				node, err := coll.SearchComplex(&key, func(node treap.TreapNodeInterface[types.IntKey]) error {
+					payload = node.(treap.PersistentPayloadNodeInterface[types.IntKey, types.JsonPayload[TestData]]).GetPayload()
+					return nil
+				})
+				if err != nil {
+					errorCount.Add(1)
+					t.Errorf("Reader %d: Search failed for key %d: %v", readerID, keyID, err)
+					continue
+				}
+				if node == nil || node.IsNil() {
 					errorCount.Add(1)
 					t.Errorf("Reader %d: Failed to find key %d", readerID, keyID)
 					continue
 				}
-
-				payload := node.GetPayload()
 				if payload.Value.ID != keyID {
 					errorCount.Add(1)
 					t.Errorf("Reader %d: Data mismatch for key %d: expected ID %d, got %d",
@@ -121,7 +128,7 @@ func TestVaultConcurrentReaders(t *testing.T) {
 func TestVaultSingleWriterMultipleReaders(t *testing.T) {
 	tempDir := t.TempDir()
 	storePath := filepath.Join(tempDir, "single_writer_multi_readers.db")
-	stre, err := store.NewConcurrentStore(storePath, 0)
+	stre, err := multistore.NewConcurrentMultiStore(storePath, 0)
 	if err != nil {
 		t.Fatalf("Failed to create concurrent store: %v", err)
 	}
@@ -182,14 +189,20 @@ func TestVaultSingleWriterMultipleReaders(t *testing.T) {
 					// Read from reader keyspace only
 					keyID := readerID % readerKeyRange
 					key := types.IntKey(keyID)
-					node := coll.Search(&key)
-
-					if node.IsNil() {
+					var payload types.JsonPayload[TestData]
+					node, err := coll.SearchComplex(&key, func(node treap.TreapNodeInterface[types.IntKey]) error {
+						payload = node.(treap.PersistentPayloadNodeInterface[types.IntKey, types.JsonPayload[TestData]]).GetPayload()
+						return nil
+					})
+					if err != nil {
+						readErrors.Add(1)
+						t.Errorf("Reader %d: Search failed for key %d: %v", readerID, keyID, err)
+						continue
+					}
+					if node == nil || node.IsNil() {
 						readErrors.Add(1)
 						continue
 					}
-
-					payload := node.GetPayload()
 					if payload.Value.ID != keyID {
 						readErrors.Add(1)
 						t.Errorf("Reader %d: Data corruption for key %d", readerID, keyID)
@@ -258,7 +271,7 @@ func TestVaultSingleWriterMultipleReaders(t *testing.T) {
 func TestVaultConcurrentReadersMultipleCollections(t *testing.T) {
 	tempDir := t.TempDir()
 	storePath := filepath.Join(tempDir, "multi_collection_concurrent.db")
-	stre, err := store.NewConcurrentStore(storePath, 0)
+	stre, err := multistore.NewConcurrentMultiStore(storePath, 0)
 	if err != nil {
 		t.Fatalf("Failed to create concurrent store: %v", err)
 	}
@@ -312,12 +325,20 @@ func TestVaultConcurrentReadersMultipleCollections(t *testing.T) {
 			for j := range 100 {
 				keyID := (id*100 + j) % 50
 				key := types.IntKey(keyID)
-				node := coll1.Search(&key)
-				if node.IsNil() {
+				var payload types.JsonPayload[TestData]
+				node, err := coll1.SearchComplex(&key, func(node treap.TreapNodeInterface[types.IntKey]) error {
+					payload = node.(treap.PersistentPayloadNodeInterface[types.IntKey, types.JsonPayload[TestData]]).GetPayload()
+					return nil
+				})
+				if err != nil {
+					errors.Add(1)
+					t.Errorf("Collection1: Search failed for key %d: %v", keyID, err)
+					continue
+				}
+				if node == nil || node.IsNil() {
 					errors.Add(1)
 					continue
 				}
-				payload := node.GetPayload()
 				expectedValue := fmt.Sprintf("coll1-%d", keyID)
 				if payload.Value.Value != expectedValue {
 					errors.Add(1)
@@ -335,12 +356,20 @@ func TestVaultConcurrentReadersMultipleCollections(t *testing.T) {
 			for j := range 100 {
 				keyID := (id*100 + j) % 50
 				key := types.IntKey(keyID)
-				node := coll2.Search(&key)
-				if node.IsNil() {
+				var payload types.JsonPayload[TestData]
+				node, err := coll2.SearchComplex(&key, func(node treap.TreapNodeInterface[types.IntKey]) error {
+					payload = node.(treap.PersistentPayloadNodeInterface[types.IntKey, types.JsonPayload[TestData]]).GetPayload()
+					return nil
+				})
+				if err != nil {
+					errors.Add(1)
+					t.Errorf("Collection2: Search failed for key %d: %v", keyID, err)
+					continue
+				}
+				if node == nil || node.IsNil() {
 					errors.Add(1)
 					continue
 				}
-				payload := node.GetPayload()
 				expectedValue := fmt.Sprintf("coll2-%d", keyID)
 				if payload.Value.Value != expectedValue {
 					errors.Add(1)
@@ -367,7 +396,7 @@ func TestVaultConcurrentReadersMultipleCollections(t *testing.T) {
 func TestVaultSequentialWritersWithReaders(t *testing.T) {
 	tempDir := t.TempDir()
 	storePath := filepath.Join(tempDir, "sequential_writers.db")
-	stre, err := store.NewConcurrentStore(storePath, 0)
+	stre, err := multistore.NewConcurrentMultiStore(storePath, 0)
 	if err != nil {
 		t.Fatalf("Failed to create concurrent store: %v", err)
 	}
@@ -485,7 +514,7 @@ func TestVaultSequentialWritersWithReaders(t *testing.T) {
 func TestVaultConcurrentCollectionCreation(t *testing.T) {
 	tempDir := t.TempDir()
 	storePath := filepath.Join(tempDir, "concurrent_collection_creation.db")
-	stre, err := store.NewConcurrentStore(storePath, 0)
+	stre, err := multistore.NewConcurrentMultiStore(storePath, 0)
 	if err != nil {
 		t.Fatalf("Failed to create concurrent store: %v", err)
 	}
@@ -544,7 +573,7 @@ func TestVaultConcurrentCollectionCreation(t *testing.T) {
 func TestVaultConcurrentSameCollectionCreation(t *testing.T) {
 	tempDir := t.TempDir()
 	storePath := filepath.Join(tempDir, "concurrent_same_collection.db")
-	stre, err := store.NewConcurrentStore(storePath, 0)
+	stre, err := multistore.NewConcurrentMultiStore(storePath, 0)
 	if err != nil {
 		t.Fatalf("Failed to create concurrent store: %v", err)
 	}

@@ -53,17 +53,30 @@ func (k *testKey) Unmarshal(data []byte) error {
 func (k testKey) New() types.PersistentKey[testKey] {
 	return &testKey{}
 }
-func (k testKey) MarshalToObjectId(stre store.Storer) (bobbob.ObjectId, error) {
+func (k testKey) MarshalToObjectId(stre bobbob.Storer) (bobbob.ObjectId, error) {
 	b, err := k.Marshal()
 	if err != nil {
 		return 0, err
 	}
 	return store.WriteNewObjFromBytes(stre, b)
 }
-func (k *testKey) UnmarshalFromObjectId(id bobbob.ObjectId, stre store.Storer) error {
+func (k testKey) LateMarshal(stre bobbob.Storer) (bobbob.ObjectId, int, bobbob.Finisher) {
+	id, err := k.MarshalToObjectId(stre)
+	if err != nil {
+		return 0, 0, func() error { return err }
+	}
+	size := k.SizeInBytes()
+	return id, size, func() error { return nil }
+}
+func (k *testKey) UnmarshalFromObjectId(id bobbob.ObjectId, stre bobbob.Storer) error {
 	return store.ReadGeneric(stre, k, id)
 }
-
+func (k *testKey) LateUnmarshal(id bobbob.ObjectId, size int, stre bobbob.Storer) bobbob.Finisher {
+	return func() error { return k.UnmarshalFromObjectId(id, stre) }
+}
+func (k testKey) DeleteDependents(stre bobbob.Storer) error {
+	return nil
+}
 func testKeyFixedLess(a, b testKey) bool {
 	if a.Rank != b.Rank {
 		return a.Rank < b.Rank

@@ -3,6 +3,7 @@ package treap
 import (
 	"fmt"
 
+	"github.com/cbehopkins/bobbob"
 	"github.com/cbehopkins/bobbob/store"
 )
 
@@ -17,7 +18,7 @@ type PersistentNodeWalker[T any] interface {
 	IsNil() bool
 
 	// GetObjectIdNoAlloc returns the node's object ID without allocating a new one if invalid.
-	GetObjectIdNoAlloc() store.ObjectId
+	GetObjectIdNoAlloc() bobbob.ObjectId
 
 	// GetLeftChild returns the cached left child pointer (may be nil if flushed).
 	// Does not load from disk; use GetTransientLeftChild for that.
@@ -36,7 +37,7 @@ type PersistentNodeWalker[T any] interface {
 	GetTransientRightChild() (PersistentNodeWalker[T], error)
 
 	// GetStore returns the backing store for this node.
-	GetStore() store.Storer
+	GetStore() bobbob.Storer
 }
 
 // rangeOverPostOrder is the generic post-order walker that works with any PersistentNodeWalker[T].
@@ -76,7 +77,7 @@ func rangeOverPostOrder[T any, N PersistentNodeWalker[T]](root N, callback func(
 
 	stack := []frame{{node: root, visited: false}}
 	dirtySet := make(map[PersistentNodeWalker[T]]struct{}) // Track dirty nodes (order not guaranteed)
-	dirtyOldIds := make(map[store.ObjectId]struct{})
+	dirtyOldIds := make(map[bobbob.ObjectId]struct{})
 	var path []N
 
 	for len(stack) > 0 {
@@ -193,7 +194,7 @@ func rangeOverPostOrderInMemory[T any, N PersistentNodeWalker[T]](root N, callba
 
 	stack := []frame{{node: root, visited: false}}
 	dirtySet := make(map[PersistentNodeWalker[T]]struct{})
-	dirtyOldIds := make(map[store.ObjectId]struct{})
+	dirtyOldIds := make(map[bobbob.ObjectId]struct{})
 	var path []N
 
 	for len(stack) > 0 {

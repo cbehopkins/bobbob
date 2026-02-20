@@ -275,3 +275,117 @@ This section captures persistence assumptions and design rules for the disk-back
 ## Open Questions / Future Work
 - Formal invariants or a verification pass to ensure no persisted references point to deleted ObjectIds.
 - Performance optimization: batch DeleteObj calls during invalidation.
+
+## Batch Persistence Design
+
+Batch persistence optimizes disk I/O when persisting many nodes by grouping allocation and write operations. This section describes the strategy and invariants that make batching correct.
+
+### Strategy
+
+The batch persistence algorithm operates in these phases:
+
+**Phase 1: Collect & Cascade Invalidation**
+- Walk all in-memory nodes in post-order to collect them.
+- For each node, check if it is invalid (`objectId < 0`).
+- **If a node is invalid, immediately cascade that invalidation upward:** mark all ancestors (parent, grandparent, etc., up to the root) as invalid (set `objectId = -1`).
+- This propagation is crucial: if a child node will be re-persisted, all ancestors caching references to it must also be re-persisted with updated child ObjectIds.
+- **Defensive check (belt-and-braces):** While cascading, verify that no child's ObjectId differs from the parent's cached reference. If such a mismatch is detected, log it as a warning—it indicates a bug in insert/delete/mutation logic where a child was modified without the parent's cache being updated.
+- After Phase 1, all nodes that need persisting are marked `objectId < 0` (either originally invalid or invalidated by cascade). All other nodes retain their valid ObjectIds and are NOT touched.
+
+**Phase 2: Identify Unpersisted Nodes**
+- From the nodes collected in Phase 1, extract those marked invalid (`objectId < 0`).
+- These are the nodes that will be persisted: originals that were invalid, plus all ancestors cascade-invalidated by Phase 1.
+- Nodes that remained valid throughout Phase 1 (not invalid, not ancestors of invalid nodes) will NOT be in this list.
+
+**Phase 3: Allocate ObjectIds (Contiguous When Possible)**
+- For efficiency, attempt to allocate a contiguous run of ObjectIds using `store.AllocateRun()`.
+- This requires all nodes to have the same size; if sizes differ, fall back to individual allocation via `node.ObjectId()`.
+- Successfully allocated ObjectIds are assigned to nodes via `SetObjectId()`.
+- Individually allocated ObjectIds are assigned through the standard `ObjectId()` method.
+
+**Phase 4: Marshal & Write**
+- Marshal all unpersisted nodes to bytes (now with correct ObjectIds set in the node).
+- If allocation succeeded contiguously, use `WriteBatchedObjs()` to write all nodes in a single batched operation.
+- If allocation was individual or batching fails, fall back to individual writes via `WriteToObj()`.
+- Both paths produce identical disk state; batching is purely a performance optimization.
+
+**Phase 5: Cleanup**
+- After all nodes are persisted, flush pending deletes (old ObjectIds queued during Phase 1 invalidation).
+
+### Key Invariants
+
+1. **Only nodes marked unpersisted by Phase 1 are persisted.**
+   - A node retains `objectId >= 0` if and only if: it was already persisted AND it is not an ancestor of any unpersisted node.
+   - If a node is unpersisted (or is an ancestor of an unpersisted node), it is invalidated during Phase 1 cascade and will be re-persisted.
+   - This prevents unnecessary re-persistence of unmodified subtrees.
+
+2. **Invalidation cascades upward immediately during Phase 1.**
+   - When Phase 1 encounters an invalid node, ALL ancestors up to the root are marked invalid.
+   - This ensures no ancestor is allocated a new ObjectId only to later be discovered as needing re-persistence.
+   - The cascade must complete before Phase 3 (allocation).
+
+3. **Child ObjectId mismatch is a defensive check and indicates a bug elsewhere.**
+   - If a child's cached ObjectId in the parent doesn't match the child's actual ObjectId, it means mutation logic failed to propagate invalidation properly.
+   - This check should rarely or never trigger in correct code. If detected, log a warning and investigate the mutation path that caused it.
+   - The batch persist algorithm still proceeds correctly (it will re-persist the parent due to cascade invalidation), but the underlying issue should be fixed.
+
+4. **Batching does not affect correctness, only performance.**
+   - If batching fails (nodes not consecutive, mixed sizes, etc.), the fallback to individual writes is transparent.
+   - The caller doesn't need to know whether batching succeeded; both paths produce the same disk state.
+
+5. **Post-order ensures children are encountered before parents.**
+   - The post-order traversal in Phase 1 ensures that when cascading invalidation, ancestors exist and can be marked invalid.
+
+### Example Scenario
+
+Suppose a treap with 3 levels persisted to disk:
+```
+      Root (persisted, objectId=100)
+      /  \
+    L     R (persisted, objectId=102)
+  (obj=101)
+```
+
+An insertion at node L is performed (in-memory):
+- L is modified during the insert, so it is marked invalid (objectId=-1) as part of the mutation.
+- Root is not directly modified; its ObjectId remains valid (100).
+
+When batch persist runs:
+
+**Phase 1 (Collect & Cascade):**
+- Post-order traversal visits nodes: L (no children), then R (no children), then Root.
+- L: invalid (objectId=-1) → found an invalid node.
+  - Cascade invalidation upward: mark Root as invalid (set objectId=-1).
+- R: valid (objectId=102) → no action.
+- Root: now marked invalid (from cascade).
+
+After Phase 1: L and Root are marked invalid (objectId=-1). R remains valid (objectId=102). Count of nodes to persist: 2.
+
+**Phase 2 (Identify Unpersisted):**
+- L: objectId=-1 → add to persist list.
+- Root: objectId=-1 → add to persist list.
+- R: objectId=102 → skip (not invalid, not an ancestor of invalid nodes).
+
+**Phase 3 (Allocate):**
+- Allocate ObjectIds for L and Root (count=2 from Phase 1).
+- If same size and contiguous: allocate run of 2.
+- Assign: L.objectId = 103, Root.objectId = 104.
+
+**Phase 4 (Write):**
+- L marshals with objectId=103.
+- Root marshals with objectId=104, leftObjectId=103 (points to L's new ObjectId), rightObjectId=102 (unchanged, points to persisted R).
+- Write both to disk (batched or individual).
+
+**Phase 5 (Cleanup):**
+- L's old objectId (101) was queued for deletion during the original invalidation at insert time.
+- Flush deletes (remove old L from disk).
+
+Result: Tree is correctly persisted. R was never touched (still objectId=102 on disk). L and Root have fresh ObjectIds that are properly cross-referenced. All ancestors of the modified L were re-persisted because cascade invalidation found L was invalid and marked Root.
+
+### Performance Notes
+
+- **Cascade invalidation cost:** Walking ancestors during Phase 1 to propagate invalidations is O(tree height). This is negligible compared to I/O costs.
+- **Node counting:** Phase 1 produces a count of invalid nodes, which is used to pre-size the allocation request in Phase 3.
+- **Batching overhead:** Allocating a run is faster than N individual allocations for large N. WriteBatchedObjs reduces syscalls.
+- **Fallback cost:** If batching fails, individual writes are used. This is slower but guarantees correctness.
+- **Post-order semantics:** Walking in post-order is necessary because children must be encountered before parents, so cascade invalidation propagates correctly.

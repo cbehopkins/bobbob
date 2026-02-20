@@ -27,8 +27,8 @@ func TestNewConcurrentStore(t *testing.T) {
 	if cs.innerStore == nil {
 		t.Error("expected innerStore to be initialized")
 	}
-	if cs.lockMap == nil {
-		t.Error("expected lockMap to be initialized")
+	if cs.objectLocks == nil {
+		t.Error("expected objectLocks to be initialized")
 	}
 }
 
@@ -51,8 +51,8 @@ func TestNewConcurrentStoreWrapping(t *testing.T) {
 	if concStore.innerStore != basicStore {
 		t.Error("expected innerStore to be the wrapped basicStore")
 	}
-	if concStore.lockMap == nil {
-		t.Error("expected lockMap to be initialized")
+	if concStore.objectLocks == nil {
+		t.Error("expected objectLocks to be initialized")
 	}
 
 	// Test that operations work through the wrapped store
@@ -562,9 +562,9 @@ func TestConcurrentStoreLookupObjectMutex(t *testing.T) {
 	cs.releaseObjectLock(objId, lock2)
 
 	// Lock should be removed from map after all references released
-	cs.lock.RLock()
-	_, stillInMap := cs.lockMap[objId]
-	cs.lock.RUnlock()
+	cs.objectLocks.mu.RLock()
+	_, stillInMap := cs.objectLocks.lockMap[objId]
+	cs.objectLocks.mu.RUnlock()
 	if stillInMap {
 		t.Error("expected lock to be removed from map after all references released")
 	}

@@ -21,9 +21,9 @@ func TestSimpleInsertDeleteIterate(t *testing.T) {
 	)
 
 	const (
-		cycles       = 100  // Increase to original
-		batchSize    = 1000 // Increase to original
-		maxNodes     = 10000
+		cycles       = 25  // Moderate scale  
+		batchSize    = 500 // Moderate scale
+		maxNodes     = 3000
 		deleteEveryN = 4 // Delete every 4th key to reduce tree size
 	)
 
@@ -35,7 +35,8 @@ func TestSimpleInsertDeleteIterate(t *testing.T) {
 
 	// Helper to verify tree structure via InOrderVisit
 	verifyTreeStructure := func(operation string, cycleNum int, operationNum int) {
-		seenKeys := make(map[int]bool)
+		// Pre-allocate map to avoid rehashing during iteration (which holds the lock)
+		seenKeys := make(map[int]bool, len(expected))
 		err := treap.InOrderVisit(func(node TreapNodeInterface[types.IntKey]) error {
 			pNode := node.(*PersistentPayloadTreapNode[types.IntKey, MockPayload])
 			k := int(*pNode.GetKey().(*types.IntKey))

@@ -24,26 +24,27 @@ type PersistentTreapNodeInterface[T any] interface {
 	SetObjectId(store.ObjectId)         // Sets the object ID of the node
 	IsObjectIdInvalid() bool            // Returns true if the node's ObjectId has been invalidated (is negative)
 	GetObjectIdNoAlloc() store.ObjectId // Returns the object ID without allocating (may be invalid)
-	Persist() error                     // Persist the node and its children to the store
-	Flush() error                       // Flush the node and its children from memory
+	// Persist() error                     // Persist the node and its children to the store
+	Flush() error // Flush the node and its children from memory
 }
 
 // PersistentPayloadTreapInterface defines the interface for persistent payload treaps.
 type PersistentPayloadTreapInterface[T any, P any] interface {
-	Insert(key types.PersistentKey[T], payload P)
-	InsertComplex(key types.PersistentKey[T], priority Priority, payload P)
+	Insert(key types.PersistentKey[T], payload P) error
+	InsertComplex(key types.PersistentKey[T], priority Priority, payload P) error
 	Search(key types.PersistentKey[T]) PersistentPayloadNodeInterface[T, P]
 	SearchComplex(key types.PersistentKey[T], callback func(TreapNodeInterface[T]) error) (PersistentPayloadNodeInterface[T, P], error)
-	UpdatePriority(key types.PersistentKey[T], newPriority Priority)
+	UpdatePriority(key types.PersistentKey[T], newPriority Priority) error
 	UpdatePayload(key types.PersistentKey[T], newPayload P) error
-	Persist() error
+	// Persist() error
 	Load(objId store.ObjectId) error
 	Marshal() ([]byte, error)
+	SubmitWork(fn func() error) error
 }
 
 // PersistentPayloadNodeInterface defines the interface for persistent payload treap nodes.
 type PersistentPayloadNodeInterface[T any, P any] interface {
 	PersistentTreapNodeInterface[T]
 	GetPayload() P
-	SetPayload(P)
+	setPayload(P)
 }

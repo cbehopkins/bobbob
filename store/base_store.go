@@ -358,14 +358,14 @@ func (s *baseStore) Close() error {
 
 // GetObjectCount returns the number of objects tracked in the allocator.
 func (s *baseStore) GetObjectCount() int {
-	// The allocator tracks objects internally; we cannot easily query the count
-	// without adding an introspection method. For now, return 0 as a placeholder.
-	// TODO: Add GetAllocatedCount() to allocator.Top interface
-	return 0
+	if s == nil || s.allocator == nil {
+		return 0
+	}
+	return s.allocator.GetObjectCount()
 }
 
 // Allocator returns the allocator backing this store, enabling external callers
 // to configure allocation callbacks (e.g., SetOnAllocate).
-func (s *baseStore) Allocator() *allocator.Top {
+func (s *baseStore) Allocator() types.Allocator {
 	return s.allocator
 }

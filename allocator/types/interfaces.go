@@ -12,6 +12,11 @@ import "os"
 type TopAllocator interface {
 	Allocator
 
+	// GetAllocatedCount returns the number of currently allocated logical objects.
+	// This includes allocations routed through pooled allocators and parent allocations,
+	// excluding allocator-internal backing range objects where possible.
+	GetAllocatedCount() int
+
 	// Save persists the entire allocator state to the underlying file/device.
 	// Returns error if persistence fails.
 	Save() error
@@ -47,7 +52,7 @@ type Allocator interface {
 	BasicAllocator
 	ManyAllocatable
 	AllocateCallbackable
-	Marsheller
+	Marshaller
 }
 
 // BlockSizeConfigurable is an optional extension for allocators that can
@@ -100,10 +105,10 @@ type AllocateCallbackable interface {
 	SetOnAllocate(callback func(objId ObjectId, offset FileOffset, size int))
 }
 
-// Marsheller defines the low-level marshalling/unmarshalling interface.
+// Marshaller defines the low-level marshalling/unmarshalling interface.
 // High-level Save/Load operations are handled by higher-level orchestration;
 // these are the primitives for converting state to/from bytes.
-type Marsheller interface {
+type Marshaller interface {
 	// Marshal serializes the allocator's state to a byte slice.
 	// Returns serialized bytes ready to be written to a single object in the file.
 	Marshal() ([]byte, error)
@@ -113,6 +118,10 @@ type Marsheller interface {
 	// Populates internal maps, bitmaps, freelists, etc. from the byte representation.
 	Unmarshal(data []byte) error
 }
+
+// Marsheller is retained as a backwards-compatible alias.
+// Deprecated: use Marshaller.
+type Marsheller = Marshaller
 
 // HierarchicalAllocator is an optional interface for allocators that have a parent.
 // OmniAllocator, PoolAllocator, and BlockAllocator implement this.

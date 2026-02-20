@@ -128,7 +128,9 @@ func TestTreapUpdatePriorityMaintainsProperties(t *testing.T) {
 
 	// Update priorities for a handful of keys
 	for _, k := range []int{5, 20, 50, 75, 99} {
-		treap.UpdatePriority(types.IntKey(k), Priority(1000+k))
+		if err := treap.UpdatePriority(types.IntKey(k), Priority(1000+k)); err != nil {
+			t.Fatalf("UpdatePriority(%d) returned error: %v", k, err)
+		}
 	}
 
 	if err := verifyBSTProperty(treap.root, nil, nil); err != nil {

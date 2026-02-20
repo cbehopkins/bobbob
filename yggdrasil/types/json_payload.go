@@ -70,13 +70,9 @@ func (j JsonPayload[T]) Unmarshal(data []byte) (UntypedPersistentPayload, error)
 }
 
 // SizeInBytes returns the size of the JSON-encoded payload.
-// Note: This marshals the value to get the exact size.
+// Should return -1 if the size cannot be determined without marshaling, which is the case for JsonPayload.
 func (j JsonPayload[T]) SizeInBytes() int {
-	data, err := json.Marshal(j.Value)
-	if err != nil {
-		return 0
-	}
-	return 4 + len(data)
+	return -1
 }
 
 // LateMarshal writes the JSON payload to the store and returns the ObjectId and finisher.
@@ -85,6 +81,18 @@ func (j JsonPayload[T]) LateMarshal(s bobbob.Storer) (bobbob.ObjectId, int, bobb
 	if err != nil {
 		return 0, 0, func() error { return err }
 	}
+
+	// Try to use StringStorer interface if available
+	// JsonPayload marshals to bytes, which we can store as a string for better batching
+	if ss, ok := s.(bobbob.StringStorer); ok {
+		objId, err := ss.NewStringObj(string(payload))
+		if err != nil {
+			return objId, 0, func() error { return err }
+		}
+		return objId, len(payload), func() error { return nil }
+	}
+
+	// Fallback to generic allocation
 	size := len(payload)
 	objId, err := s.NewObj(size)
 	if err != nil {
@@ -107,6 +115,33 @@ func (j JsonPayload[T]) LateMarshal(s bobbob.Storer) (bobbob.ObjectId, int, bobb
 // LateUnmarshal reads the JSON payload from the store and updates the receiver.
 func (j *JsonPayload[T]) LateUnmarshal(id bobbob.ObjectId, size int, s bobbob.Storer) bobbob.Finisher {
 	f := func() error {
+		// Try to use StringStorer interface if available
+		if ss, ok := s.(bobbob.StringStorer); ok {
+			data, err := ss.StringFromObjId(id)
+			if err != nil {
+				return err
+			}
+			payload := []byte(data)
+			
+			// Allocated size may be larger than written size; trim trailing zeros
+			payload = bytes.TrimRight(payload, "\x00")
+			if len(payload) < 4 {
+				return io.ErrUnexpectedEOF
+			}
+			length := binary.LittleEndian.Uint32(payload[:4])
+			if int(length) > len(payload)-4 {
+				return io.ErrUnexpectedEOF
+			}
+			var value T
+			err = json.Unmarshal(payload[4:4+length], &value)
+			if err != nil {
+				return err
+			}
+			j.Value = value
+			return nil
+		}
+
+		// Fallback to generic read
 		reader, finisher, err := s.LateReadObj(id)
 		if err != nil {
 			return err

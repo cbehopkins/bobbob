@@ -1,6 +1,7 @@
 package treap
 
 import (
+	"fmt"
 	"io"
 	"path/filepath"
 	"testing"
@@ -88,6 +89,30 @@ func (g *allocationGasket) WriteBatchedObjs(objIds []store.ObjectId, data []byte
 	return g.inner.WriteBatchedObjs(objIds, data, sizes)
 }
 
+func (g *allocationGasket) AllocateRun(size int, count int) ([]bobbob.ObjectId, []store.FileOffset, error) {
+	allocator, ok := g.inner.(store.RunAllocator)
+	if !ok {
+		return nil, nil, fmt.Errorf("inner store does not support RunAllocator")
+	}
+	ids, offsets, err := allocator.AllocateRun(size, count)
+	if err == nil {
+		for _, id := range ids {
+			g.track(id)
+		}
+	}
+	return ids, offsets, err
+}
+
+func (g *allocationGasket) GetObjectInfo(id bobbob.ObjectId) (store.ObjectInfo, bool) {
+	provider, ok := g.inner.(interface {
+		GetObjectInfo(bobbob.ObjectId) (store.ObjectInfo, bool)
+	})
+	if !ok {
+		return store.ObjectInfo{}, false
+	}
+	return provider.GetObjectInfo(id)
+}
+
 func setDifference(a, b map[store.ObjectId]struct{}) map[store.ObjectId]struct{} {
 	out := make(map[store.ObjectId]struct{})
 	for id := range a {
@@ -118,6 +143,9 @@ func collectTreapObjectIds[T any](t *PersistentTreap[T]) (map[store.ObjectId]str
 }
 
 func TestPersistentTreapAllocationGasketTracksNodeObjects(t *testing.T) {
+	// Enable batched persist tracing for this test.
+	// NOTE: package-level hook; do not run this test in parallel.
+
 	dir := t.TempDir()
 	filePath := filepath.Join(dir, "gasket_store.bin")
 	base, err := store.NewBasicStore(filePath)

@@ -215,6 +215,19 @@ func (t *Top) ContainsObjectId(objId bobbob.ObjectId) bool {
 	return t.omniAllocator.ContainsObjectId(objId)
 }
 
+// GetObjectCount returns the number of currently allocated logical objects.
+func (t *Top) GetObjectCount() int {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return t.omniAllocator.GetObjectCount()
+}
+
+// GetAllocatedCount returns the number of currently allocated logical objects.
+// This satisfies types.TopAllocator count introspection.
+func (t *Top) GetAllocatedCount() int {
+	return t.GetObjectCount()
+}
+
 // AllocateRun delegates to OmniAllocator if supported.
 func (t *Top) AllocateRun(size int, count int) ([]bobbob.ObjectId, []bobbob.FileOffset, error) {
 	t.mu.RLock()

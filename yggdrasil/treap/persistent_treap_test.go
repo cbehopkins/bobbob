@@ -74,7 +74,9 @@ func TestPersistentTreapBasics(t *testing.T) {
 	// Test UpdatePriority
 	keyToUpdate := keys[2]
 	newPriority := Priority(200)
-	treap.UpdatePriority(keyToUpdate, newPriority)
+	if err := treap.UpdatePriority(keyToUpdate, newPriority); err != nil {
+		t.Fatalf("UpdatePriority returned error: %v", err)
+	}
 	updatedNode := treap.Search(keyToUpdate)
 	if updatedNode == nil {
 		t.Errorf("Expected to find key %d in the treap after updating priority, but it was not found", *keyToUpdate)
@@ -246,7 +248,7 @@ func TestPersistentTreapNodeMarshalUnmarshal(t *testing.T) {
 	key := types.IntKey(42)
 	priority := Priority(100)
 	treap := NewPersistentTreap[types.IntKey](types.IntLess, (*types.IntKey)(new(int32)), store)
-	node := NewPersistentTreapNode[types.IntKey](&key, priority, store, treap)
+	node := NewPersistentTreapNode[types.IntKey](&key, priority, treap)
 
 	// Marshal the node
 	data, err := node.Marshal()
@@ -255,7 +257,7 @@ func TestPersistentTreapNodeMarshalUnmarshal(t *testing.T) {
 	}
 
 	// Unmarshal the node
-	unmarshalledNode := &PersistentTreapNode[types.IntKey]{Store: store, parent: treap}
+	unmarshalledNode := &PersistentTreapNode[types.IntKey]{container: treap}
 	dstKey := types.IntKey(0)
 	err = unmarshalledNode.unmarshal(data, &dstKey)
 	if err != nil {
@@ -287,7 +289,7 @@ func TestPersistentTreapNodeInvalidateObjectId(t *testing.T) {
 	key := types.IntKey(42)
 	priority := Priority(100)
 	treap := NewPersistentTreap[types.IntKey](types.IntLess, (*types.IntKey)(new(int32)), stre)
-	node := NewPersistentTreapNode[types.IntKey](&key, priority, stre, treap)
+	node := NewPersistentTreapNode[types.IntKey](&key, priority, treap)
 
 	// Initially, the ObjectId should be internal.ObjNotAllocated
 	if node.objectId != bobbob.ObjNotAllocated {
@@ -307,7 +309,7 @@ func TestPersistentTreapNodeInvalidateObjectId(t *testing.T) {
 
 	// Add a left child and check if ObjectId is invalidated
 	leftKey := types.IntKey(21)
-	leftNode := NewPersistentTreapNode[types.IntKey](&leftKey, Priority(50), stre, treap)
+	leftNode := NewPersistentTreapNode[types.IntKey](&leftKey, Priority(50), treap)
 	err = node.SetLeft(leftNode)
 	if err != nil {
 		t.Fatalf("Failed to set left child: %v", err)
@@ -330,7 +332,7 @@ func TestPersistentTreapNodeInvalidateObjectId(t *testing.T) {
 
 	// Add a right child and check if ObjectId is invalidated
 	rightKey := types.IntKey(63)
-	rightNode := NewPersistentTreapNode[types.IntKey](&rightKey, Priority(70), stre, treap)
+	rightNode := NewPersistentTreapNode[types.IntKey](&rightKey, Priority(70), treap)
 	err = node.SetRight(rightNode)
 	if err != nil {
 		t.Fatalf("Failed to set right child: %v", err)
@@ -453,9 +455,9 @@ func TestPersistentTreapNodeMarshalUnmarshalWithChildren(t *testing.T) {
 	rootKey := types.IntKey(100)
 	leftKey := types.IntKey(50)
 	rightKey := types.IntKey(150)
-	root := NewPersistentTreapNode[types.IntKey](&rootKey, 10, store0, parent)
-	left := NewPersistentTreapNode[types.IntKey](&leftKey, 5, store0, parent)
-	right := NewPersistentTreapNode[types.IntKey](&rightKey, 15, store0, parent)
+	root := NewPersistentTreapNode[types.IntKey](&rootKey, 10, parent)
+	left := NewPersistentTreapNode[types.IntKey](&leftKey, 5, parent)
+	right := NewPersistentTreapNode[types.IntKey](&rightKey, 15, parent)
 
 	err := root.SetLeft(left)
 	if err != nil {
@@ -466,7 +468,7 @@ func TestPersistentTreapNodeMarshalUnmarshalWithChildren(t *testing.T) {
 		t.Fatalf("Failed to set right child: %v", err)
 	}
 
-	err = root.Persist()
+	err = root.persistWithLockHeld()
 	if err != nil {
 		t.Fatalf("Failed to persist root: %v", err)
 	}

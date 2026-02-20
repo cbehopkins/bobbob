@@ -74,10 +74,11 @@ func TestConcurrentPersistAllocatorNoPanic(t *testing.T) {
 				key := types.MD5Key{}
 				copy(key[:], fmt.Sprintf("worker-%02d-op-%03d", workerID, i))
 
-				collection.Insert(&key, testData{Value: i})			
+				collection.Insert(&key, testData{Value: i})
 
-				if node := collection.Search(&key); node != nil {
-					if err := node.Persist(); err != nil {
+				// Persist the collection periodically to exercise concurrent persist
+				if i%10 == 0 {
+					if err := collection.Persist(); err != nil {
 						errs <- fmt.Errorf("worker %d op %d: %w", workerID, i, err)
 						return
 					}

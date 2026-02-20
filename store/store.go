@@ -57,6 +57,7 @@ package store
 
 import (
 	"errors"
+	"fmt"
 	"io"
 
 	"github.com/cbehopkins/bobbob"
@@ -107,26 +108,34 @@ func WriteNewObjFromBytes(s Storer, data []byte) (ObjectId, error) {
 	if err != nil {
 		return 0, err
 	}
-	if finisher != nil {
-		defer func() {
-			if err := finisher(); err != nil {
-				// Log error but continue - write may still be partially successful
-			}
-		}()
-	}
 
 	n, err := writer.Write(data)
 	if err != nil {
+		if finisher != nil {
+			_ = finisher()
+		}
 		if err := s.DeleteObj(objId); err != nil {
 			// Clean up allocated object on write error (best effort)
 		}
 		return 0, err
 	}
 	if n != size {
+		if finisher != nil {
+			_ = finisher()
+		}
 		if err := s.DeleteObj(objId); err != nil {
 			// Clean up allocated object on incomplete write (best effort)
 		}
 		return 0, errors.New("did not write all the data")
+	}
+
+	if finisher != nil {
+		if err := finisher(); err != nil {
+			if delErr := s.DeleteObj(objId); delErr != nil {
+				return 0, fmt.Errorf("finisher failed after write: %w (cleanup delete also failed: %v)", err, delErr)
+			}
+			return 0, fmt.Errorf("finisher failed after write: %w", err)
+		}
 	}
 
 	return objId, nil
@@ -145,26 +154,33 @@ func LateWriteNewObjFromBytes(s Storer, data []byte) (ObjectId, func() error) {
 	}
 	lateWriter := func() error {
 		// log.Printf("store: LateWriteNewObjFromBytes start obj=%d size=%d", objId, size)
-		if finisher != nil {
-			defer func() {
-				if err := finisher(); err != nil {
-					// Log error but continue - write may still be partially successful
-				}
-			}()
-		}
 		n, err := writer.Write(data)
 		// log.Printf("store: LateWriteNewObjFromBytes done obj=%d n=%d err=%v", objId, n, err)
 		if err != nil {
+			if finisher != nil {
+				_ = finisher()
+			}
 			if err := s.DeleteObj(objId); err != nil {
 				// Clean up allocated object on write error (best effort)
 			}
 			return err
 		}
 		if n != size {
+			if finisher != nil {
+				_ = finisher()
+			}
 			if err := s.DeleteObj(objId); err != nil {
 				// Clean up allocated object on incomplete write (best effort)
 			}
 			return errors.New("did not write all the data")
+		}
+		if finisher != nil {
+			if err := finisher(); err != nil {
+				if delErr := s.DeleteObj(objId); delErr != nil {
+					return fmt.Errorf("finisher failed after write: %w (cleanup delete also failed: %v)", err, delErr)
+				}
+				return fmt.Errorf("finisher failed after write: %w", err)
+			}
 		}
 		return nil
 	}
@@ -181,22 +197,26 @@ func WriteBytesToObj(s Storer, data []byte, objectId ObjectId) error {
 	if err != nil {
 		return err
 	}
-	defer func() {
-		if closer != nil {
-			if err := closer(); err != nil {
-				// Log error but continue - write may still be partially successful
-			}
-		}
-	}()
 
 	// log.Printf("store: WriteBytesToObj start obj=%d size=%d", objectId, len(data))
 	n, err := writer.Write(data)
 	// log.Printf("store: WriteBytesToObj done obj=%d n=%d err=%v", objectId, n, err)
 	if err != nil {
+		if closer != nil {
+			_ = closer()
+		}
 		return err
 	}
 	if n != len(data) {
+		if closer != nil {
+			_ = closer()
+		}
 		return errors.New("did not write all the data")
+	}
+	if closer != nil {
+		if err := closer(); err != nil {
+			return fmt.Errorf("failed to finalize write: %w", err)
+		}
 	}
 	return nil
 }
@@ -212,17 +232,22 @@ func ReadBytesFromObj(s Storer, objId ObjectId) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if finisher != nil {
-		defer func() {
-			if err := finisher(); err != nil {
-				// Log error but continue - read already succeeded
-			}
-		}()
-	}
 
 	// log.Printf("store: ReadBytesFromObj start obj=%d", objId)
 	data, err := io.ReadAll(objReader)
 	// log.Printf("store: ReadBytesFromObj done obj=%d n=%d err=%v", objId, len(data), err)
+	if finisher != nil {
+		finishErr := finisher()
+		if err != nil {
+			if finishErr != nil {
+				return nil, fmt.Errorf("read failed: %w; finisher failed: %v", err, finishErr)
+			}
+			return nil, err
+		}
+		if finishErr != nil {
+			return nil, fmt.Errorf("read finisher failed: %w", finishErr)
+		}
+	}
 	return data, err
 }
 

@@ -23,7 +23,7 @@ package external_test
 
 import (
 	"fmt"
-	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -69,8 +69,7 @@ func (s SimplePayload) SizeInBytes() int {
 // Expected: Test should pass without panic (vault should coordinate shutdown)
 // Actual: Panics with "send on closed channel" in multistore deleteQueue.Enqueue
 func TestConcurrentInsertDuringClose(t *testing.T) {
-	tmpFile := "test_concurrent_close_bug.db"
-	defer os.Remove(tmpFile)
+	tmpFile := filepath.Join(t.TempDir(), "test_concurrent_close_bug.db")
 
 	session, colls, err := vault.OpenVaultWithIdentity[string](
 		tmpFile,
@@ -129,8 +128,7 @@ func TestConcurrentInsertDuringClose(t *testing.T) {
 // TestConcurrentInsertDuringCloseWithSignal is a variant that properly signals
 // workers to stop before closing. This shows the correct pattern.
 func TestConcurrentInsertDuringCloseWithSignal(t *testing.T) {
-	tmpFile := "test_concurrent_close_signal.db"
-	defer os.Remove(tmpFile)
+	tmpFile := filepath.Join(t.TempDir(), "test_concurrent_close_signal.db")
 
 	session, colls, err := vault.OpenVaultWithIdentity[string](
 		tmpFile,

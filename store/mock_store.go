@@ -51,6 +51,25 @@ func (m *MockStore) NewObj(size int) (ObjectId, error) {
 	return objId, nil
 }
 
+func (m *MockStore) AllocateRun(size int, count int) ([]ObjectId, []FileOffset, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.closed {
+		return nil, nil, io.ErrClosedPipe
+	}
+
+	objIds := make([]ObjectId, count)
+	offsets := make([]FileOffset, count)
+	for i := range count {
+		objIds[i] = m.nextId
+		m.nextId++
+		m.objects[objIds[i]] = make([]byte, size)
+		offsets[i] = FileOffset(objIds[i])
+	}
+	return objIds, offsets, nil
+}
+
 // DeleteObj removes the object with the given ID.
 func (m *MockStore) DeleteObj(objId ObjectId) error {
 	m.mu.Lock()

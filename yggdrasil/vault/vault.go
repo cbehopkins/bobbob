@@ -161,7 +161,7 @@ type Vault struct {
 // store.AllocatorProvider. External callers can use this to set allocation
 // callbacks on the OmniBlockAllocator and its parent BasicAllocator.
 func (v *Vault) Allocator() atypes.Allocator {
-	if provider, ok := v.Store.(interface{ Allocator() atypes.Allocator }); ok {
+	if provider, ok := v.Store.(store.AllocatorProvider); ok {
 		return provider.Allocator()
 	}
 	return nil

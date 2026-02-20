@@ -1,11 +1,149 @@
 package multistore
 
 import (
+	"bytes"
+	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/cbehopkins/bobbob/internal/testutil"
 	"github.com/cbehopkins/bobbob/store"
 )
+
+func TestMultiStoreStringStorePersistenceAcrossSessions(t *testing.T) {
+	filePath := filepath.Join(t.TempDir(), "string_persistence.dat")
+	metaPath := filePath + ".strings.meta"
+
+	ms1, err := NewMultiStore(filePath, 0)
+	if err != nil {
+		t.Fatalf("Failed to create multiStore: %v", err)
+	}
+
+	obj1, err := ms1.NewStringObj("alpha")
+	if err != nil {
+		t.Fatalf("NewStringObj alpha failed: %v", err)
+	}
+	obj2, err := ms1.NewStringObj("beta")
+	if err != nil {
+		t.Fatalf("NewStringObj beta failed: %v", err)
+	}
+
+	if err := ms1.Close(); err != nil {
+		t.Fatalf("Failed to close multiStore: %v", err)
+	}
+
+	if _, err := os.Stat(metaPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected no sidecar metadata file at %s", metaPath)
+	}
+
+	ms2, err := LoadMultiStore(filePath, 0)
+	if err != nil {
+		t.Fatalf("Failed to load multiStore: %v", err)
+	}
+	defer ms2.Close()
+
+	v1, err := ms2.StringFromObjId(obj1)
+	if err != nil {
+		t.Fatalf("StringFromObjId alpha failed: %v", err)
+	}
+	v2, err := ms2.StringFromObjId(obj2)
+	if err != nil {
+		t.Fatalf("StringFromObjId beta failed: %v", err)
+	}
+
+	if v1 != "alpha" {
+		t.Fatalf("alpha mismatch: got %q", v1)
+	}
+	if v2 != "beta" {
+		t.Fatalf("beta mismatch: got %q", v2)
+	}
+}
+
+func TestLoadMultiStoreLegacyMetadataCompatibility(t *testing.T) {
+	filePath := filepath.Join(t.TempDir(), "legacy_metadata.dat")
+
+	ms1, err := NewMultiStore(filePath, 0)
+	if err != nil {
+		t.Fatalf("Failed to create multiStore: %v", err)
+	}
+
+	// Simulate legacy store metadata (non-BBMSTATE payload) in the metadata slot.
+	legacyMeta := []byte("legacy-metadata-format")
+	primeObjId, err := ms1.PrimeObject(len(legacyMeta))
+	if err != nil {
+		t.Fatalf("PrimeObject failed: %v", err)
+	}
+	if err := store.WriteBytesToObj(ms1, legacyMeta, primeObjId); err != nil {
+		t.Fatalf("Failed to write legacy metadata payload: %v", err)
+	}
+
+	// Persist a regular object so we can verify normal data survives reload.
+	objData := []byte("legacy-object-payload")
+	objId, err := ms1.NewObj(len(objData))
+	if err != nil {
+		t.Fatalf("Failed to allocate object: %v", err)
+	}
+	if err := store.WriteBytesToObj(ms1, objData, objId); err != nil {
+		t.Fatalf("Failed to write object data: %v", err)
+	}
+
+	if err := ms1.Close(); err != nil {
+		t.Fatalf("Failed to close multiStore: %v", err)
+	}
+
+	ms2, err := LoadMultiStore(filePath, 0)
+	if err != nil {
+		t.Fatalf("LoadMultiStore should tolerate legacy metadata payload, got: %v", err)
+	}
+	defer ms2.Close()
+
+	readBack, err := store.ReadBytesFromObj(ms2, objId)
+	if err != nil {
+		t.Fatalf("Failed to read persisted object after load: %v", err)
+	}
+	readBack = bytes.TrimRight(readBack, "\x00")
+	if string(readBack) != string(objData) {
+		t.Fatalf("object payload mismatch after load: got %q, want %q", string(readBack), string(objData))
+	}
+}
+
+func TestLoadMultiStoreNoMetadataObjectCompatibility(t *testing.T) {
+	filePath := filepath.Join(t.TempDir(), "no_metadata_object.dat")
+
+	ms1, err := NewMultiStore(filePath, 0)
+	if err != nil {
+		t.Fatalf("Failed to create multiStore: %v", err)
+	}
+
+	payload := []byte("plain-data-without-metadata")
+	objId, err := ms1.NewObj(len(payload))
+	if err != nil {
+		t.Fatalf("Failed to allocate object: %v", err)
+	}
+	if err := store.WriteBytesToObj(ms1, payload, objId); err != nil {
+		t.Fatalf("Failed to write object payload: %v", err)
+	}
+
+	if err := ms1.Close(); err != nil {
+		t.Fatalf("Failed to close multiStore: %v", err)
+	}
+
+	ms2, err := LoadMultiStore(filePath, 0)
+	if err != nil {
+		t.Fatalf("LoadMultiStore should tolerate missing metadata object, got: %v", err)
+	}
+	defer ms2.Close()
+
+	readBack, err := store.ReadBytesFromObj(ms2, objId)
+	if err != nil {
+		t.Fatalf("Failed to read object after load: %v", err)
+	}
+	readBack = bytes.TrimRight(readBack, "\x00")
+	if string(readBack) != string(payload) {
+		t.Fatalf("object payload mismatch after load: got %q, want %q", string(readBack), string(payload))
+	}
+}
 
 func TestMultiStorePersistence(t *testing.T) {
 	// Create a temporary file for the test

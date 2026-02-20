@@ -523,6 +523,7 @@ func DeleteNode[T any](node TreapNodeInterface[T], key T, less func(a, b T) bool
 // It accepts an optional callback that is called when a node is accessed during the search.
 // The callback can return an error to abort the search.
 func SearchNodeComplex[T any](node TreapNodeInterface[T], key T, less func(a, b T) bool, callback func(TreapNodeInterface[T]) error) (TreapNodeInterface[T], error) {
+	// You must hold the W lock before calling this method, as it may mutate the treap by re-hydrating nodes from disk.
 	if node == nil || node.IsNil() {
 		return node, nil
 	}
@@ -676,15 +677,17 @@ func (t *Treap[T]) releaseNode(node TreapNodeInterface[T]) {
 // InsertComplex inserts a new node with the given value and priority into the treap.
 // The type T must implement the types.Key[T] interface (e.g., IntKey, StringKey).
 // Use this method when you need to specify a custom priority value.
-func (t *Treap[T]) InsertComplex(value T, priority Priority) {
+// Returns an error if insertion fails.
+func (t *Treap[T]) InsertComplex(value T, priority Priority) error {
 	// Since T implements types.Key[T], we can use the value directly as the key
 	key := any(value).(types.Key[T])
 	newNode := t.NodeFactory()(key, priority)
 	inserted, err := InsertNode(t.root, newNode, t.Less, t.releaseNode)
 	if err != nil {
-		panic(err)
+		return err
 	}
 	t.root = inserted
+	return nil
 }
 
 // Insert inserts a new node with the given value into the treap.
@@ -692,25 +695,28 @@ func (t *Treap[T]) InsertComplex(value T, priority Priority) {
 // If the value implements types.PriorityProvider, its Priority() method is used;
 // otherwise, a random priority is generated.
 // This is the preferred method for most use cases.
-func (t *Treap[T]) Insert(value T) {
+// Returns an error if insertion fails.
+func (t *Treap[T]) Insert(value T) error {
 	var priority Priority
 	if pp, ok := any(value).(types.PriorityProvider); ok {
 		priority = Priority(pp.Priority())
 	} else {
 		priority = randomPriority()
 	}
-	t.InsertComplex(value, priority)
+	return t.InsertComplex(value, priority)
 }
 
 // Delete removes the node with the given value from the treap.
-func (t *Treap[T]) Delete(value T) {
+// Returns an error if deletion fails.
+func (t *Treap[T]) Delete(value T) error {
 	// Since T implements types.Key[T], convert to get the comparable value
 	key := any(value).(types.Key[T])
 	deleted, err := DeleteNode(t.root, key.Value(), t.Less, t.releaseNode)
 	if err != nil {
-		panic(err)
+		return err
 	}
 	t.root = deleted
+	return nil
 }
 
 // SearchComplex searches for the node with the given value in the treap.
@@ -733,13 +739,19 @@ func (t *Treap[T]) Search(value T) TreapNodeInterface[T] {
 
 // UpdatePriority updates the priority of the node with the given value.
 // It does this by deleting the old node and inserting a new one with the new priority.
-func (t *Treap[T]) UpdatePriority(value T, newPriority Priority) {
+// Returns an error if deletion or reinsertion fails.
+func (t *Treap[T]) UpdatePriority(value T, newPriority Priority) error {
 	node := t.Search(value)
 	if node != nil && !node.IsNil() {
 		node.SetPriority(newPriority)
-		t.Delete(value)
-		t.InsertComplex(value, newPriority)
+		if err := t.Delete(value); err != nil {
+			return err
+		}
+		if err := t.InsertComplex(value, newPriority); err != nil {
+			return err
+		}
 	}
+	return nil
 }
 
 // Walk traverses the treap in order and calls the callback function on each node.

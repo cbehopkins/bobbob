@@ -25,5 +25,9 @@ var _ bobbob.Storer = (*baseStore)(nil)
 // Verify concurrentStore implements Storer
 var _ bobbob.Storer = (*concurrentStore)(nil)
 
+// Verify stores that expose Allocator satisfy AllocatorProvider
+var _ AllocatorProvider = (*baseStore)(nil)
+var _ AllocatorProvider = (*concurrentStore)(nil)
+
 // Verify BasicAllocator implements types.Allocator
 var _ types.Allocator = (*basic.BasicAllocator)(nil)
