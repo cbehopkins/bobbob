@@ -188,3 +188,42 @@ func TestConcurrentInsertDuringCloseWithSignal(t *testing.T) {
 
 	t.Log("Test completed with proper coordination")
 }
+
+// TestPayloadTreapPersistBug demonstrates the Persist bug for payload treaps.
+func TestPayloadTreapPersistBug(t *testing.T) {
+	tmpFile := filepath.Join(t.TempDir(), "test_payload_persist_bug.db")
+
+	session, colls, err := vault.OpenVaultWithIdentity[string](
+		tmpFile,
+		vault.PayloadIdentitySpec[string, types.StringKey, SimplePayload]{
+			Identity:        "test_collection",
+			LessFunc:        types.StringLess,
+			KeyTemplate:     (*types.StringKey)(new(string)),
+			PayloadTemplate: SimplePayload{},
+		},
+	)
+	defer session.Close()
+		if err != nil {
+			t.Fatalf("Failed to open vault: %v", err)
+		}
+
+	coll, ok := colls["test_collection"].(*treap.PersistentPayloadTreap[types.StringKey, SimplePayload])
+	if !ok {
+		t.Fatalf("Wrong collection type: %T", colls["test_collection"])
+	}
+
+	// Insert multiple payload nodes to match production pattern
+	for i := 0; i < 5; i++ {
+		key := types.StringKey(fmt.Sprintf("key%d", i))
+		payload := SimplePayload{Value: int64(i)}
+		coll.Insert(&key, payload)
+	}
+
+		// Try both Persist and FlushAll to match production code
+		errPersist := coll.Persist()
+		t.Logf("Persist returned: %v", errPersist)
+		errFlush := coll.FlushAll()
+		t.Logf("FlushAll returned: %v", errFlush)
+
+	t.Log("Test completed: if no panic, payload treap persist bug is fixed")
+}

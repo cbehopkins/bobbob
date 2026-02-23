@@ -37,37 +37,32 @@ func (w *BackgroundPersistWorker[T]) PersistOldNodesOlderThan(
 	if treap == nil {
 		return 0, fmt.Errorf("treap is nil")
 	}
+	treap.mu.Lock()
+	defer treap.mu.Unlock()
 
 	// Collect all in-memory nodes that meet the criteria
-	// This is read-only, so we can use the read lock
-	treap.mu.RLock()
 	var nodesToPersist []*PersistentTreapNode[T]
 	w.collectOldNodes(treap.root, &nodesToPersist, cutoffTimestamp)
-	treap.mu.RUnlock()
 
 	if len(nodesToPersist) == 0 {
 		return 0, nil
 	}
 
-	// Persist each node individually
-	// Each node's persist operation is independent and safe
-	persistedCount := 0
+	// Use batch persist helper for efficiency
+	var toPersist []*PersistentTreapNode[T]
 	for _, node := range nodesToPersist {
-		if node == nil || !node.IsObjectIdInvalid() {
-			// Node is already persisted (has valid objectId)
-			persistedCount++
-			continue
+		if node != nil && node.IsObjectIdInvalid() {
+			toPersist = append(toPersist, node)
 		}
-
-		// Persist this individual node
-		if err := node.persist(); err != nil {
-			// Log but continue - one node failure shouldn't stop others
-			continue
-		}
-		persistedCount++
 	}
-
-	return persistedCount, nil
+	if len(toPersist) == 0 {
+		return len(nodesToPersist), nil // all already persisted
+	}
+	_, err := batchPersistNodes(toPersist, treap.Store)
+	if err != nil {
+		return len(nodesToPersist) - len(toPersist), err
+	}
+	return len(nodesToPersist), nil
 }
 
 // collectOldNodes recursively collects nodes that haven't been accessed since cutoffTimestamp.
@@ -123,14 +118,14 @@ func (w *BackgroundPersistWorker[T]) PersistOldestNodesPercentile(
 		return 0, fmt.Errorf("percentage must be between 1 and 100, got %d", percentage)
 	}
 
+	treap.mu.Lock()
+	defer treap.mu.Unlock()
 	// Collect all in-memory nodes with their timestamps
-	treap.mu.RLock()
 	var nodeInfos []struct {
 		node      *PersistentTreapNode[T]
 		timestamp int64
 	}
 	w.collectAllInMemoryNodesWithTimestamps(treap.root, &nodeInfos)
-	treap.mu.RUnlock()
 
 	if len(nodeInfos) == 0 {
 		return 0, nil

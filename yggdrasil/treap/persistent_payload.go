@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"reflect"
 	"sync"
 
 	"github.com/cbehopkins/bobbob"
@@ -1340,17 +1339,9 @@ func (t *PersistentPayloadTreap[K, P]) CountInMemoryNodesLocked() int {
 	return t.countInMemoryPayloadNodes(t.root)
 }
 
-func isNilTreapNode[K any](node TreapNodeInterface[K]) bool {
-	if node == nil {
-		return true
-	}
-	v := reflect.ValueOf(node)
-	return v.Kind() == reflect.Ptr && v.IsNil()
-}
-
 // countInMemoryPayloadNodes recursively counts in-memory nodes.
 func (t *PersistentPayloadTreap[K, P]) countInMemoryPayloadNodes(node TreapNodeInterface[K]) int {
-	if isNilTreapNode(node) || node.IsNil() {
+	if node == nil || node.IsNil() {
 		return 0
 	}
 
@@ -1362,10 +1353,10 @@ func (t *PersistentPayloadTreap[K, P]) countInMemoryPayloadNodes(node TreapNodeI
 	count := 1 // Count this node
 
 	// Recursively count children only if they're in memory
-	if !isNilTreapNode(pNode.left) && !pNode.left.IsNil() {
+	if pNode.left != nil && !pNode.left.IsNil() {
 		count += t.countInMemoryPayloadNodes(pNode.left)
 	}
-	if !isNilTreapNode(pNode.right) && !pNode.right.IsNil() {
+	if pNode.right != nil && !pNode.right.IsNil() {
 		count += t.countInMemoryPayloadNodes(pNode.right)
 	}
 
@@ -1375,7 +1366,7 @@ func (t *PersistentPayloadTreap[K, P]) countInMemoryPayloadNodes(node TreapNodeI
 // collectInMemoryPayloadNodes is a helper that recursively collects in-memory nodes.
 // It only traverses nodes that are already loaded (does not trigger disk reads).
 func (t *PersistentPayloadTreap[K, P]) collectInMemoryPayloadNodes(node TreapNodeInterface[K], nodes *[]PayloadNodeInfo[K, P]) {
-	if isNilTreapNode(node) || node.IsNil() {
+	if node == nil || node.IsNil() {
 		return
 	}
 
@@ -1394,12 +1385,12 @@ func (t *PersistentPayloadTreap[K, P]) collectInMemoryPayloadNodes(node TreapNod
 
 	// Only traverse children that are already in memory
 	// Check the left child without triggering a load
-	if !isNilTreapNode(pNode.TreapNode.left) && !pNode.TreapNode.left.IsNil() {
+	if pNode.TreapNode.left != nil && !pNode.TreapNode.left.IsNil() {
 		t.collectInMemoryPayloadNodes(pNode.TreapNode.left, nodes)
 	}
 
 	// Check the right child without triggering a load
-	if !isNilTreapNode(pNode.TreapNode.right) && !pNode.TreapNode.right.IsNil() {
+	if pNode.TreapNode.right != nil && !pNode.TreapNode.right.IsNil() {
 		t.collectInMemoryPayloadNodes(pNode.TreapNode.right, nodes)
 	}
 }
