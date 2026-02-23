@@ -12,8 +12,8 @@ import (
 // MockStringStore is an in-memory implementation of StringStorer for testing.
 // It stores strings with auto-incrementing ObjectIds.
 type MockStringStore struct {
-	mu   sync.RWMutex
-	data map[bobbob.ObjectId]string
+	mu      sync.RWMutex
+	data    map[bobbob.ObjectId]string
 	objects map[bobbob.ObjectId][]byte
 	next    bobbob.ObjectId
 }
@@ -141,7 +141,10 @@ func NewMockBaseStore() *MockBaseStore {
 		nextObjId:   bobbob.ObjectId(100),
 		AllocCalls:  make([]int, 0),
 		DeleteCalls: make([]bobbob.ObjectId, 0),
-		WriteHist:   make([]struct{ ObjId bobbob.ObjectId; Size int }, 0),
+		WriteHist: make([]struct {
+			ObjId bobbob.ObjectId
+			Size  int
+		}, 0),
 	}
 }
 

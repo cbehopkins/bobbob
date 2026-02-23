@@ -219,15 +219,15 @@ func (w *BackgroundPersistWorker[T]) sortNodesByTimestamp(
 // ScheduledBackgroundPersister[T] wraps BackgroundPersistWorker with timing logic.
 // This allows you to schedule periodic persistence of old nodes.
 type ScheduledBackgroundPersister[T any] struct {
-	worker               *BackgroundPersistWorker[T]
-	treap                *PersistentTreap[T]
-	stopChan             chan struct{}
-	wg                   sync.WaitGroup
-	statsmu              sync.Mutex
-	totalNodesPersisted  int64
-	totalRuns            int64
-	lastError            error
-	lastRunTime          time.Time
+	worker              *BackgroundPersistWorker[T]
+	treap               *PersistentTreap[T]
+	stopChan            chan struct{}
+	wg                  sync.WaitGroup
+	statsmu             sync.Mutex
+	totalNodesPersisted int64
+	totalRuns           int64
+	lastError           error
+	lastRunTime         time.Time
 }
 
 // NewScheduledBackgroundPersister creates a persister that can run on a schedule.
@@ -243,8 +243,9 @@ func NewScheduledBackgroundPersister[T any](treap *PersistentTreap[T]) *Schedule
 // nodes older than the cutoff time.
 //
 // Example:
-//  persister.StartOldNodePersisterTicker(30*time.Second, 10*time.Second)
-//  // Every 10 seconds, persist nodes not accessed in 30 seconds
+//
+//	persister.StartOldNodePersisterTicker(30*time.Second, 10*time.Second)
+//	// Every 10 seconds, persist nodes not accessed in 30 seconds
 //
 // Call Stop() to shut down the goroutine.
 func (p *ScheduledBackgroundPersister[T]) StartOldNodePersisterTicker(
@@ -302,8 +303,9 @@ func (p *ScheduledBackgroundPersister[T]) startOldNodePersisterTicker(
 // persists the oldest N% of nodes.
 //
 // Example:
-//  persister.StartOldestPercentilePersisterTicker(25, 10*time.Second)
-//  // Every 10 seconds, persist the oldest 25% of nodes
+//
+//	persister.StartOldestPercentilePersisterTicker(25, 10*time.Second)
+//	// Every 10 seconds, persist the oldest 25% of nodes
 //
 // Call Stop() to shut down the goroutine.
 func (p *ScheduledBackgroundPersister[T]) StartOldestPercentilePersisterTicker(

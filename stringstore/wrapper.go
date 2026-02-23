@@ -218,7 +218,7 @@ func (s *StringStore) PersistToStore(st bobbob.Storer, wrapperObjId bobbob.Objec
 				return bobbob.ObjNotAllocated, fmt.Errorf("unloaded shard missing persisted state")
 			}
 			state.ShardRecords = append(state.ShardRecords, ShardRecord{
-				StateObjId:  shard.stateObjId,
+				StateObjId:   shard.stateObjId,
 				StrdataObjId: shard.strdataObjId,
 				StrdataSize:  shard.strdataSize,
 			})
@@ -258,7 +258,7 @@ func (s *StringStore) PersistToStore(st bobbob.Storer, wrapperObjId bobbob.Objec
 		shard.strdataObjId = strdataObjId
 		shard.strdataSize = int64(len(dataBytes))
 		state.ShardRecords = append(state.ShardRecords, ShardRecord{
-			StateObjId:  stateObjId,
+			StateObjId:   stateObjId,
 			StrdataObjId: strdataObjId,
 			StrdataSize:  int64(len(dataBytes)),
 		})

@@ -17,7 +17,7 @@ func TestPersist_MultiStore_LargeDataset(t *testing.T) {
 
 	tempDir := t.TempDir()
 	storePath := filepath.Join(tempDir, "multistore_large.db")
-	
+
 	// Create MultiStore directly (no ConcurrentStore wrapper)
 	stre, err := multistore.NewMultiStore(storePath, 0)
 	if err != nil {
@@ -63,7 +63,7 @@ func TestPersist_ConcurrentMultiStore_NoStringStore(t *testing.T) {
 
 	tempDir := t.TempDir()
 	storePath := filepath.Join(tempDir, "concurrent_nostring.db")
-	
+
 	stre, err := multistore.NewConcurrentMultiStore(storePath, 0)
 	if err != nil {
 		t.Fatalf("Failed to create concurrent multistore: %v", err)
@@ -115,7 +115,7 @@ func TestPersist_ConcurrentMultiStore_SmallDataset(t *testing.T) {
 
 	tempDir := t.TempDir()
 	storePath := filepath.Join(tempDir, "concurrent_small.db")
-	
+
 	stre, err := multistore.NewConcurrentMultiStore(storePath, 0)
 	if err != nil {
 		t.Fatalf("Failed to create concurrent multistore: %v", err)

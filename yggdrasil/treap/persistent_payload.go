@@ -691,18 +691,18 @@ func (t *PersistentPayloadTreap[K, P]) findNodeWithAncestors(targetKey K) (*Pers
 
 func (t *PersistentPayloadTreap[K, P]) findNodeWithAncestorsComplex(targetKey K, callback func(TreapNodeInterface[K]) error) (*PersistentPayloadTreapNode[K, P], []*PersistentPayloadTreapNode[K, P], error) {
 	path := make([]*PersistentPayloadTreapNode[K, P], 0, 32)
-	
+
 	var walk func(node TreapNodeInterface[K]) (*PersistentPayloadTreapNode[K, P], error)
 	walk = func(node TreapNodeInterface[K]) (*PersistentPayloadTreapNode[K, P], error) {
 		if node == nil || node.IsNil() {
 			return nil, nil
 		}
-		
+
 		pNode, ok := node.(*PersistentPayloadTreapNode[K, P])
 		if !ok {
 			return nil, fmt.Errorf("node is not a PersistentPayloadTreapNode")
 		}
-		
+
 		// Update access time
 		pNode.TouchAccessTime()
 
@@ -711,7 +711,7 @@ func (t *PersistentPayloadTreap[K, P]) findNodeWithAncestorsComplex(targetKey K,
 				return nil, err
 			}
 		}
-		
+
 		// Check if this is the target node
 		if pNode.GetKey().Equals(targetKey) {
 			// Found the node - current path contains ancestors (don't add this node)
@@ -719,28 +719,28 @@ func (t *PersistentPayloadTreap[K, P]) findNodeWithAncestorsComplex(targetKey K,
 		}
 
 		nodeKey := pNode.GetKey().Value()
-		
+
 		// Add this node to path and recurse
 		path = append(path, pNode)
-		
+
 		var result *PersistentPayloadTreapNode[K, P]
 		var err error
-		
+
 		// Recurse left or right
 		if t.Less(targetKey, nodeKey) {
 			result, err = walk(pNode.GetLeft())
 		} else {
 			result, err = walk(pNode.GetRight())
 		}
-		
+
 		// If not found in subtree, remove this node from path (backtracking)
 		if result == nil {
 			path = path[:len(path)-1]
 		}
-		
+
 		return result, err
 	}
-	
+
 	found, err := walk(t.root)
 	return found, path, err
 }
@@ -1180,7 +1180,28 @@ func (t *PersistentPayloadTreap[K, P]) Persist() error {
 		t.persistentWorkerPool.Close()
 		t.persistentWorkerPool = nil
 	}()
-	return t.persistBatchedLockedTree()
+
+	// Walk all nodes and persist both treap and payload
+	if t.root == nil {
+		return nil
+	}
+	rootNode, ok := t.root.(*PersistentPayloadTreapNode[K, P])
+	if !ok {
+		return fmt.Errorf("root is not a PersistentPayloadTreapNode")
+	}
+
+	// Use batched persist for payload nodes
+	orphanedIds, err := persistBatchedCommon[K, *PersistentPayloadTreapNode[K, P]](
+		rootNode,
+	)
+	if err != nil {
+		return err
+	}
+	for _, id := range orphanedIds {
+		t.PersistentTreap.queueDelete(id)
+	}
+	t.PersistentTreap.flushPendingDeletes()
+	return nil
 }
 
 // CompactSuboptimalAllocations deletes nodes that reside in sub-optimal block

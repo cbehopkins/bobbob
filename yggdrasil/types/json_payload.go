@@ -122,7 +122,7 @@ func (j *JsonPayload[T]) LateUnmarshal(id bobbob.ObjectId, size int, s bobbob.St
 				return err
 			}
 			payload := []byte(data)
-			
+
 			// Allocated size may be larger than written size; trim trailing zeros
 			payload = bytes.TrimRight(payload, "\x00")
 			if len(payload) < 4 {

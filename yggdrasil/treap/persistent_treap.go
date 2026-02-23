@@ -142,7 +142,7 @@ func (n *PersistentTreapNode[T]) newFromObjectId(objId bobbob.ObjectId) (*Persis
 
 // NewFromObjectId creates a PersistentTreapNode by loading it from the store.
 // It reads the node data from the given ObjectId and deserializes it.
-func NewFromObjectId[T any](objId bobbob.ObjectId, parent *PersistentTreap[T], stre bobbob.Storer)(*PersistentTreapNode[T], error) {
+func NewFromObjectId[T any](objId bobbob.ObjectId, parent *PersistentTreap[T], stre bobbob.Storer) (*PersistentTreapNode[T], error) {
 	tmp := NewPersistentTreapNode[T](parent.keyTemplate.New(), 0, parent)
 	err := store.ReadGeneric(stre, tmp, objId)
 	if err != nil {

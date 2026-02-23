@@ -40,7 +40,7 @@ func TestConcurrentMultiStore_BackgroundMonitoring(t *testing.T) {
 
 	// Enable background monitoring with aggressive flushing
 	v.SetMemoryBudgetWithPercentile(1000, 25) // Small memory budget to trigger flushes
-	v.SetCheckInterval(100)                    // Check every 100ms
+	v.SetCheckInterval(100)                   // Check every 100ms
 	v.StartBackgroundMonitoring()
 
 	// Smaller initial dataset: 500 items

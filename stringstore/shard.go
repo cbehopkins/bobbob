@@ -1,4 +1,4 @@
-﻿package stringstore
+package stringstore
 
 import (
 	"bytes"
@@ -33,11 +33,11 @@ type stringStoreShard struct {
 	file *os.File
 	cfg  Config
 
-	useMu              sync.RWMutex
-	unloaded           bool
+	useMu               sync.RWMutex
+	unloaded            bool
 	unloadedHasFreeSlot bool
-	strdataSize        int64
-	lastAccess         atomic.Int64
+	strdataSize         int64
+	lastAccess          atomic.Int64
 
 	// Allocator state - simple counter with freelist
 	allocMu        sync.Mutex
@@ -55,11 +55,11 @@ type stringStoreShard struct {
 	objectLocks *store.ObjectLockMap
 
 	// Write worker
-	ioMu         sync.RWMutex
-	writeQueue   chan *writeJob
-	closeCh      chan struct{}
-	workerDone   chan struct{}
-	compactMu    sync.RWMutex
+	ioMu          sync.RWMutex
+	writeQueue    chan *writeJob
+	closeCh       chan struct{}
+	workerDone    chan struct{}
+	compactMu     sync.RWMutex
 	diskWritePool *diskWritePool // Pool of workers for concurrent disk I/O
 
 	// Marshalling fields
@@ -113,12 +113,12 @@ func newUnloadedStringStoreShard(cfg Config, stateObjId, strdataObjId bobbob.Obj
 		normalized = cfg
 	}
 	shard := &stringStoreShard{
-		cfg:                normalized,
-		unloaded:           true,
+		cfg:                 normalized,
+		unloaded:            true,
 		unloadedHasFreeSlot: hasFreeSlot,
-		stateObjId:         stateObjId,
-		strdataObjId:       strdataObjId,
-		strdataSize:        strdataSize,
+		stateObjId:          stateObjId,
+		strdataObjId:        strdataObjId,
+		strdataSize:         strdataSize,
 	}
 	shard.lastAccess.Store(time.Now().UnixNano())
 	return shard
@@ -140,9 +140,9 @@ type shardStateSummary struct {
 	maxStrings    uint32
 	startObjId    bobbob.ObjectId
 	objInterval   bobbob.ObjectId
-	nextId         bobbob.ObjectId
-	maxAllocated   bobbob.ObjectId
-	freeListCount  uint32
+	nextId        bobbob.ObjectId
+	maxAllocated  bobbob.ObjectId
+	freeListCount uint32
 }
 
 func parseShardStateSummary(data []byte) (shardStateSummary, error) {
@@ -214,11 +214,11 @@ func parseShardStateSummary(data []byte) (shardStateSummary, error) {
 	}
 
 	return shardStateSummary{
-		maxStrings:   maxStrings,
-		startObjId:   startObjId,
-		objInterval:  objInterval,
-		nextId:       nextId,
-		maxAllocated: maxAllocated,
+		maxStrings:    maxStrings,
+		startObjId:    startObjId,
+		objInterval:   objInterval,
+		nextId:        nextId,
+		maxAllocated:  maxAllocated,
 		freeListCount: freeCount,
 	}, nil
 }
@@ -521,7 +521,7 @@ func (s *stringStoreShard) Close() error {
 
 	// Wait for all pending disk I/O to complete
 	s.diskWritePool.waitForPending()
-	
+
 	// Close the disk write pool (waits for all workers to finish)
 	s.diskWritePool.close()
 
@@ -756,10 +756,10 @@ func (s *stringStoreShard) writeWorker() {
 		// Get current file end offset and update metadata
 		s.offsetMu.Lock()
 		s.allocMu.Lock()
-		
+
 		startOffset := s.nextOffset
 		writeOffset := startOffset
-		
+
 		// Update offsetLookup for all write jobs
 		for _, job := range pendingJobs {
 			if job.isDelete {
@@ -778,7 +778,7 @@ func (s *stringStoreShard) writeWorker() {
 			}
 		}
 		s.nextOffset = writeOffset
-		
+
 		s.allocMu.Unlock()
 		s.offsetMu.Unlock()
 
@@ -792,14 +792,14 @@ func (s *stringStoreShard) writeWorker() {
 			// Copy buffer and locks for async processing
 			bufferCopy := make([]byte, len(buffer))
 			copy(bufferCopy, buffer)
-			
+
 			locksCopy := make([]*store.ObjectLock, len(locks))
 			objectIdsCopy := make([]bobbob.ObjectId, len(locks))
 			for i, lp := range locks {
 				locksCopy[i] = lp.lock
 				objectIdsCopy[i] = lp.objectId
 			}
-			
+
 			task := &diskWriteTask{
 				buffer:      bufferCopy,
 				startOffset: startOffset,
@@ -807,7 +807,7 @@ func (s *stringStoreShard) writeWorker() {
 				objectIds:   objectIdsCopy,
 				errChan:     nil, // Errors will panic (fail-fast)
 			}
-			
+
 			s.diskWritePool.submit(task)
 		} else {
 			// No I/O needed, release locks immediately
@@ -1045,10 +1045,10 @@ func (s *stringStoreShard) MarshalData() ([]byte, error) {
 	if err := s.flushWrites(); err != nil {
 		return nil, err
 	}
-	
+
 	// Wait for all disk I/O tasks to complete
 	s.diskWritePool.waitForPending()
-	
+
 	s.ioMu.RLock()
 	defer s.ioMu.RUnlock()
 

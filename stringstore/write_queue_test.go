@@ -237,7 +237,7 @@ func TestWriteQueue_QueueFull(t *testing.T) {
 		MaxNumberOfStrings: 10000,
 		StartingObjectId:   1000000000,
 		ObjectIdInterval:   4,
-		WriteFlushInterval: 10 * time.Second, // Very slow flush to fill queue
+		WriteFlushInterval: 10 * time.Second,  // Very slow flush to fill queue
 		WriteMaxBatchBytes: 1024 * 1024 * 100, // Large batch to prevent early flush
 	}
 

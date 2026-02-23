@@ -101,7 +101,7 @@ func TestRealPersistPerformanceBottleneck(t *testing.T) {
 	}
 }
 
-// TestPersistBytesThroughput measures actual bytes written to identify if we're  
+// TestPersistBytesThroughput measures actual bytes written to identify if we're
 // writing redundant data.
 func TestPersistBytesThroughputtMeasurement(t *testing.T) {
 	tempDir := t.TempDir()

@@ -12,17 +12,17 @@ import (
 )
 
 type Config struct {
-	FilePath            string
-	MaxNumberOfStrings  int
-	StartingObjectId    bobbob.ObjectId
-	ObjectIdInterval    bobbob.ObjectId
-	WriteFlushInterval  time.Duration
-	WriteMaxBatchBytes  int
-	DiskWritePoolSize   int // Number of concurrent disk writer workers (default: 4)
-	UnloadOnFull        bool
-	UnloadAfterIdle     time.Duration
-	UnloadScanInterval  time.Duration
-	LazyLoadShards      bool
+	FilePath           string
+	MaxNumberOfStrings int
+	StartingObjectId   bobbob.ObjectId
+	ObjectIdInterval   bobbob.ObjectId
+	WriteFlushInterval time.Duration
+	WriteMaxBatchBytes int
+	DiskWritePoolSize  int // Number of concurrent disk writer workers (default: 4)
+	UnloadOnFull       bool
+	UnloadAfterIdle    time.Duration
+	UnloadScanInterval time.Duration
+	LazyLoadShards     bool
 }
 
 func normalizeConfig(cfg Config) (Config, error) {

@@ -20,7 +20,7 @@ func TestWriteQueue_SequentialWritesDeadlock(t *testing.T) {
 		StartingObjectId:   1000000000,
 		ObjectIdInterval:   4,
 		WriteFlushInterval: 30 * time.Second, // Very long - won't fire
-		WriteMaxBatchBytes: 1024 * 1024,       // Large batch
+		WriteMaxBatchBytes: 1024 * 1024,      // Large batch
 	}
 
 	shard, err := newStringStoreShard(cfg)

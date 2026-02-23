@@ -16,7 +16,7 @@ func TestPersist_BasicStore_WithJsonPayload(t *testing.T) {
 
 	tempDir := t.TempDir()
 	storePath := filepath.Join(tempDir, "basic_jsonpayload.db")
-	
+
 	stre, err := store.NewBasicStore(storePath)
 	if err != nil {
 		t.Fatalf("Failed to create basic store: %v", err)

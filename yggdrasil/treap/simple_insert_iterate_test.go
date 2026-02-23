@@ -21,7 +21,7 @@ func TestSimpleInsertDeleteIterate(t *testing.T) {
 	)
 
 	const (
-		cycles       = 25  // Moderate scale  
+		cycles       = 25  // Moderate scale
 		batchSize    = 500 // Moderate scale
 		maxNodes     = 3000
 		deleteEveryN = 4 // Delete every 4th key to reduce tree size

@@ -135,7 +135,7 @@ func (k *ShortUIntKey) UnmarshalFromObjectId(id bobbob.ObjectId, stre bobbob.Sto
 	*k = ShortUIntKey(uint16(id))
 	return nil
 }
-func (k ShortUIntKey) LateUnmarshal(id bobbob.ObjectId, size int, stre bobbob.Storer) bobbob.Finisher {
+func (k *ShortUIntKey) LateUnmarshal(id bobbob.ObjectId, size int, stre bobbob.Storer) bobbob.Finisher {
 	return func() error { return k.UnmarshalFromObjectId(id, stre) }
 }
 

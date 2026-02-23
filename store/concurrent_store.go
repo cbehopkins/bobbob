@@ -12,10 +12,10 @@ import (
 // safe concurrent access to different objects.
 // Optionally limits concurrent disk I/O operations via a token pool.
 type concurrentStore struct {
-	innerStore Storer
-	lock       sync.RWMutex
+	innerStore  Storer
+	lock        sync.RWMutex
 	objectLocks *ObjectLockMap
-	diskTokens chan struct{} // nil for unlimited, otherwise limits concurrent disk ops
+	diskTokens  chan struct{} // nil for unlimited, otherwise limits concurrent disk ops
 }
 
 // NewConcurrentStore creates a new concurrentStore at the given file path.
@@ -44,10 +44,10 @@ func NewConcurrentStoreWrapping(innerStore Storer, maxDiskTokens int) *concurren
 		}
 	}
 	return &concurrentStore{
-		innerStore: innerStore,
-		lock:       sync.RWMutex{},
+		innerStore:  innerStore,
+		lock:        sync.RWMutex{},
 		objectLocks: NewObjectLockMap(),
-		diskTokens: diskTokens,
+		diskTokens:  diskTokens,
 	}
 }
 

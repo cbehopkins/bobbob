@@ -21,7 +21,7 @@ func TestWriteQueue_BatchingDeadlock(t *testing.T) {
 		StartingObjectId:   1000000000,
 		ObjectIdInterval:   4,
 		WriteFlushInterval: 10 * time.Second, // Very long - won't fire during test
-		WriteMaxBatchBytes: 1024 * 1024,       // 1MB - won't fill with small writes
+		WriteMaxBatchBytes: 1024 * 1024,      // 1MB - won't fill with small writes
 	}
 
 	shard, err := newStringStoreShard(cfg)
@@ -101,7 +101,7 @@ func TestWriteQueue_TickerSavesUs(t *testing.T) {
 		StartingObjectId:   1000000000,
 		ObjectIdInterval:   4,
 		WriteFlushInterval: 200 * time.Millisecond, // Short interval
-		WriteMaxBatchBytes: 1024 * 1024,             // Large batch
+		WriteMaxBatchBytes: 1024 * 1024,            // Large batch
 	}
 
 	shard, err := newStringStoreShard(cfg)
@@ -159,8 +159,8 @@ func TestWriteQueue_LargeBatchSavesUs(t *testing.T) {
 		MaxNumberOfStrings: 10000,
 		StartingObjectId:   1000000000,
 		ObjectIdInterval:   4,
-		WriteFlushInterval: 10 * time.Second,  // Very long
-		WriteMaxBatchBytes: 1024,              // Small batch (1KB)
+		WriteFlushInterval: 10 * time.Second, // Very long
+		WriteMaxBatchBytes: 1024,             // Small batch (1KB)
 	}
 
 	shard, err := newStringStoreShard(cfg)
