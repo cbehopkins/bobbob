@@ -648,6 +648,72 @@ func (v *Vault) StopBackgroundMonitoring() {
 	}
 }
 
+// VaultBackgroundPersistHandle manages background persisters started by the vault.
+// Call Stop() to shut down all persisters.
+type VaultBackgroundPersistHandle struct {
+	persisters map[string]treap.BackgroundPersister
+}
+
+// Stop stops all background persisters started by this handle.
+func (h *VaultBackgroundPersistHandle) Stop() {
+	if h == nil {
+		return
+	}
+	for _, p := range h.persisters {
+		p.Stop()
+	}
+}
+
+// StartBackgroundPersistOldestPercentile starts a background persister for each
+// active collection that supports background persistence.
+func (v *Vault) StartBackgroundPersistOldestPercentile(
+	percentage int,
+	interval time.Duration,
+	opts ...treap.BackgroundPersistOption,
+) *VaultBackgroundPersistHandle {
+	handle := &VaultBackgroundPersistHandle{
+		persisters: make(map[string]treap.BackgroundPersister),
+	}
+
+	v.mu.RLock()
+	defer v.mu.RUnlock()
+
+	for name, coll := range v.activeCollections {
+		persistable, ok := coll.(treap.BackgroundPersistable)
+		if !ok {
+			continue
+		}
+		handle.persisters[name] = persistable.StartBackgroundPersistOldestPercentile(percentage, interval, opts...)
+	}
+
+	return handle
+}
+
+// StartBackgroundPersistOldNodes starts a background persister for each active collection
+// that supports background persistence, persisting nodes older than maxAge.
+func (v *Vault) StartBackgroundPersistOldNodes(
+	maxAge time.Duration,
+	interval time.Duration,
+	opts ...treap.BackgroundPersistOption,
+) *VaultBackgroundPersistHandle {
+	handle := &VaultBackgroundPersistHandle{
+		persisters: make(map[string]treap.BackgroundPersister),
+	}
+
+	v.mu.RLock()
+	defer v.mu.RUnlock()
+
+	for name, coll := range v.activeCollections {
+		persistable, ok := coll.(treap.BackgroundPersistable)
+		if !ok {
+			continue
+		}
+		handle.persisters[name] = persistable.StartBackgroundPersistOldNodes(maxAge, interval, opts...)
+	}
+
+	return handle
+}
+
 // SetBackgroundMonitoring enables or disables auto background monitoring.
 // When enabling, it starts the monitor if a memory budget has been set.
 // When disabling, it stops the monitor if running.

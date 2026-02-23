@@ -219,15 +219,15 @@ func (w *BackgroundPersistWorker[T]) sortNodesByTimestamp(
 // ScheduledBackgroundPersister[T] wraps BackgroundPersistWorker with timing logic.
 // This allows you to schedule periodic persistence of old nodes.
 type ScheduledBackgroundPersister[T any] struct {
-	worker            *BackgroundPersistWorker[T]
-	treap             *PersistentTreap[T]
-	stopChan          chan struct{}
-	wg                sync.WaitGroup
-	statsmu           sync.Mutex
-	totalNodesPersisted int64
-	totalRuns         int64
-	lastError         error
-	lastRunTime       time.Time
+	worker               *BackgroundPersistWorker[T]
+	treap                *PersistentTreap[T]
+	stopChan             chan struct{}
+	wg                   sync.WaitGroup
+	statsmu              sync.Mutex
+	totalNodesPersisted  int64
+	totalRuns            int64
+	lastError            error
+	lastRunTime          time.Time
 }
 
 // NewScheduledBackgroundPersister creates a persister that can run on a schedule.
@@ -251,6 +251,14 @@ func (p *ScheduledBackgroundPersister[T]) StartOldNodePersisterTicker(
 	maxAge time.Duration,
 	tickInterval time.Duration,
 ) {
+	p.startOldNodePersisterTicker(maxAge, tickInterval, false)
+}
+
+func (p *ScheduledBackgroundPersister[T]) startOldNodePersisterTicker(
+	maxAge time.Duration,
+	tickInterval time.Duration,
+	autoFlush bool,
+) {
 	if tickInterval == 0 {
 		tickInterval = 5 * time.Second
 	}
@@ -268,6 +276,16 @@ func (p *ScheduledBackgroundPersister[T]) StartOldNodePersisterTicker(
 			case <-ticker.C:
 				cutoffTime := time.Now().Unix() - int64(maxAge.Seconds())
 				count, err := p.worker.PersistOldNodesOlderThan(p.treap, cutoffTime)
+				if autoFlush {
+					_, flushErr := p.treap.FlushOlderThan(cutoffTime)
+					if flushErr != nil {
+						if err == nil {
+							err = flushErr
+						} else {
+							err = fmt.Errorf("persist error: %v; flush error: %w", err, flushErr)
+						}
+					}
+				}
 
 				p.statsmu.Lock()
 				p.lastRunTime = time.Now()
@@ -292,6 +310,14 @@ func (p *ScheduledBackgroundPersister[T]) StartOldestPercentilePersisterTicker(
 	percentage int,
 	tickInterval time.Duration,
 ) {
+	p.startOldestPercentilePersisterTicker(percentage, tickInterval, false)
+}
+
+func (p *ScheduledBackgroundPersister[T]) startOldestPercentilePersisterTicker(
+	percentage int,
+	tickInterval time.Duration,
+	autoFlush bool,
+) {
 	if tickInterval == 0 {
 		tickInterval = 5 * time.Second
 	}
@@ -308,6 +334,16 @@ func (p *ScheduledBackgroundPersister[T]) StartOldestPercentilePersisterTicker(
 				return
 			case <-ticker.C:
 				count, err := p.worker.PersistOldestNodesPercentile(p.treap, percentage)
+				if autoFlush {
+					_, flushErr := p.treap.FlushOldestPercentile(percentage)
+					if flushErr != nil {
+						if err == nil {
+							err = flushErr
+						} else {
+							err = fmt.Errorf("persist error: %v; flush error: %w", err, flushErr)
+						}
+					}
+				}
 
 				p.statsmu.Lock()
 				p.lastRunTime = time.Now()
@@ -331,4 +367,52 @@ func (p *ScheduledBackgroundPersister[T]) Stats() (totalPersisted int64, totalRu
 	p.statsmu.Lock()
 	defer p.statsmu.Unlock()
 	return p.totalNodesPersisted, p.totalRuns, p.lastError, p.lastRunTime
+}
+
+// BackgroundPersister provides a non-generic handle for scheduled persisters.
+type BackgroundPersister interface {
+	Stop()
+	Stats() (int64, int64, error, time.Time)
+}
+
+// BackgroundPersistable is implemented by treaps that can start background persisters.
+type BackgroundPersistable interface {
+	StartBackgroundPersistOldestPercentile(percentage int, interval time.Duration, opts ...BackgroundPersistOption) BackgroundPersister
+	StartBackgroundPersistOldNodes(maxAge, interval time.Duration, opts ...BackgroundPersistOption) BackgroundPersister
+}
+
+// BackgroundPersistOption customizes background persistence behavior.
+type BackgroundPersistOption func(*backgroundPersistOptions)
+
+type backgroundPersistOptions struct {
+	autoFlush bool
+}
+
+// WithAutoFlush flushes the same nodes that were just persisted.
+func WithAutoFlush() BackgroundPersistOption {
+	return func(o *backgroundPersistOptions) {
+		o.autoFlush = true
+	}
+}
+
+func applyBackgroundPersistOptions(opts []BackgroundPersistOption) backgroundPersistOptions {
+	settings := backgroundPersistOptions{}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&settings)
+		}
+	}
+	return settings
+}
+
+type backgroundPersisterAdapter[T any] struct {
+	*ScheduledBackgroundPersister[T]
+}
+
+func (a backgroundPersisterAdapter[T]) Stop() {
+	a.ScheduledBackgroundPersister.Stop()
+}
+
+func (a backgroundPersisterAdapter[T]) Stats() (int64, int64, error, time.Time) {
+	return a.ScheduledBackgroundPersister.Stats()
 }
