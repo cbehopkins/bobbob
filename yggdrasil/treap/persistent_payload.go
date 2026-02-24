@@ -15,6 +15,27 @@ import (
 	"github.com/cbehopkins/bobbob/yggdrasil/types"
 )
 
+// FlushAll persists the tree and then flushes the entire subtree from memory.
+// The root node remains in memory; all descendants are cleared from pointers.
+func (t *PersistentPayloadTreap[K, P]) FlushAll() error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	if t.root == nil {
+		return nil
+	}
+
+	if err := t.persistBatchedLockedTree(); err != nil {
+		return err
+	}
+
+	rootNode, ok := t.root.(*PersistentPayloadTreapNode[K, P])
+	if !ok {
+		return fmt.Errorf("root is not a PersistentPayloadTreapNode")
+	}
+	return rootNode.FlushAll()
+}
+
 var tracePayload = os.Getenv("BOBBOB_TRACE_PAYLOAD") != ""
 var debugPayload = os.Getenv("BOBBOB_DEBUG_PAYLOAD") != ""
 
@@ -53,6 +74,29 @@ type PersistentPayloadTreapNode[K any, P types.PersistentPayload[P]] struct {
 	// the deleteDependents method should also clean this up when the payload is updated or the node is deleted.
 	payloadObjectId store.ObjectId // ObjectId of the payload if it was marshaled separately (e.g. via LateMarshaler), otherwise ObjNotAllocated
 	payloadSize     uint32         // logical size of the payload when stored separately (0 if unknown/inline)
+}
+
+// FlushAll recursively flushes this node's entire subtree from memory.
+// The node itself remains in memory; all descendants are cleared from pointers.
+func (n *PersistentPayloadTreapNode[K, P]) FlushAll() error {
+	if n == nil {
+		return nil
+	}
+	// Flush left child
+	if leftNode, ok := n.GetLeft().(*PersistentPayloadTreapNode[K, P]); ok && leftNode != nil {
+		if err := leftNode.FlushAll(); err != nil {
+			return err
+		}
+		n.TreapNode.left = nil
+	}
+	// Flush right child
+	if rightNode, ok := n.GetRight().(*PersistentPayloadTreapNode[K, P]); ok && rightNode != nil {
+		if err := rightNode.FlushAll(); err != nil {
+			return err
+		}
+		n.TreapNode.right = nil
+	}
+	return nil
 }
 
 func (n PersistentPayloadTreapNode[K, P]) String() string {

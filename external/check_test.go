@@ -203,9 +203,9 @@ func TestPayloadTreapPersistBug(t *testing.T) {
 		},
 	)
 	defer session.Close()
-		if err != nil {
-			t.Fatalf("Failed to open vault: %v", err)
-		}
+	if err != nil {
+		t.Fatalf("Failed to open vault: %v", err)
+	}
 
 	coll, ok := colls["test_collection"].(*treap.PersistentPayloadTreap[types.StringKey, SimplePayload])
 	if !ok {
@@ -219,11 +219,15 @@ func TestPayloadTreapPersistBug(t *testing.T) {
 		coll.Insert(&key, payload)
 	}
 
-		// Try both Persist and FlushAll to match production code
-		errPersist := coll.Persist()
-		t.Logf("Persist returned: %v", errPersist)
-		errFlush := coll.FlushAll()
-		t.Logf("FlushAll returned: %v", errFlush)
+	// Try both Persist and FlushAll to match production code
+	errPersist := coll.Persist()
+	if errPersist != nil {
+		t.Fatalf("Persist failed: %v", errPersist)
+	}
+	errFlush := coll.FlushAll()
+	if errFlush != nil {
+		t.Fatalf("FlushAll failed: %v", errFlush)
+	}
 
 	t.Log("Test completed: if no panic, payload treap persist bug is fixed")
 }
