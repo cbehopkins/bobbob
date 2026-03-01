@@ -331,6 +331,23 @@ func (s *stringStoreShard) WriteToObj(objectId bobbob.ObjectId) (io.Writer, bobb
 	return writer, finisher, nil
 }
 
+func (s *stringStoreShard) hasObject(id bobbob.ObjectId) bool {
+	if s.unloaded {
+		return false
+	}
+	s.offsetMu.RLock()
+	_, existsInOffset := s.offsetLookup[id]
+	s.offsetMu.RUnlock()
+	if existsInOffset {
+		return true
+	}
+
+	s.allocMu.Lock()
+	_, existsInAlloc := s.allocatedSizes[id]
+	s.allocMu.Unlock()
+	return existsInAlloc
+}
+
 // writeToObj enqueues data to be written (non-blocking).
 func (s *stringStoreShard) writeToObj(objectId bobbob.ObjectId, data []byte) error {
 	if s.unloaded {

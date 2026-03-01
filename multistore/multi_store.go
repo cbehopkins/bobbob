@@ -813,18 +813,7 @@ func (s *multiStore) HasStringObj(objId bobbob.ObjectId) bool {
 		return false
 	}
 
-	// Check if object currently exists (not just if ID is in range)
-	// Try to read it - if successful, it exists
-	// FIXME there must be a more efficient way to do this....
-	reader, finisher, err := s.stringStore.LateReadObj(objId)
-	if err != nil {
-		return false
-	}
-	_ = reader
-	if finisher != nil {
-		finisher()
-	}
-	return true
+	return s.stringStore.HasStringObj(objId)
 }
 
 // All legacy metadata marshal/unmarshal helpers removed; allocator.Top handles persistence

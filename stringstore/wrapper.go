@@ -573,6 +573,21 @@ func (s *StringStore) LateReadObj(id bobbob.ObjectId) (io.Reader, bobbob.Finishe
 	return reader, wrapFinisherWithUnlock(shard, finisher), nil
 }
 
+// HasStringObj checks if the ObjectId currently exists in the store.
+// For unloaded shards, this will load the shard to check existence.
+func (s *StringStore) HasStringObj(id bobbob.ObjectId) bool {
+	shard, err := s.shardForObjectId(id)
+	if err != nil {
+		return false
+	}
+
+	shard.useMu.RLock()
+	shard.touch()
+	exists := shard.hasObject(id)
+	shard.useMu.RUnlock()
+	return exists
+}
+
 func (s *StringStore) DeleteObj(objId bobbob.ObjectId) error {
 	shard, err := s.shardForObjectId(objId)
 	if err != nil {

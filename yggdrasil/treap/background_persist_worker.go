@@ -141,7 +141,8 @@ func (w *BackgroundPersistWorker[T]) PersistOldestNodesPercentile(
 		numToPersist = 1
 	}
 
-	// Persist the oldest nodes
+	// Persist the oldest nodes using batch persist for efficiency
+	var nodesToPersist []*PersistentTreapNode[T]
 	persistedCount := 0
 	for i := 0; i < numToPersist && i < len(nodeInfos); i++ {
 		node := nodeInfos[i].node
@@ -150,16 +151,15 @@ func (w *BackgroundPersistWorker[T]) PersistOldestNodesPercentile(
 			persistedCount++
 			continue
 		}
-
-		// Persist this node
-		if err := node.persist(); err != nil {
-			// Continue on error
-			continue
-		}
-		persistedCount++
+		nodesToPersist = append(nodesToPersist, node)
 	}
-
-	return persistedCount, nil
+	if len(nodesToPersist) == 0 {
+		return persistedCount, nil
+	}
+	if _, err := batchPersistNodes(nodesToPersist, treap.Store); err != nil {
+		return persistedCount, err
+	}
+	return persistedCount + len(nodesToPersist), nil
 }
 
 // collectAllInMemoryNodesWithTimestamps collects nodes with their access timestamps.
