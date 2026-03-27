@@ -1534,22 +1534,12 @@ type NodeInfo[T any] struct {
 // This method does NOT load nodes from disk and does NOT update access timestamps.
 // It only includes nodes that are already loaded in memory.
 // Returns a slice of NodeInfo containing each node and its last access time.
-// NOTE: This method acquires a read lock. If called from within InOrderMutate callback,
-// use GetInMemoryNodesLocked instead to avoid deadlock.
+// NOTE: This method acquires a read lock. If called from a context that already holds
+// the lock, use collectInMemoryNodesLocked directly to avoid deadlock.
 func (t *PersistentTreap[T]) GetInMemoryNodes() []NodeInfo[T] {
 	var nodes []NodeInfo[T]
 	t.mu.RLock()
 	defer t.mu.RUnlock()
-	t.collectInMemoryNodesLocked(t.root, &nodes)
-	return nodes
-}
-
-// GetInMemoryNodesLocked traverses the treap and collects all nodes currently in memory.
-// This variant assumes the caller already holds the write lock (e.g., from InOrderMutate).
-// It performs the same operation as GetInMemoryNodes but without acquiring locks.
-// Use this when calling from within InOrderMutate callbacks to avoid deadlock.
-func (t *PersistentTreap[T]) GetInMemoryNodesLocked() []NodeInfo[T] {
-	var nodes []NodeInfo[T]
 	t.collectInMemoryNodesLocked(t.root, &nodes)
 	return nodes
 }
@@ -1640,7 +1630,8 @@ func (t *PersistentTreap[T]) flushOlderThanLocked(cutoffTimestamp int64) (int, e
 	}
 
 	// In-memory only: do not load additional nodes from disk while selecting candidates.
-	nodes := t.GetInMemoryNodesLocked()
+	var nodes []NodeInfo[T]
+	t.collectInMemoryNodesLocked(t.root, &nodes)
 	flushedCount := 0
 	for _, nodeInfo := range nodes {
 		node := nodeInfo.Node
@@ -1690,7 +1681,8 @@ func (t *PersistentTreap[T]) flushOldestPercentileLocked(percentage int) (int, e
 	return flushOldestPercentileCommon(
 		percentage,
 		func() ([]*PersistentTreapNode[T], error) {
-			info := t.GetInMemoryNodesLocked()
+			var info []NodeInfo[T]
+			t.collectInMemoryNodesLocked(t.root, &info)
 			nodes := make([]*PersistentTreapNode[T], 0, len(info))
 			for _, item := range info {
 				if item.Node != nil {

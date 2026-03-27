@@ -61,8 +61,6 @@ func payloadIsLateMarshaler[P types.PersistentPayload[P]](payloadTemplate P) boo
 	return false
 }
 
-// UntypedPersistentPayload and types.PersistentPayload interfaces have been moved to interfaces.go
-
 // PersistentPayloadTreapNode represents a node in the persistent payload treap.
 // It embeds the payload along with the persistent treap node functionality.
 // That is when you persist this node, both the treap structure and the payload are persisted together.
@@ -1354,16 +1352,6 @@ func (t *PersistentPayloadTreap[K, P]) GetInMemoryNodes() []PayloadNodeInfo[K, P
 	var nodes []PayloadNodeInfo[K, P]
 	t.mu.RLock()
 	defer t.mu.RUnlock()
-	t.collectInMemoryPayloadNodes(t.root, &nodes)
-	return nodes
-}
-
-// GetInMemoryNodesLocked traverses the treap and collects all nodes currently in memory.
-// This variant assumes the caller already holds the write lock (e.g., from FlushOldestPercentile).
-// It performs the same operation as GetInMemoryNodes but without acquiring locks.
-// Use this when calling from within locked contexts to avoid deadlock.
-func (t *PersistentPayloadTreap[K, P]) GetInMemoryNodesLocked() []PayloadNodeInfo[K, P] {
-	var nodes []PayloadNodeInfo[K, P]
 	t.collectInMemoryPayloadNodes(t.root, &nodes)
 	return nodes
 }
